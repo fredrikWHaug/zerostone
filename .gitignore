@@ -1,1 +1,4 @@
-main
+# Added by cargo
+
+/target
+Cargo.lock
