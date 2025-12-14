@@ -1,3 +1,1 @@
-fn main() {
-    println!("Hello, world!");
-}
+use circular_buffer::CircularBuffer;
