@@ -1,1 +1,3 @@
-use circular_buffer::CircularBuffer;
+fn main () {
+	use circular_buffer::CircularBuffer;
+}
