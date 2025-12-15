@@ -1,3 +1,5 @@
 fn main () {
-	use circular_buffer::CircularBuffer;
+    struct CircularBuffer {
+        head_index: i64    			
+    } 
 }
