@@ -1,7 +1,13 @@
-fn main () {
-    struct CircularBuffer {
-	buffer: [i64;9223372036854775807],
-        head_index: i64,
-	tail_index: i64,    			
-    } 
+use core::mem::MaybeUninit;
+
+pub struct CircularBuffer<T, const N:usize> {
+    buffer: [MaybeUninit<T>; N],
+    head: usize,
+    tail: usize,
+    len: usize,
+}
+
+fn main() {
+    let mut buf: CircularBuffer<i64, 1064> = CircularBuffer::new();
+    buf.push(7);
 }
