@@ -2,6 +2,9 @@
 
 use core::mem::MaybeUninit;
 
+mod stats;
+pub use stats::OnlineStats;
+
 pub struct CircularBuffer<T, const N: usize> {
     buffer: [MaybeUninit<T>; N],
     head: usize,
