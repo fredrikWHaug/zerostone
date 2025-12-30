@@ -159,6 +159,28 @@ fn bench_iir_filter(c: &mut Criterion) {
         });
     });
 
+    // Notch filter (60 Hz powerline removal)
+    let mut notch_filter: IirFilter<1> = IirFilter::new([BiquadCoeffs::notch(1000.0, 60.0, 30.0)]);
+
+    group.bench_function("notch_single_sample", |b| {
+        b.iter(|| {
+            let _ = black_box(notch_filter.process_sample(black_box(1.0)));
+        });
+    });
+
+    // Multi-channel notch (32 channels)
+    group.bench_function("notch_32_channels", |b| {
+        let mut notch_filters: Vec<IirFilter<1>> = (0..32)
+            .map(|_| IirFilter::new([BiquadCoeffs::notch(1000.0, 60.0, 30.0)]))
+            .collect();
+
+        b.iter(|| {
+            for filter in notch_filters.iter_mut() {
+                let _ = black_box(filter.process_sample(black_box(1.0)));
+            }
+        });
+    });
+
     group.finish();
 }
 
