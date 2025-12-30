@@ -41,7 +41,7 @@ impl<const TAPS: usize> FirFilter<TAPS> {
 
     /// Processes a single sample through the FIR filter.
     ///
-    /// Implements: y[n] = sum(b[k] * x[n-k]) for k = 0 to TAPS-1
+    /// Implements: `y[n] = sum(b[k] * x[n-k])` for k = 0 to TAPS-1
     #[inline]
     pub fn process_sample(&mut self, input: f32) -> f32 {
         // Store new sample in delay line
@@ -55,7 +55,11 @@ impl<const TAPS: usize> FirFilter<TAPS> {
             output += self.coeffs[tap] * self.delay_line[delay_idx];
 
             // Move backward through delay line (with wrap-around)
-            delay_idx = if delay_idx == 0 { TAPS - 1 } else { delay_idx - 1 };
+            delay_idx = if delay_idx == 0 {
+                TAPS - 1
+            } else {
+                delay_idx - 1
+            };
         }
 
         // Update index for next sample
@@ -115,7 +119,10 @@ mod tests {
 
         // After 5 samples of 1.0, moving average should output 1.0
         let output = filter.process_sample(1.0);
-        assert!((output - 1.0).abs() < 0.001, "Moving average of ones should be 1.0");
+        assert!(
+            (output - 1.0).abs() < 0.001,
+            "Moving average of ones should be 1.0"
+        );
     }
 
     #[test]

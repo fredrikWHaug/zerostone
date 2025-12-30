@@ -67,12 +67,6 @@ fn bench_single_pop(c: &mut Criterion) {
 fn bench_streaming_bci_data(c: &mut Criterion) {
     let mut group = c.benchmark_group("streaming_bci");
 
-    // Struct representing a multi-channel sample
-    #[derive(Clone, Copy)]
-    struct Sample32 {
-        channels: [f32; 32],
-    }
-
     for channels in [32, 64, 128].iter() {
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("{}_ch_streaming", channels)),

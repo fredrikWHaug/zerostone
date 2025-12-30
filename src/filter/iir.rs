@@ -1,7 +1,7 @@
 /// Biquad (2nd-order IIR) filter coefficients.
 ///
 /// Implements the difference equation:
-/// y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]
+/// `y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]`
 ///
 /// Note: a0 is assumed to be 1.0 (normalized form)
 #[derive(Clone, Copy, Debug)]
@@ -228,9 +228,9 @@ impl<const SECTIONS: usize> IirFilter<SECTIONS> {
 
             // Update state: shift delay line
             s[1] = s[0]; // x[n-2] = x[n-1]
-            s[0] = x;    // x[n-1] = x[n]
+            s[0] = x; // x[n-1] = x[n]
             s[3] = s[2]; // y[n-2] = y[n-1]
-            s[2] = y;    // y[n-1] = y[n]
+            s[2] = y; // y[n-1] = y[n]
 
             x = y; // Output becomes input to next section
         }
@@ -290,7 +290,10 @@ mod tests {
 
         // After settling, DC should pass through
         let output = filter.process_sample(1.0);
-        assert!((output - 1.0).abs() < 0.01, "DC should pass through lowpass");
+        assert!(
+            (output - 1.0).abs() < 0.01,
+            "DC should pass through lowpass"
+        );
     }
 
     #[test]
@@ -308,14 +311,17 @@ mod tests {
 
         // After settling, DC should be significantly attenuated
         let output = filter.process_sample(1.0);
-        assert!(output.abs() < 0.2, "DC should be rejected by highpass, got {}", output);
+        assert!(
+            output.abs() < 0.2,
+            "DC should be rejected by highpass, got {}",
+            output
+        );
     }
 
     #[test]
     fn test_iir_process_block() {
-        let mut filter: IirFilter<1> = IirFilter::new([BiquadCoeffs::butterworth_lowpass(
-            1000.0, 100.0,
-        )]);
+        let mut filter: IirFilter<1> =
+            IirFilter::new([BiquadCoeffs::butterworth_lowpass(1000.0, 100.0)]);
 
         let mut samples = [1.0, 2.0, 3.0, 4.0, 5.0];
         filter.process_block(&mut samples);
@@ -326,9 +332,8 @@ mod tests {
 
     #[test]
     fn test_iir_reset() {
-        let mut filter: IirFilter<1> = IirFilter::new([BiquadCoeffs::butterworth_lowpass(
-            1000.0, 40.0,
-        )]);
+        let mut filter: IirFilter<1> =
+            IirFilter::new([BiquadCoeffs::butterworth_lowpass(1000.0, 40.0)]);
 
         // Process some samples to build up state
         for i in 0..10 {
@@ -339,9 +344,8 @@ mod tests {
         filter.reset();
 
         // After reset, same input should produce same output as fresh filter
-        let mut filter2: IirFilter<1> = IirFilter::new([BiquadCoeffs::butterworth_lowpass(
-            1000.0, 40.0,
-        )]);
+        let mut filter2: IirFilter<1> =
+            IirFilter::new([BiquadCoeffs::butterworth_lowpass(1000.0, 40.0)]);
 
         let out1 = filter.process_sample(5.0);
         let out2 = filter2.process_sample(5.0);
@@ -377,14 +381,11 @@ mod tests {
         assert_eq!(retrieved.len(), 2);
 
         // Test coefficient update
-        let new_coeffs = [
-            BiquadCoeffs::passthrough(),
-            BiquadCoeffs::passthrough(),
-        ];
+        let new_coeffs = [BiquadCoeffs::passthrough(), BiquadCoeffs::passthrough()];
         filter.set_coefficients(new_coeffs);
 
         // Should now behave as passthrough
-        assert_eq!(filter.process_sample(3.14), 3.14);
+        assert_eq!(filter.process_sample(2.5), 2.5);
     }
 
     #[test]
@@ -489,10 +490,6 @@ mod tests {
             }
         }
 
-        assert!(
-            max_50hz < 0.1,
-            "50 Hz should be rejected, got {}",
-            max_50hz
-        );
+        assert!(max_50hz < 0.1, "50 Hz should be rejected, got {}", max_50hz);
     }
 }

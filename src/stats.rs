@@ -4,6 +4,12 @@ pub struct OnlineStats<const C: usize> {
     m2: [f64; C],
 }
 
+impl<const C: usize> Default for OnlineStats<C> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const C: usize> OnlineStats<C> {
     pub fn new() -> Self {
         Self {
@@ -17,10 +23,10 @@ impl<const C: usize> OnlineStats<C> {
         self.count += 1;
         let n = self.count as f64;
 
-        for i in 0..C {
-            let delta = sample[i] - self.mean[i];
+        for (i, &s) in sample.iter().enumerate() {
+            let delta = s - self.mean[i];
             self.mean[i] += delta / n;
-            let delta2 = sample[i] - self.mean[i];
+            let delta2 = s - self.mean[i];
             self.m2[i] += delta * delta2;
         }
     }
@@ -35,8 +41,8 @@ impl<const C: usize> OnlineStats<C> {
         }
 
         let mut var = [0.0; C];
-        for i in 0..C {
-            var[i] = self.m2[i] / (self.count - 1) as f64;
+        for (v, &m) in var.iter_mut().zip(self.m2.iter()) {
+            *v = m / (self.count - 1) as f64;
         }
         var
     }
