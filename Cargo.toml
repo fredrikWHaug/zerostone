@@ -2,6 +2,10 @@
 name = "zerostone"
 version = "0.1.0"
 edition = "2021"
+description = "High-performance, zero-allocation signal processing primitives for BCI and real-time systems"
+license = "AGPL-3.0"
+keywords = ["bci", "signal-processing", "dsp", "neuroscience", "no-std"]
+categories = ["science", "no-std::no-alloc", "embedded"]
 
 [dependencies]
 libm = "0.2"
@@ -10,5 +14,5 @@ libm = "0.2"
 criterion = { version = "0.5", default-features = false }
 
 [[bench]]
-name = "circular_buffer"
+name = "benchmarks"
 harness = false
