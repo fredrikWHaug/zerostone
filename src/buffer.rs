@@ -17,6 +17,12 @@ pub struct CircularBuffer<T, const N: usize> {
     tail: AtomicUsize,
 }
 
+impl<T, const N: usize> Default for CircularBuffer<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T, const N: usize> CircularBuffer<T, N> {
     /// Creates a new empty circular buffer.
     ///

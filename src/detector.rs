@@ -88,7 +88,10 @@ impl<const C: usize> ThresholdDetector<C> {
             if amplitude.abs() > self.threshold {
                 // Trigger detection
                 self.refractory_counter[ch] = self.refractory_samples;
-                return Some(SpikeEvent { channel: ch, amplitude });
+                return Some(SpikeEvent {
+                    channel: ch,
+                    amplitude,
+                });
             }
         }
 
