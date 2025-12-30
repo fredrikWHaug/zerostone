@@ -85,7 +85,7 @@ impl<const C: usize> ThresholdDetector<C> {
             }
 
             // Check threshold crossing
-            if amplitude.abs() > self.threshold {
+            if libm::fabsf(amplitude) > self.threshold {
                 // Trigger detection
                 self.refractory_counter[ch] = self.refractory_samples;
                 return Some(SpikeEvent {
@@ -118,7 +118,7 @@ impl<const C: usize> ThresholdDetector<C> {
         }
 
         // Check threshold crossing
-        if sample.abs() > self.threshold {
+        if libm::fabsf(sample) > self.threshold {
             self.refractory_counter[channel] = self.refractory_samples;
             return Some(sample);
         }
