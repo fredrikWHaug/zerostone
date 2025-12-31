@@ -1,5 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use zerostone::{BiquadCoeffs, CircularBuffer, FirFilter, IirFilter, ThresholdDetector};
+use zerostone::{
+    AdaptiveThresholdDetector, BiquadCoeffs, CircularBuffer, FirFilter, IirFilter,
+    ThresholdDetector,
+};
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
 fn bench_push_pop_throughput(c: &mut Criterion) {
@@ -277,6 +280,68 @@ fn bench_threshold_detector(c: &mut Criterion) {
     group.finish();
 }
 
+// AdaptiveThresholdDetector benchmarks
+fn bench_adaptive_detector(c: &mut Criterion) {
+    let mut group = c.benchmark_group("adaptive_detector");
+
+    // Pre-calibrated 32-channel detector
+    group.throughput(Throughput::Elements(32));
+    group.bench_function("32_channels_calibrated", |b| {
+        let mut detector: AdaptiveThresholdDetector<32> =
+            AdaptiveThresholdDetector::new(4.0, 100, 500);
+
+        // Pre-calibrate
+        for i in 0..500 {
+            let val = if i % 2 == 0 { 0.1 } else { -0.1 };
+            detector.process_sample(&[val; 32]);
+        }
+        detector.freeze();
+
+        let samples = [0.05f32; 32];
+        b.iter(|| {
+            let _ = black_box(detector.process_sample(black_box(&samples)));
+        });
+    });
+
+    // Adapting mode (updating stats each sample)
+    group.bench_function("32_channels_adapting", |b| {
+        let mut detector: AdaptiveThresholdDetector<32> =
+            AdaptiveThresholdDetector::new(4.0, 100, 500);
+
+        // Pre-calibrate
+        for i in 0..500 {
+            let val = if i % 2 == 0 { 0.1 } else { -0.1 };
+            detector.process_sample(&[val; 32]);
+        }
+        // Don't freeze - keep adapting
+
+        let samples = [0.05f32; 32];
+        b.iter(|| {
+            let _ = black_box(detector.process_sample(black_box(&samples)));
+        });
+    });
+
+    // 128-channel frozen
+    group.throughput(Throughput::Elements(128));
+    group.bench_function("128_channels_calibrated", |b| {
+        let mut detector: AdaptiveThresholdDetector<128> =
+            AdaptiveThresholdDetector::new(4.0, 100, 500);
+
+        for i in 0..500 {
+            let val = if i % 2 == 0 { 0.1 } else { -0.1 };
+            detector.process_sample(&[val; 128]);
+        }
+        detector.freeze();
+
+        let samples = [0.05f32; 128];
+        b.iter(|| {
+            let _ = black_box(detector.process_sample(black_box(&samples)));
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -286,6 +351,7 @@ criterion_group!(
     bench_try_push,
     bench_iir_filter,
     bench_fir_filter,
-    bench_threshold_detector
+    bench_threshold_detector,
+    bench_adaptive_detector
 );
 criterion_main!(benches);
