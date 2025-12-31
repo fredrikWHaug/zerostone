@@ -47,6 +47,18 @@ impl<const C: usize> OnlineStats<C> {
         var
     }
 
+    /// Returns the standard deviation for each dimension.
+    ///
+    /// This is the square root of the sample variance.
+    pub fn std_dev(&self) -> [f64; C] {
+        let var = self.variance();
+        let mut std = [0.0; C];
+        for (s, &v) in std.iter_mut().zip(var.iter()) {
+            *s = libm::sqrt(v);
+        }
+        std
+    }
+
     pub fn count(&self) -> u64 {
         self.count
     }
