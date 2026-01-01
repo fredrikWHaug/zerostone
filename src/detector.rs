@@ -18,6 +18,80 @@ pub struct SpikeEvent {
     pub amplitude: f32,
 }
 
+/// Collection of spike events from a single multi-channel sample.
+///
+/// Holds up to C events (one per channel maximum). Use [`iter()`](Self::iter)
+/// or [`get()`](Self::get) to access detected events.
+///
+/// # Example
+/// ```
+/// # use zerostone::{ThresholdDetector, SpikeEvents};
+/// let mut detector: ThresholdDetector<4> = ThresholdDetector::new(2.0, 10);
+/// let samples = [1.0, 3.0, 4.0, 1.0]; // Channels 1 and 2 above threshold
+///
+/// let events: SpikeEvents<4> = detector.process_sample_all(&samples);
+/// assert_eq!(events.len(), 2);
+///
+/// for event in events.iter() {
+///     println!("Spike on channel {} with amplitude {}", event.channel, event.amplitude);
+/// }
+/// ```
+pub struct SpikeEvents<const C: usize> {
+    events: [SpikeEvent; C],
+    len: usize,
+}
+
+impl<const C: usize> SpikeEvents<C> {
+    /// Creates an empty SpikeEvents collection.
+    fn new() -> Self {
+        Self {
+            events: [SpikeEvent {
+                channel: 0,
+                amplitude: 0.0,
+            }; C],
+            len: 0,
+        }
+    }
+
+    /// Adds an event to the collection.
+    #[inline]
+    fn push(&mut self, event: SpikeEvent) {
+        if self.len < C {
+            self.events[self.len] = event;
+            self.len += 1;
+        }
+    }
+
+    /// Returns the number of detected events.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns true if no events were detected.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns an iterator over the detected events.
+    pub fn iter(&self) -> impl Iterator<Item = &SpikeEvent> {
+        self.events[..self.len].iter()
+    }
+
+    /// Returns the event at the given index, if it exists.
+    pub fn get(&self, index: usize) -> Option<&SpikeEvent> {
+        if index < self.len {
+            Some(&self.events[index])
+        } else {
+            None
+        }
+    }
+
+    /// Returns the underlying slice of detected events.
+    pub fn as_slice(&self) -> &[SpikeEvent] {
+        &self.events[..self.len]
+    }
+}
+
 /// Multi-channel threshold detector with refractory period.
 ///
 /// Detects when signal amplitude crosses a threshold and enforces a refractory
@@ -96,6 +170,43 @@ impl<const C: usize> ThresholdDetector<C> {
         }
 
         None
+    }
+
+    /// Processes a multi-channel sample, returning all detected events.
+    ///
+    /// Unlike [`process_sample`](Self::process_sample) which returns only the first
+    /// detection, this method returns all channels that crossed the threshold.
+    ///
+    /// # Example
+    /// ```
+    /// # use zerostone::ThresholdDetector;
+    /// let mut detector: ThresholdDetector<4> = ThresholdDetector::new(2.0, 10);
+    /// let samples = [1.0, 3.0, 4.0, 1.0]; // Channels 1 and 2 above threshold
+    ///
+    /// let events = detector.process_sample_all(&samples);
+    /// assert_eq!(events.len(), 2);
+    /// ```
+    pub fn process_sample_all(&mut self, samples: &[f32; C]) -> SpikeEvents<C> {
+        let mut events = SpikeEvents::new();
+
+        for (ch, &amplitude) in samples.iter().enumerate() {
+            // Update refractory counter
+            if self.refractory_counter[ch] > 0 {
+                self.refractory_counter[ch] -= 1;
+                continue;
+            }
+
+            // Check threshold crossing
+            if libm::fabsf(amplitude) > self.threshold {
+                self.refractory_counter[ch] = self.refractory_samples;
+                events.push(SpikeEvent {
+                    channel: ch,
+                    amplitude,
+                });
+            }
+        }
+
+        events
     }
 
     /// Processes a single channel sample, returning whether threshold was crossed.
@@ -278,6 +389,69 @@ impl<const C: usize> AdaptiveThresholdDetector<C> {
         }
 
         None
+    }
+
+    /// Processes a multi-channel sample, returning all detected events.
+    ///
+    /// Unlike [`process_sample`](Self::process_sample) which returns only the first
+    /// detection, this method returns all channels that crossed the threshold.
+    ///
+    /// # Example
+    /// ```
+    /// # use zerostone::AdaptiveThresholdDetector;
+    /// let mut detector: AdaptiveThresholdDetector<4> = AdaptiveThresholdDetector::new(4.0, 10, 50);
+    ///
+    /// // Calibrate
+    /// for i in 0..50 {
+    ///     let val = if i % 2 == 0 { 0.1 } else { -0.1 };
+    ///     detector.process_sample(&[val; 4]);
+    /// }
+    ///
+    /// // Detect multiple spikes
+    /// let samples = [0.0, 1.0, 1.0, 0.0]; // Channels 1 and 2 above threshold
+    /// let events = detector.process_sample_all(&samples);
+    /// ```
+    pub fn process_sample_all(&mut self, samples: &[f32; C]) -> SpikeEvents<C> {
+        let mut events = SpikeEvents::new();
+
+        // Convert to f64 for stats update
+        let mut samples_f64 = [0.0f64; C];
+        for (i, &s) in samples.iter().enumerate() {
+            samples_f64[i] = s as f64;
+        }
+
+        // Always update statistics (unless frozen)
+        if self.frozen_threshold.is_none() {
+            self.stats.update(&samples_f64);
+        }
+
+        // Don't detect during warm-up period
+        if self.stats.count() < self.min_samples {
+            return events;
+        }
+
+        // Get current thresholds
+        let thresholds = self.thresholds();
+
+        // Check each channel
+        for (ch, &amplitude) in samples.iter().enumerate() {
+            // Update refractory counter
+            if self.refractory_counter[ch] > 0 {
+                self.refractory_counter[ch] -= 1;
+                continue;
+            }
+
+            // Check threshold crossing
+            if libm::fabsf(amplitude) > thresholds[ch] {
+                self.refractory_counter[ch] = self.refractory_samples;
+                events.push(SpikeEvent {
+                    channel: ch,
+                    amplitude,
+                });
+            }
+        }
+
+        events
     }
 
     /// Returns current threshold for each channel.
@@ -704,5 +878,142 @@ mod tests {
 
         assert_eq!(detector.multiplier(), 5.0);
         assert_eq!(detector.refractory_period(), 20);
+    }
+
+    // SpikeEvents and process_sample_all tests
+
+    #[test]
+    fn test_spike_events_empty() {
+        let events: SpikeEvents<4> = SpikeEvents::new();
+        assert!(events.is_empty());
+        assert_eq!(events.len(), 0);
+        assert!(events.get(0).is_none());
+        assert_eq!(events.as_slice().len(), 0);
+    }
+
+    #[test]
+    fn test_process_sample_all_no_detections() {
+        let mut detector: ThresholdDetector<4> = ThresholdDetector::new(2.0, 10);
+
+        // All samples below threshold
+        let samples = [1.0, 1.0, 1.0, 1.0];
+        let events = detector.process_sample_all(&samples);
+
+        assert!(events.is_empty());
+        assert_eq!(events.len(), 0);
+    }
+
+    #[test]
+    fn test_process_sample_all_single_detection() {
+        let mut detector: ThresholdDetector<4> = ThresholdDetector::new(2.0, 10);
+
+        // One sample above threshold
+        let samples = [1.0, 3.0, 1.0, 1.0];
+        let events = detector.process_sample_all(&samples);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events.get(0).unwrap().channel, 1);
+        assert_eq!(events.get(0).unwrap().amplitude, 3.0);
+    }
+
+    #[test]
+    fn test_process_sample_all_multiple_detections() {
+        let mut detector: ThresholdDetector<4> = ThresholdDetector::new(2.0, 10);
+
+        // Multiple samples above threshold
+        let samples = [1.0, 3.0, 4.0, 5.0];
+        let events = detector.process_sample_all(&samples);
+
+        assert_eq!(events.len(), 3);
+
+        // Check all events
+        assert_eq!(events.get(0).unwrap().channel, 1);
+        assert_eq!(events.get(0).unwrap().amplitude, 3.0);
+        assert_eq!(events.get(1).unwrap().channel, 2);
+        assert_eq!(events.get(1).unwrap().amplitude, 4.0);
+        assert_eq!(events.get(2).unwrap().channel, 3);
+        assert_eq!(events.get(2).unwrap().amplitude, 5.0);
+    }
+
+    #[test]
+    fn test_process_sample_all_respects_refractory() {
+        let mut detector: ThresholdDetector<4> = ThresholdDetector::new(2.0, 5);
+
+        // First sample - multiple detections
+        let samples = [3.0, 3.0, 3.0, 3.0];
+        let events = detector.process_sample_all(&samples);
+        assert_eq!(events.len(), 4);
+
+        // Second sample - all in refractory
+        let events = detector.process_sample_all(&samples);
+        assert_eq!(events.len(), 0);
+
+        // After refractory period
+        for _ in 0..5 {
+            detector.process_sample_all(&[1.0, 1.0, 1.0, 1.0]);
+        }
+
+        // Should detect again
+        let events = detector.process_sample_all(&samples);
+        assert_eq!(events.len(), 4);
+    }
+
+    #[test]
+    fn test_process_sample_all_vs_process_sample() {
+        // Verify process_sample_all detects more than process_sample
+        let mut detector1: ThresholdDetector<4> = ThresholdDetector::new(2.0, 10);
+        let mut detector2: ThresholdDetector<4> = ThresholdDetector::new(2.0, 10);
+
+        let samples = [3.0, 4.0, 5.0, 6.0]; // All above threshold
+
+        // process_sample returns only first
+        let single = detector1.process_sample(&samples);
+        assert!(single.is_some());
+        assert_eq!(single.unwrap().channel, 0);
+
+        // process_sample_all returns all
+        let all = detector2.process_sample_all(&samples);
+        assert_eq!(all.len(), 4);
+    }
+
+    #[test]
+    fn test_adaptive_process_sample_all() {
+        let mut detector: AdaptiveThresholdDetector<4> =
+            AdaptiveThresholdDetector::new(4.0, 10, 50);
+
+        // Calibrate
+        for i in 0..50 {
+            let val = if i % 2 == 0 { 0.1 } else { -0.1 };
+            detector.process_sample(&[val; 4]);
+        }
+        detector.freeze();
+
+        // Detect multiple spikes (threshold ~0.4)
+        let samples = [0.0, 1.0, 1.0, 0.0];
+        let events = detector.process_sample_all(&samples);
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events.get(0).unwrap().channel, 1);
+        assert_eq!(events.get(1).unwrap().channel, 2);
+    }
+
+    #[test]
+    fn test_spike_events_iteration() {
+        let mut detector: ThresholdDetector<4> = ThresholdDetector::new(2.0, 10);
+
+        let samples = [3.0, 4.0, 1.0, 5.0];
+        let events = detector.process_sample_all(&samples);
+
+        // Test iteration
+        let mut count = 0;
+        for event in events.iter() {
+            assert!(event.amplitude > 2.0);
+            count += 1;
+        }
+        assert_eq!(count, 3);
+
+        // Test as_slice
+        let slice = events.as_slice();
+        assert_eq!(slice.len(), 3);
     }
 }
