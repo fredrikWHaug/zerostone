@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use zerostone::{
-    AdaptiveThresholdDetector, BiquadCoeffs, CircularBuffer, FirFilter, IirFilter,
+    AcCoupler, AdaptiveThresholdDetector, BiquadCoeffs, CircularBuffer, FirFilter, IirFilter,
     ThresholdDetector,
 };
 
@@ -213,6 +213,40 @@ fn bench_fir_filter(c: &mut Criterion) {
     group.finish();
 }
 
+// AcCoupler benchmarks
+fn bench_ac_coupler(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ac_coupler");
+
+    // Single-channel AC coupler
+    let mut coupler1: AcCoupler<1> = AcCoupler::new(250.0, 0.1);
+    group.bench_function("single_channel", |b| {
+        b.iter(|| {
+            let _ = black_box(coupler1.process(black_box(&[1.0])));
+        });
+    });
+
+    // Multi-channel AC coupler (32 channels)
+    let mut coupler32: AcCoupler<32> = AcCoupler::new(250.0, 0.1);
+    let samples32 = [1.0f32; 32];
+    group.throughput(Throughput::Elements(32));
+    group.bench_function("32_channels", |b| {
+        b.iter(|| {
+            let _ = black_box(coupler32.process(black_box(&samples32)));
+        });
+    });
+
+    // Block processing (256 samples, 4 channels)
+    let mut coupler4: AcCoupler<4> = AcCoupler::new(250.0, 0.1);
+    group.bench_function("block_256_samples_4ch", |b| {
+        let mut block: Vec<[f32; 4]> = (0..256).map(|_| [1.0; 4]).collect();
+        b.iter(|| {
+            coupler4.process_block(black_box(&mut block));
+        });
+    });
+
+    group.finish();
+}
+
 // ThresholdDetector benchmarks - target: <10 μs for 1024 channels
 fn bench_threshold_detector(c: &mut Criterion) {
     let mut group = c.benchmark_group("threshold_detector");
@@ -351,6 +385,7 @@ criterion_group!(
     bench_try_push,
     bench_iir_filter,
     bench_fir_filter,
+    bench_ac_coupler,
     bench_threshold_detector,
     bench_adaptive_detector
 );

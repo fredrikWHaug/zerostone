@@ -10,6 +10,7 @@
 //! - **[`CircularBuffer`]** - Lock-free SPSC ring buffer for streaming data
 //! - **[`IirFilter`]** - Cascaded biquad IIR filters (Butterworth lowpass/highpass/bandpass)
 //! - **[`FirFilter`]** - Direct-form FIR filter with linear phase
+//! - **[`AcCoupler`]** - AC coupling filter for DC offset removal
 //! - **[`ThresholdDetector`]** - Multi-channel spike detection with refractory period
 //! - **[`OnlineStats`]** - Welford's algorithm for streaming mean/variance
 //!
@@ -48,5 +49,5 @@ pub use buffer::CircularBuffer;
 pub use detector::{
     AdaptiveThresholdDetector, DetectorState, SpikeEvent, SpikeEvents, ThresholdDetector,
 };
-pub use filter::{BiquadCoeffs, FirFilter, IirFilter};
+pub use filter::{AcCoupler, BiquadCoeffs, FirFilter, IirFilter};
 pub use stats::OnlineStats;
