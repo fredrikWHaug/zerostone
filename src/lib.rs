@@ -11,6 +11,7 @@
 //! - **[`IirFilter`]** - Cascaded biquad IIR filters (Butterworth lowpass/highpass/bandpass)
 //! - **[`FirFilter`]** - Direct-form FIR filter with linear phase
 //! - **[`AcCoupler`]** - AC coupling filter for DC offset removal
+//! - **[`Decimator`]** - Sample rate reduction (downsampling)
 //! - **[`ThresholdDetector`]** - Multi-channel spike detection with refractory period
 //! - **[`OnlineStats`]** - Welford's algorithm for streaming mean/variance
 //!
@@ -40,12 +41,14 @@
 #![no_std]
 
 mod buffer;
+mod decimate;
 mod detector;
 mod filter;
 mod stats;
 
 // Re-export at crate root for convenience
 pub use buffer::CircularBuffer;
+pub use decimate::Decimator;
 pub use detector::{
     AdaptiveThresholdDetector, DetectorState, SpikeEvent, SpikeEvents, ThresholdDetector,
 };

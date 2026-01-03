@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use zerostone::{
-    AcCoupler, AdaptiveThresholdDetector, BiquadCoeffs, CircularBuffer, FirFilter, IirFilter,
-    ThresholdDetector,
+    AcCoupler, AdaptiveThresholdDetector, BiquadCoeffs, CircularBuffer, Decimator, FirFilter,
+    IirFilter, ThresholdDetector,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -247,6 +247,33 @@ fn bench_ac_coupler(c: &mut Criterion) {
     group.finish();
 }
 
+// Decimator benchmarks
+fn bench_decimator(c: &mut Criterion) {
+    let mut group = c.benchmark_group("decimator");
+
+    // Single sample processing (32 channels, factor 4)
+    let mut dec32: Decimator<32> = Decimator::new(4);
+    let samples32 = [1.0f32; 32];
+    group.bench_function("32_channels_factor_4", |b| {
+        b.iter(|| {
+            let _ = black_box(dec32.process(black_box(&samples32)));
+        });
+    });
+
+    // Block processing (256 samples, 4 channels, factor 4)
+    let mut dec4: Decimator<4> = Decimator::new(4);
+    group.bench_function("block_256_samples_4ch_factor_4", |b| {
+        let input: Vec<[f32; 4]> = (0..256).map(|i| [i as f32; 4]).collect();
+        let mut output = vec![[0.0f32; 4]; 64];
+        b.iter(|| {
+            dec4.reset();
+            let _ = black_box(dec4.process_block(black_box(&input), black_box(&mut output)));
+        });
+    });
+
+    group.finish();
+}
+
 // ThresholdDetector benchmarks - target: <10 μs for 1024 channels
 fn bench_threshold_detector(c: &mut Criterion) {
     let mut group = c.benchmark_group("threshold_detector");
@@ -386,6 +413,7 @@ criterion_group!(
     bench_iir_filter,
     bench_fir_filter,
     bench_ac_coupler,
+    bench_decimator,
     bench_threshold_detector,
     bench_adaptive_detector
 );
