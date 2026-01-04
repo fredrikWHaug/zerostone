@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use zerostone::{
-    AcCoupler, AdaptiveThresholdDetector, BiquadCoeffs, CircularBuffer, Decimator, FirFilter,
-    IirFilter, ThresholdDetector,
+    AcCoupler, AdaptiveThresholdDetector, BiquadCoeffs, CircularBuffer, Decimator,
+    EnvelopeFollower, FirFilter, IirFilter, Rectification, ThresholdDetector,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -274,6 +274,43 @@ fn bench_decimator(c: &mut Criterion) {
     group.finish();
 }
 
+// EnvelopeFollower benchmarks
+fn bench_envelope_follower(c: &mut Criterion) {
+    let mut group = c.benchmark_group("envelope_follower");
+
+    // Single sample processing (32 channels)
+    let mut env32: EnvelopeFollower<32> =
+        EnvelopeFollower::new(250.0, 0.010, 0.100, Rectification::Absolute);
+    let samples32 = [0.5f32; 32];
+    group.throughput(Throughput::Elements(32));
+    group.bench_function("32_channels_absolute", |b| {
+        b.iter(|| {
+            let _ = black_box(env32.process(black_box(&samples32)));
+        });
+    });
+
+    // Squared rectification
+    let mut env32_sq: EnvelopeFollower<32> =
+        EnvelopeFollower::new(250.0, 0.010, 0.100, Rectification::Squared);
+    group.bench_function("32_channels_squared", |b| {
+        b.iter(|| {
+            let _ = black_box(env32_sq.process(black_box(&samples32)));
+        });
+    });
+
+    // Block processing
+    let mut env4: EnvelopeFollower<4> =
+        EnvelopeFollower::new(250.0, 0.010, 0.100, Rectification::Absolute);
+    group.bench_function("block_256_samples_4ch", |b| {
+        let mut block: Vec<[f32; 4]> = (0..256).map(|i| [(i as f32 * 0.01).sin(); 4]).collect();
+        b.iter(|| {
+            env4.process_block(black_box(&mut block));
+        });
+    });
+
+    group.finish();
+}
+
 // ThresholdDetector benchmarks - target: <10 μs for 1024 channels
 fn bench_threshold_detector(c: &mut Criterion) {
     let mut group = c.benchmark_group("threshold_detector");
@@ -414,6 +451,7 @@ criterion_group!(
     bench_fir_filter,
     bench_ac_coupler,
     bench_decimator,
+    bench_envelope_follower,
     bench_threshold_detector,
     bench_adaptive_detector
 );

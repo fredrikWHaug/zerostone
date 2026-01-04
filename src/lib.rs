@@ -12,6 +12,7 @@
 //! - **[`FirFilter`]** - Direct-form FIR filter with linear phase
 //! - **[`AcCoupler`]** - AC coupling filter for DC offset removal
 //! - **[`Decimator`]** - Sample rate reduction (downsampling)
+//! - **[`EnvelopeFollower`]** - Amplitude envelope extraction
 //! - **[`ThresholdDetector`]** - Multi-channel spike detection with refractory period
 //! - **[`OnlineStats`]** - Welford's algorithm for streaming mean/variance
 //!
@@ -43,6 +44,7 @@
 mod buffer;
 mod decimate;
 mod detector;
+mod envelope;
 mod filter;
 mod stats;
 
@@ -52,5 +54,6 @@ pub use decimate::Decimator;
 pub use detector::{
     AdaptiveThresholdDetector, DetectorState, SpikeEvent, SpikeEvents, ThresholdDetector,
 };
+pub use envelope::{EnvelopeFollower, Rectification};
 pub use filter::{AcCoupler, BiquadCoeffs, FirFilter, IirFilter};
 pub use stats::OnlineStats;
