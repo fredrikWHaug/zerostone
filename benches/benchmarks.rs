@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use zerostone::{
-    AcCoupler, AdaptiveThresholdDetector, BiquadCoeffs, CircularBuffer, Decimator,
-    EnvelopeFollower, FirFilter, IirFilter, Rectification, ThresholdDetector,
+    AcCoupler, AdaptiveThresholdDetector, BandPower, BiquadCoeffs, CircularBuffer, Complex,
+    Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter, Rectification, ThresholdDetector,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -311,6 +311,69 @@ fn bench_envelope_follower(c: &mut Criterion) {
     group.finish();
 }
 
+// FFT benchmarks - target: <10 μs for 256-point
+fn bench_fft(c: &mut Criterion) {
+    let mut group = c.benchmark_group("fft");
+
+    // 128-point FFT
+    let fft128 = Fft::<128>::new();
+    group.bench_function("128_point_forward", |b| {
+        let mut data = [Complex::from_real(1.0); 128];
+        b.iter(|| {
+            fft128.forward(black_box(&mut data));
+        });
+    });
+
+    // 256-point FFT (target: <10 μs)
+    let fft256 = Fft::<256>::new();
+    group.bench_function("256_point_forward", |b| {
+        let mut data = [Complex::from_real(1.0); 256];
+        b.iter(|| {
+            fft256.forward(black_box(&mut data));
+        });
+    });
+
+    // 512-point FFT
+    let fft512 = Fft::<512>::new();
+    group.bench_function("512_point_forward", |b| {
+        let mut data = [Complex::from_real(1.0); 512];
+        b.iter(|| {
+            fft512.forward(black_box(&mut data));
+        });
+    });
+
+    // 1024-point FFT
+    let fft1024 = Fft::<1024>::new();
+    group.bench_function("1024_point_forward", |b| {
+        let mut data = [Complex::from_real(1.0); 1024];
+        b.iter(|| {
+            fft1024.forward(black_box(&mut data));
+        });
+    });
+
+    // Power spectrum computation
+    let fft256_ps = Fft::<256>::new();
+    group.bench_function("256_point_power_spectrum", |b| {
+        let signal = [1.0f32; 256];
+        let mut output = [0.0f32; 129];
+        b.iter(|| {
+            fft256_ps.power_spectrum(black_box(&signal), black_box(&mut output));
+        });
+    });
+
+    // Band power (alpha band)
+    let fft256_bp = Fft::<256>::new();
+    let mut bp = BandPower::new(250.0);
+    group.bench_function("256_point_alpha_band_power", |b| {
+        let signal = [1.0f32; 256];
+        b.iter(|| {
+            let _ = black_box(bp.compute(&fft256_bp, black_box(&signal), 8.0, 12.0));
+        });
+    });
+
+    group.finish();
+}
+
 // ThresholdDetector benchmarks - target: <10 μs for 1024 channels
 fn bench_threshold_detector(c: &mut Criterion) {
     let mut group = c.benchmark_group("threshold_detector");
@@ -452,6 +515,7 @@ criterion_group!(
     bench_ac_coupler,
     bench_decimator,
     bench_envelope_follower,
+    bench_fft,
     bench_threshold_detector,
     bench_adaptive_detector
 );
