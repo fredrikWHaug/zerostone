@@ -151,7 +151,11 @@ impl<const C: usize, const M: usize> OnlineCov<C, M> {
 
         // Compute delta after updating mean
         let mut delta_after = [0.0; C];
-        for ((delta, &s), &m) in delta_after.iter_mut().zip(sample.iter()).zip(self.mean.iter()) {
+        for ((delta, &s), &m) in delta_after
+            .iter_mut()
+            .zip(sample.iter())
+            .zip(self.mean.iter())
+        {
             *delta = s - m;
         }
 
