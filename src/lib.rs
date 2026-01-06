@@ -16,6 +16,7 @@
 //! - **[`Fft`]** - Fast Fourier Transform for spectral analysis
 //! - **[`ThresholdDetector`]** - Multi-channel spike detection with refractory period
 //! - **[`OnlineStats`]** - Welford's algorithm for streaming mean/variance
+//! - **[`OnlineCov`]** - Streaming covariance matrix estimation for CSP
 //!
 //! # Example
 //!
@@ -59,4 +60,4 @@ pub use detector::{
 pub use envelope::{EnvelopeFollower, Rectification};
 pub use fft::{BandPower, Complex, Fft};
 pub use filter::{AcCoupler, BiquadCoeffs, FirFilter, IirFilter};
-pub use stats::OnlineStats;
+pub use stats::{OnlineCov, OnlineStats};

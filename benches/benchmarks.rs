@@ -1,7 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use zerostone::{
     AcCoupler, AdaptiveThresholdDetector, BandPower, BiquadCoeffs, CircularBuffer, Complex,
-    Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter, Rectification, ThresholdDetector,
+    Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter, OnlineCov, Rectification,
+    ThresholdDetector,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -503,6 +504,86 @@ fn bench_adaptive_detector(c: &mut Criterion) {
     group.finish();
 }
 
+// OnlineCov benchmarks - essential for CSP and Riemannian geometry BCI methods
+fn bench_online_cov(c: &mut Criterion) {
+    let mut group = c.benchmark_group("online_cov");
+
+    // 4-channel update (typical for motor imagery)
+    let mut cov4: OnlineCov<4, 16> = OnlineCov::new();
+    let samples4 = [1.0, 2.0, 3.0, 4.0];
+    group.bench_function("update_4_channels", |b| {
+        b.iter(|| {
+            cov4.update(black_box(&samples4));
+        });
+    });
+
+    // 8-channel update
+    let mut cov8: OnlineCov<8, 64> = OnlineCov::new();
+    let samples8 = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+    group.bench_function("update_8_channels", |b| {
+        b.iter(|| {
+            cov8.update(black_box(&samples8));
+        });
+    });
+
+    // 16-channel update
+    let mut cov16: OnlineCov<16, 256> = OnlineCov::new();
+    let samples16 = [1.0; 16];
+    group.bench_function("update_16_channels", |b| {
+        b.iter(|| {
+            cov16.update(black_box(&samples16));
+        });
+    });
+
+    // 32-channel update
+    let mut cov32: OnlineCov<32, 1024> = OnlineCov::new();
+    let samples32 = [1.0; 32];
+    group.bench_function("update_32_channels", |b| {
+        b.iter(|| {
+            cov32.update(black_box(&samples32));
+        });
+    });
+
+    // Covariance matrix retrieval (4 channels)
+    let mut cov4_retrieval: OnlineCov<4, 16> = OnlineCov::new();
+    for _ in 0..100 {
+        cov4_retrieval.update(&[1.0, 2.0, 3.0, 4.0]);
+    }
+    group.bench_function("covariance_4_channels", |b| {
+        b.iter(|| {
+            let _ = black_box(cov4_retrieval.covariance());
+        });
+    });
+
+    // Correlation matrix retrieval (4 channels)
+    group.bench_function("correlation_4_channels", |b| {
+        b.iter(|| {
+            let _ = black_box(cov4_retrieval.correlation());
+        });
+    });
+
+    // Element access
+    group.bench_function("get_element_4_channels", |b| {
+        b.iter(|| {
+            let _ = black_box(cov4_retrieval.get(0, 1));
+        });
+    });
+
+    // Covariance matrix retrieval (32 channels)
+    let mut cov32_retrieval: OnlineCov<32, 1024> = OnlineCov::new();
+    for i in 0..100 {
+        let sample: [f64; 32] = core::array::from_fn(|j| (i + j) as f64);
+        cov32_retrieval.update(&sample);
+    }
+    group.bench_function("covariance_32_channels", |b| {
+        b.iter(|| {
+            let _ = black_box(cov32_retrieval.covariance());
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -517,6 +598,7 @@ criterion_group!(
     bench_envelope_follower,
     bench_fft,
     bench_threshold_detector,
-    bench_adaptive_detector
+    bench_adaptive_detector,
+    bench_online_cov
 );
 criterion_main!(benches);
