@@ -365,11 +365,11 @@ fn find_max_off_diagonal<const C: usize, const M: usize>(
 ) -> (usize, usize, f64) {
     let mut max_i = 0;
     let mut max_j = 1;
-    let mut max_val = a.get(0, 1).abs();
+    let mut max_val = libm::fabs(a.get(0, 1));
 
     for i in 0..C {
         for j in (i + 1)..C {
-            let val = a.get(i, j).abs();
+            let val = libm::fabs(a.get(i, j));
             if val > max_val {
                 max_val = val;
                 max_i = i;
