@@ -44,15 +44,18 @@
 #![no_std]
 
 mod buffer;
+mod csp;
 mod decimate;
 mod detector;
 mod envelope;
 mod fft;
 mod filter;
+pub mod linalg;
 mod stats;
 
 // Re-export at crate root for convenience
 pub use buffer::CircularBuffer;
+pub use csp::{AdaptiveCsp, CspError, UpdateConfig};
 pub use decimate::Decimator;
 pub use detector::{
     AdaptiveThresholdDetector, DetectorState, SpikeEvent, SpikeEvents, ThresholdDetector,
