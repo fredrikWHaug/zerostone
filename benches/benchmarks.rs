@@ -634,16 +634,16 @@ fn bench_csp(c: &mut Criterion) {
         for _ in 0..100 {
             let mut trial = [[0.0; 16]; 20];
             for sample in &mut trial {
-                for i in 0..4 {
-                    sample[i] = 1.0;
+                for elem in sample.iter_mut().take(4) {
+                    *elem = 1.0;
                 }
             }
             csp.update_class1(&trial);
 
             let mut trial2 = [[0.0; 16]; 20];
             for sample in &mut trial2 {
-                for i in 4..8 {
-                    sample[i] = 1.0;
+                for elem in sample.iter_mut().take(8).skip(4) {
+                    *elem = 1.0;
                 }
             }
             csp.update_class2(&trial2);
@@ -671,16 +671,16 @@ fn bench_csp(c: &mut Criterion) {
         for _ in 0..100 {
             let mut trial = [[0.0; 32]; 20];
             for sample in &mut trial {
-                for i in 0..8 {
-                    sample[i] = 1.0;
+                for elem in sample.iter_mut().take(8) {
+                    *elem = 1.0;
                 }
             }
             csp.update_class1(&trial);
 
             let mut trial2 = [[0.0; 32]; 20];
             for sample in &mut trial2 {
-                for i in 8..16 {
-                    sample[i] = 1.0;
+                for elem in sample.iter_mut().take(16).skip(8) {
+                    *elem = 1.0;
                 }
             }
             csp.update_class2(&trial2);
@@ -738,16 +738,16 @@ fn bench_csp(c: &mut Criterion) {
         for _ in 0..100 {
             let mut trial = [[0.0; 16]; 20];
             for sample in &mut trial {
-                for i in 0..4 {
-                    sample[i] = 1.0;
+                for elem in sample.iter_mut().take(4) {
+                    *elem = 1.0;
                 }
             }
             csp.update_class1(&trial);
 
             let mut trial2 = [[0.0; 16]; 20];
             for sample in &mut trial2 {
-                for i in 4..8 {
-                    sample[i] = 1.0;
+                for elem in sample.iter_mut().take(8).skip(4) {
+                    *elem = 1.0;
                 }
             }
             csp.update_class2(&trial2);
@@ -772,16 +772,16 @@ fn bench_csp(c: &mut Criterion) {
         for _ in 0..100 {
             let mut trial = [[0.0; 32]; 20];
             for sample in &mut trial {
-                for i in 0..8 {
-                    sample[i] = 1.0;
+                for elem in sample.iter_mut().take(8) {
+                    *elem = 1.0;
                 }
             }
             csp.update_class1(&trial);
 
             let mut trial2 = [[0.0; 32]; 20];
             for sample in &mut trial2 {
-                for i in 8..16 {
-                    sample[i] = 1.0;
+                for elem in sample.iter_mut().take(16).skip(8) {
+                    *elem = 1.0;
                 }
             }
             csp.update_class2(&trial2);
