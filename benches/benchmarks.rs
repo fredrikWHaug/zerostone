@@ -1,8 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use zerostone::{
-    AcCoupler, AdaptiveThresholdDetector, BandPower, BiquadCoeffs, CircularBuffer, Complex,
-    Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter, OnlineCov, Rectification,
-    ThresholdDetector,
+    AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, BandPower, BiquadCoeffs, CircularBuffer,
+    Complex, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter, OnlineCov, Rectification,
+    ThresholdDetector, UpdateConfig,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -584,6 +584,244 @@ fn bench_online_cov(c: &mut Criterion) {
     group.finish();
 }
 
+// CSP benchmarks - Common Spatial Patterns for motor imagery BCI
+fn bench_csp(c: &mut Criterion) {
+    let mut group = c.benchmark_group("csp");
+
+    // Filter application benchmark (hot path) - 8 channels, 4 filters
+    {
+        let mut csp: AdaptiveCsp<8, 64, 4, 32> = AdaptiveCsp::new(UpdateConfig {
+            min_samples: 50,
+            update_interval: 0,
+            ..Default::default()
+        });
+
+        // Generate training data
+        for _ in 0..100 {
+            let mut trial = [[0.0; 8]; 20];
+            for sample in &mut trial {
+                sample[0] = 1.0;
+                sample[1] = 0.5;
+            }
+            csp.update_class1(&trial);
+
+            let mut trial2 = [[0.0; 8]; 20];
+            for sample in &mut trial2 {
+                sample[2] = 1.0;
+                sample[3] = 0.5;
+            }
+            csp.update_class2(&trial2);
+        }
+
+        csp.recompute_filters().unwrap();
+
+        let sample = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        group.bench_function("apply_8ch_4filters", |b| {
+            b.iter(|| {
+                let _ = black_box(csp.apply(black_box(&sample)).unwrap());
+            });
+        });
+    }
+
+    // Filter application - 16 channels, 6 filters
+    {
+        let mut csp: AdaptiveCsp<16, 256, 6, 96> = AdaptiveCsp::new(UpdateConfig {
+            min_samples: 50,
+            update_interval: 0,
+            ..Default::default()
+        });
+
+        for _ in 0..100 {
+            let mut trial = [[0.0; 16]; 20];
+            for sample in &mut trial {
+                for i in 0..4 {
+                    sample[i] = 1.0;
+                }
+            }
+            csp.update_class1(&trial);
+
+            let mut trial2 = [[0.0; 16]; 20];
+            for sample in &mut trial2 {
+                for i in 4..8 {
+                    sample[i] = 1.0;
+                }
+            }
+            csp.update_class2(&trial2);
+        }
+
+        csp.recompute_filters().unwrap();
+
+        let sample = [1.0; 16];
+        group.bench_function("apply_16ch_6filters", |b| {
+            b.iter(|| {
+                let _ = black_box(csp.apply(black_box(&sample)).unwrap());
+            });
+        });
+    }
+
+    // Filter application - 32 channels, 6 filters (target: <1 μs)
+    {
+        let mut csp: AdaptiveCsp<32, 1024, 6, 192> = AdaptiveCsp::new(UpdateConfig {
+            min_samples: 50,
+            update_interval: 0,
+            regularization: 1e-4,
+            ..Default::default()
+        });
+
+        for _ in 0..100 {
+            let mut trial = [[0.0; 32]; 20];
+            for sample in &mut trial {
+                for i in 0..8 {
+                    sample[i] = 1.0;
+                }
+            }
+            csp.update_class1(&trial);
+
+            let mut trial2 = [[0.0; 32]; 20];
+            for sample in &mut trial2 {
+                for i in 8..16 {
+                    sample[i] = 1.0;
+                }
+            }
+            csp.update_class2(&trial2);
+        }
+
+        csp.recompute_filters().unwrap();
+
+        let sample = [1.0; 32];
+        group.bench_function("apply_32ch_6filters", |b| {
+            b.iter(|| {
+                let _ = black_box(csp.apply(black_box(&sample)).unwrap());
+            });
+        });
+    }
+
+    // Filter recomputation - 8 channels (eigendecomposition)
+    {
+        let mut csp: AdaptiveCsp<8, 64, 4, 32> = AdaptiveCsp::new(UpdateConfig {
+            min_samples: 50,
+            update_interval: 0,
+            ..Default::default()
+        });
+
+        for _ in 0..100 {
+            let mut trial = [[0.0; 8]; 20];
+            for sample in &mut trial {
+                sample[0] = 1.0;
+                sample[1] = 0.5;
+            }
+            csp.update_class1(&trial);
+
+            let mut trial2 = [[0.0; 8]; 20];
+            for sample in &mut trial2 {
+                sample[2] = 1.0;
+                sample[3] = 0.5;
+            }
+            csp.update_class2(&trial2);
+        }
+
+        group.bench_function("recompute_8ch", |b| {
+            b.iter(|| {
+                let _ = black_box(csp.recompute_filters());
+            });
+        });
+    }
+
+    // Filter recomputation - 16 channels
+    {
+        let mut csp: AdaptiveCsp<16, 256, 6, 96> = AdaptiveCsp::new(UpdateConfig {
+            min_samples: 50,
+            update_interval: 0,
+            ..Default::default()
+        });
+
+        for _ in 0..100 {
+            let mut trial = [[0.0; 16]; 20];
+            for sample in &mut trial {
+                for i in 0..4 {
+                    sample[i] = 1.0;
+                }
+            }
+            csp.update_class1(&trial);
+
+            let mut trial2 = [[0.0; 16]; 20];
+            for sample in &mut trial2 {
+                for i in 4..8 {
+                    sample[i] = 1.0;
+                }
+            }
+            csp.update_class2(&trial2);
+        }
+
+        group.bench_function("recompute_16ch", |b| {
+            b.iter(|| {
+                let _ = black_box(csp.recompute_filters());
+            });
+        });
+    }
+
+    // Filter recomputation - 32 channels (target: <100 ms)
+    {
+        let mut csp: AdaptiveCsp<32, 1024, 6, 192> = AdaptiveCsp::new(UpdateConfig {
+            min_samples: 50,
+            update_interval: 0,
+            regularization: 1e-4,
+            ..Default::default()
+        });
+
+        for _ in 0..100 {
+            let mut trial = [[0.0; 32]; 20];
+            for sample in &mut trial {
+                for i in 0..8 {
+                    sample[i] = 1.0;
+                }
+            }
+            csp.update_class1(&trial);
+
+            let mut trial2 = [[0.0; 32]; 20];
+            for sample in &mut trial2 {
+                for i in 8..16 {
+                    sample[i] = 1.0;
+                }
+            }
+            csp.update_class2(&trial2);
+        }
+
+        group.bench_function("recompute_32ch", |b| {
+            b.iter(|| {
+                let _ = black_box(csp.recompute_filters());
+            });
+        });
+    }
+
+    // Online adaptation - updating with new trials
+    {
+        let mut csp: AdaptiveCsp<8, 64, 4, 32> = AdaptiveCsp::new(UpdateConfig {
+            min_samples: 50,
+            update_interval: 0,
+            ..Default::default()
+        });
+
+        // Pre-fill with data
+        for _ in 0..100 {
+            let trial1 = [[1.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]; 20];
+            csp.update_class1(&trial1);
+
+            let trial2 = [[0.0, 0.0, 1.0, 0.5, 0.0, 0.0, 0.0, 0.0]; 20];
+            csp.update_class2(&trial2);
+        }
+
+        let new_trial = [[1.0, 0.5, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0]; 20];
+        group.bench_function("update_class1_8ch", |b| {
+            b.iter(|| {
+                csp.update_class1(black_box(&new_trial));
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -599,6 +837,7 @@ criterion_group!(
     bench_fft,
     bench_threshold_detector,
     bench_adaptive_detector,
-    bench_online_cov
+    bench_online_cov,
+    bench_csp
 );
 criterion_main!(benches);
