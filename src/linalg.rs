@@ -239,7 +239,10 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
                 sum -= self.get(i, j) * x[j];
             }
             let l_ii = self.get(i, i);
-            assert!(libm::fabs(l_ii) > 1e-15, "Singular matrix in forward substitution");
+            assert!(
+                libm::fabs(l_ii) > 1e-15,
+                "Singular matrix in forward substitution"
+            );
             x[i] = sum / l_ii;
         }
 
@@ -258,10 +261,13 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
         for i in (0..C).rev() {
             let mut sum = b[i];
             for j in (i + 1)..C {
-                sum -= self.get(j, i) * x[j];  // Note: transpose indexing
+                sum -= self.get(j, i) * x[j]; // Note: transpose indexing
             }
             let l_ii = self.get(i, i);
-            assert!(libm::fabs(l_ii) > 1e-15, "Singular matrix in backward substitution");
+            assert!(
+                libm::fabs(l_ii) > 1e-15,
+                "Singular matrix in backward substitution"
+            );
             x[i] = sum / l_ii;
         }
 
@@ -360,9 +366,7 @@ pub struct EigenDecomposition<const C: usize, const M: usize> {
 }
 
 /// Find the maximum off-diagonal element in a symmetric matrix.
-fn find_max_off_diagonal<const C: usize, const M: usize>(
-    a: &Matrix<C, M>,
-) -> (usize, usize, f64) {
+fn find_max_off_diagonal<const C: usize, const M: usize>(a: &Matrix<C, M>) -> (usize, usize, f64) {
     let mut max_i = 0;
     let mut max_j = 1;
     let mut max_val = libm::fabs(a.get(0, 1));
@@ -427,7 +431,8 @@ fn apply_jacobi_rotation<const C: usize, const M: usize>(
 
     let new_a_ii = cos_theta * cos_theta * a_ii - 2.0 * cos_theta * sin_theta * a_ij
         + sin_theta * sin_theta * a_jj;
-    let new_a_jj = sin_theta * sin_theta * a_ii + 2.0 * cos_theta * sin_theta * a_ij
+    let new_a_jj = sin_theta * sin_theta * a_ii
+        + 2.0 * cos_theta * sin_theta * a_ij
         + cos_theta * cos_theta * a_jj;
 
     a.set(i, i, new_a_ii);
@@ -894,10 +899,7 @@ mod tests {
             a.get(0, 0) * v0[0] + a.get(0, 1) * v0[1],
             a.get(1, 0) * v0[0] + a.get(1, 1) * v0[1],
         ];
-        let lambda_v0 = [
-            eigen.eigenvalues[0] * v0[0],
-            eigen.eigenvalues[0] * v0[1],
-        ];
+        let lambda_v0 = [eigen.eigenvalues[0] * v0[0], eigen.eigenvalues[0] * v0[1]];
 
         assert!((av0[0] - lambda_v0[0]).abs() < 1e-8);
         assert!((av0[1] - lambda_v0[1]).abs() < 1e-8);
@@ -993,10 +995,16 @@ mod tests {
         let v1 = eigen.eigenvector(1);
 
         // Check that v0 has larger weight on channel 0
-        assert!(v0[0].abs() > v0[1].abs(), "Top eigenvector should favor channel 0");
+        assert!(
+            v0[0].abs() > v0[1].abs(),
+            "Top eigenvector should favor channel 0"
+        );
 
         // Check that v1 has larger weight on channel 1
-        assert!(v1[1].abs() > v1[0].abs(), "Bottom eigenvector should favor channel 1");
+        assert!(
+            v1[1].abs() > v1[0].abs(),
+            "Bottom eigenvector should favor channel 1"
+        );
     }
 
     #[test]
