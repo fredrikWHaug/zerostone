@@ -504,6 +504,7 @@ impl<const C: usize, const M: usize> EigenDecomposition<C, M> {
     /// Get the k-th eigenvector as an array.
     pub fn eigenvector(&self, k: usize) -> [f64; C] {
         let mut vec = [0.0; C];
+        #[allow(clippy::needless_range_loop)]
         for i in 0..C {
             vec[i] = self.eigenvectors.get(i, k);
         }
@@ -555,6 +556,7 @@ pub fn generalized_eigen<const C: usize, const M: usize>(
         let mut e_i = [0.0; C];
         e_i[i] = 1.0;
         let col_i = l.forward_substitute(&e_i);
+        #[allow(clippy::needless_range_loop)]
         for j in 0..C {
             l_inv.set(j, i, col_i[j]);
         }
