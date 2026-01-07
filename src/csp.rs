@@ -160,7 +160,7 @@ impl<const C: usize, const M: usize, const K: usize, const F: usize> AdaptiveCsp
     ///
     /// # Arguments
     ///
-    /// * `trial` - Multi-channel time series [samples][channels]
+    /// * `trial` - Multi-channel time series \[samples\]\[channels\]
     pub fn update_class1(&mut self, trial: &[[f64; C]]) {
         for sample in trial {
             self.cov1.update(sample);
