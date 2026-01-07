@@ -213,7 +213,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
                 } else {
                     // Off-diagonal element
                     let l_jj = l.get(j, j);
-                    if l_jj.abs() < 1e-15 {
+                    if libm::fabs(l_jj) < 1e-15 {
                         return Err(LinalgError::NotPositiveDefinite);
                     }
                     l.set(i, j, sum / l_jj);
@@ -239,7 +239,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
                 sum -= self.get(i, j) * x[j];
             }
             let l_ii = self.get(i, i);
-            assert!(l_ii.abs() > 1e-15, "Singular matrix in forward substitution");
+            assert!(libm::fabs(l_ii) > 1e-15, "Singular matrix in forward substitution");
             x[i] = sum / l_ii;
         }
 
@@ -261,7 +261,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
                 sum -= self.get(j, i) * x[j];  // Note: transpose indexing
             }
             let l_ii = self.get(i, i);
-            assert!(l_ii.abs() > 1e-15, "Singular matrix in backward substitution");
+            assert!(libm::fabs(l_ii) > 1e-15, "Singular matrix in backward substitution");
             x[i] = sum / l_ii;
         }
 
@@ -943,7 +943,7 @@ mod tests {
                 let vi = eigen.eigenvector(i);
                 let vj = eigen.eigenvector(j);
                 let dot = vi[0] * vj[0] + vi[1] * vj[1] + vi[2] * vj[2];
-                assert!(dot.abs() < 1e-8, "Eigenvectors not orthogonal");
+                assert!(libm::fabs(dot) < 1e-8, "Eigenvectors not orthogonal");
             }
         }
 
