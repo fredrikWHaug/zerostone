@@ -1,8 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use zerostone::{
-    AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, BandPower, BiquadCoeffs, CircularBuffer,
-    Complex, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter, OnlineCov, Rectification,
-    ThresholdDetector, UpdateConfig,
+    apply_window, AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, BandPower, BiquadCoeffs,
+    CircularBuffer, Complex, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter, OnlineCov,
+    Rectification, ThresholdDetector, UpdateConfig, WindowType,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -822,6 +822,85 @@ fn bench_csp(c: &mut Criterion) {
     group.finish();
 }
 
+// Window function benchmarks
+fn bench_window(c: &mut Criterion) {
+    let mut group = c.benchmark_group("window");
+
+    // Benchmark different window sizes
+    for size in [64, 256, 1024].iter() {
+        group.throughput(Throughput::Elements(*size as u64));
+
+        match *size {
+            64 => {
+                group.bench_with_input(
+                    BenchmarkId::from_parameter(format!("hann_{}", size)),
+                    size,
+                    |b, _| {
+                        let mut signal = [1.0f32; 64];
+                        b.iter(|| {
+                            apply_window(black_box(&mut signal), WindowType::Hann);
+                        });
+                    },
+                );
+            }
+            256 => {
+                group.bench_with_input(
+                    BenchmarkId::from_parameter(format!("hann_{}", size)),
+                    size,
+                    |b, _| {
+                        let mut signal = [1.0f32; 256];
+                        b.iter(|| {
+                            apply_window(black_box(&mut signal), WindowType::Hann);
+                        });
+                    },
+                );
+            }
+            1024 => {
+                group.bench_with_input(
+                    BenchmarkId::from_parameter(format!("hann_{}", size)),
+                    size,
+                    |b, _| {
+                        let mut signal = [1.0f32; 1024];
+                        b.iter(|| {
+                            apply_window(black_box(&mut signal), WindowType::Hann);
+                        });
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+
+    // Benchmark different window types at 256 samples
+    let mut signal256 = [1.0f32; 256];
+
+    group.bench_function("rectangular_256", |b| {
+        b.iter(|| {
+            apply_window(black_box(&mut signal256), WindowType::Rectangular);
+        });
+    });
+
+    group.bench_function("hamming_256", |b| {
+        b.iter(|| {
+            apply_window(black_box(&mut signal256), WindowType::Hamming);
+        });
+    });
+
+    group.bench_function("blackman_256", |b| {
+        b.iter(|| {
+            apply_window(black_box(&mut signal256), WindowType::Blackman);
+        });
+    });
+
+    group.bench_function("blackman_harris_256", |b| {
+        b.iter(|| {
+            apply_window(black_box(&mut signal256), WindowType::BlackmanHarris);
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -838,6 +917,7 @@ criterion_group!(
     bench_threshold_detector,
     bench_adaptive_detector,
     bench_online_cov,
-    bench_csp
+    bench_csp,
+    bench_window
 );
 criterion_main!(benches);

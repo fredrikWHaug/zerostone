@@ -17,6 +17,7 @@
 //! - **[`ThresholdDetector`]** - Multi-channel spike detection with refractory period
 //! - **[`OnlineStats`]** - Welford's algorithm for streaming mean/variance
 //! - **[`OnlineCov`]** - Streaming covariance matrix estimation for CSP
+//! - **[`WindowType`]** - Window functions for spectral analysis (Hann, Hamming, Blackman, etc.)
 //!
 //! # Example
 //!
@@ -52,6 +53,7 @@ mod fft;
 mod filter;
 pub mod linalg;
 mod stats;
+mod window;
 
 // Re-export at crate root for convenience
 pub use buffer::CircularBuffer;
@@ -64,3 +66,7 @@ pub use envelope::{EnvelopeFollower, Rectification};
 pub use fft::{BandPower, Complex, Fft};
 pub use filter::{AcCoupler, BiquadCoeffs, FirFilter, IirFilter};
 pub use stats::{OnlineCov, OnlineStats};
+pub use window::{
+    apply_window, apply_window_f64, coherent_gain, equivalent_noise_bandwidth, window_coefficient,
+    WindowType,
+};
