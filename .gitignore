@@ -2,3 +2,6 @@
 
 /target
 Cargo.lock
+
+# Claude Code settings and context (user-specific)
+.claude/
