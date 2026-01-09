@@ -2,7 +2,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use zerostone::{
     apply_window, AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, BandPower, BiquadCoeffs,
     CircularBuffer, Complex, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter, OnlineCov,
-    Rectification, ThresholdDetector, UpdateConfig, WindowType,
+    Rectification, StreamingPercentile, ThresholdDetector, UpdateConfig, WindowType,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -901,6 +901,84 @@ fn bench_window(c: &mut Criterion) {
     group.finish();
 }
 
+// StreamingPercentile benchmarks - P² algorithm for streaming quantile estimation
+fn bench_streaming_percentile(c: &mut Criterion) {
+    let mut group = c.benchmark_group("streaming_percentile");
+
+    // Single-channel update (hot path)
+    let mut est1: StreamingPercentile<1> = StreamingPercentile::new(0.5);
+    // Pre-initialize
+    for i in 0..5 {
+        est1.update(&[i as f64]);
+    }
+    group.bench_function("update_1_channel", |b| {
+        b.iter(|| {
+            est1.update(black_box(&[42.0]));
+        });
+    });
+
+    // 8-channel update (typical for motor imagery BCI)
+    let mut est8: StreamingPercentile<8> = StreamingPercentile::new(0.08);
+    for i in 0..5 {
+        est8.update(&[i as f64; 8]);
+    }
+    let samples8 = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+    group.throughput(Throughput::Elements(8));
+    group.bench_function("update_8_channels", |b| {
+        b.iter(|| {
+            est8.update(black_box(&samples8));
+        });
+    });
+
+    // 32-channel update
+    let mut est32: StreamingPercentile<32> = StreamingPercentile::new(0.5);
+    for i in 0..5 {
+        est32.update(&[i as f64; 32]);
+    }
+    let samples32 = [1.0; 32];
+    group.throughput(Throughput::Elements(32));
+    group.bench_function("update_32_channels", |b| {
+        b.iter(|| {
+            est32.update(black_box(&samples32));
+        });
+    });
+
+    // Percentile retrieval
+    let mut est_retrieve: StreamingPercentile<8> = StreamingPercentile::new(0.5);
+    for i in 0..1000 {
+        est_retrieve.update(&[i as f64; 8]);
+    }
+    group.bench_function("percentile_8_channels", |b| {
+        b.iter(|| {
+            let _ = black_box(est_retrieve.percentile());
+        });
+    });
+
+    // Different percentiles (8th percentile for baseline estimation)
+    let mut est_p8: StreamingPercentile<8> = StreamingPercentile::new(0.08);
+    for i in 0..5 {
+        est_p8.update(&[i as f64; 8]);
+    }
+    group.bench_function("update_8ch_p08", |b| {
+        b.iter(|| {
+            est_p8.update(black_box(&samples8));
+        });
+    });
+
+    // 99th percentile
+    let mut est_p99: StreamingPercentile<8> = StreamingPercentile::new(0.99);
+    for i in 0..5 {
+        est_p99.update(&[i as f64; 8]);
+    }
+    group.bench_function("update_8ch_p99", |b| {
+        b.iter(|| {
+            est_p99.update(black_box(&samples8));
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -918,6 +996,7 @@ criterion_group!(
     bench_adaptive_detector,
     bench_online_cov,
     bench_csp,
-    bench_window
+    bench_window,
+    bench_streaming_percentile
 );
 criterion_main!(benches);
