@@ -1,8 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use zerostone::{
     apply_window, AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, BandPower, BiquadCoeffs,
-    CircularBuffer, Complex, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter, OnlineCov,
-    Rectification, StreamingPercentile, ThresholdDetector, UpdateConfig, WindowType,
+    CircularBuffer, Complex, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter,
+    OasisDeconvolution, OnlineCov, Rectification, StreamingPercentile, ThresholdDetector,
+    UpdateConfig, WindowType,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -979,6 +980,107 @@ fn bench_streaming_percentile(c: &mut Criterion) {
     group.finish();
 }
 
+// OASIS deconvolution benchmarks - calcium imaging spike inference
+fn bench_oasis_deconvolution(c: &mut Criterion) {
+    let mut group = c.benchmark_group("oasis_deconvolution");
+
+    // Single channel update (hot path)
+    group.bench_function("single_channel_update", |b| {
+        let mut deconv: OasisDeconvolution<1, 256> = OasisDeconvolution::new(0.95, 0.1);
+        let fluorescence = [5.0];
+        let baseline = [1.0];
+
+        b.iter(|| {
+            black_box(deconv.update(black_box(&fluorescence), black_box(&baseline)));
+        });
+    });
+
+    // Multi-channel (8 channels) - typical calcium imaging
+    group.throughput(Throughput::Elements(8));
+    group.bench_function("8_channels_update", |b| {
+        let mut deconv: OasisDeconvolution<8, 256> = OasisDeconvolution::new(0.95, 0.1);
+        let fluorescence = [5.0; 8];
+        let baseline = [1.0; 8];
+
+        b.iter(|| {
+            black_box(deconv.update(black_box(&fluorescence), black_box(&baseline)));
+        });
+    });
+
+    // Multi-channel (32 channels) - large FOV imaging
+    group.throughput(Throughput::Elements(32));
+    group.bench_function("32_channels_update", |b| {
+        let mut deconv: OasisDeconvolution<32, 256> = OasisDeconvolution::new(0.95, 0.1);
+        let fluorescence = [5.0; 32];
+        let baseline = [1.0; 32];
+
+        b.iter(|| {
+            black_box(deconv.update(black_box(&fluorescence), black_box(&baseline)));
+        });
+    });
+
+    // From tau constructor (GCaMP6f typical parameters)
+    group.bench_function("from_tau_constructor", |b| {
+        b.iter(|| {
+            let _deconv: OasisDeconvolution<8, 256> =
+                black_box(OasisDeconvolution::from_tau(30.0, 0.1, 0.1));
+        });
+    });
+
+    group.finish();
+}
+
+// Full calcium imaging pipeline: baseline estimation + deconvolution
+fn bench_oasis_full_pipeline(c: &mut Criterion) {
+    let mut group = c.benchmark_group("oasis_full_pipeline");
+
+    // Complete pipeline: baseline estimation + deconvolution (8 channels)
+    group.throughput(Throughput::Elements(8));
+    group.bench_function("baseline_plus_deconv_8ch", |b| {
+        let mut baseline: StreamingPercentile<8> = StreamingPercentile::new(0.08);
+        let mut deconv: OasisDeconvolution<8, 256> = OasisDeconvolution::new(0.95, 0.1);
+
+        b.iter(|| {
+            let fluorescence = black_box([5.0; 8]);
+            let fluor_f64 = fluorescence.map(|x| x as f64);
+            baseline.update(&fluor_f64);
+
+            if let Some(b64) = baseline.percentile() {
+                let b = b64.map(|x| x as f32);
+                black_box(deconv.update(&fluorescence, &b));
+            }
+        });
+    });
+
+    // Realistic imaging scenario with varying signal
+    group.bench_function("realistic_imaging_8ch", |b| {
+        let mut baseline: StreamingPercentile<8> = StreamingPercentile::new(0.08);
+        let mut deconv: OasisDeconvolution<8, 256> = OasisDeconvolution::new(0.95, 0.1);
+
+        let mut frame_counter = 0;
+
+        b.iter(|| {
+            frame_counter += 1;
+            // Simulate varying fluorescence with spikes
+            let mut fluorescence = [2.0; 8];
+            if frame_counter % 20 == 0 {
+                // Simulate spike
+                fluorescence[frame_counter % 8] = 10.0;
+            }
+
+            let fluor_f64 = fluorescence.map(|x| x as f64);
+            baseline.update(&fluor_f64);
+
+            if let Some(b64) = baseline.percentile() {
+                let b = b64.map(|x| x as f32);
+                let _result = black_box(deconv.update(&fluorescence, &b));
+            }
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -997,6 +1099,8 @@ criterion_group!(
     bench_online_cov,
     bench_csp,
     bench_window,
-    bench_streaming_percentile
+    bench_streaming_percentile,
+    bench_oasis_deconvolution,
+    bench_oasis_full_pipeline
 );
 criterion_main!(benches);
