@@ -15,7 +15,8 @@ cargo doc --no-deps
 echo "Running cargo check..."
 cargo check
 
-echo "Running all tests..."
+echo "Running all tests (lib, integration, doc)..."
 cargo test --all-targets
+cargo test --doc
 
 echo "All CI/CD checks passed locally!"

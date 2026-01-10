@@ -18,6 +18,7 @@
 //! - **[`OnlineStats`]** - Welford's algorithm for streaming mean/variance
 //! - **[`OnlineCov`]** - Streaming covariance matrix estimation for CSP
 //! - **[`StreamingPercentile`]** - P² algorithm for streaming percentile estimation
+//! - **[`OasisDeconvolution`]** - OASIS calcium imaging deconvolution
 //! - **[`WindowType`]** - Window functions for spectral analysis (Hann, Hamming, Blackman, etc.)
 //!
 //! # Example
@@ -48,6 +49,7 @@
 mod buffer;
 mod csp;
 mod decimate;
+mod deconvolution;
 mod detector;
 mod envelope;
 mod fft;
@@ -61,6 +63,7 @@ mod window;
 pub use buffer::CircularBuffer;
 pub use csp::{AdaptiveCsp, CspError, UpdateConfig};
 pub use decimate::Decimator;
+pub use deconvolution::{DeconvolutionResult, OasisDeconvolution};
 pub use detector::{
     AdaptiveThresholdDetector, DetectorState, SpikeEvent, SpikeEvents, ThresholdDetector,
 };
