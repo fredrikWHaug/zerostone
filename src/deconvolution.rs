@@ -115,9 +115,9 @@ struct Pool {
 /// for each channel.
 #[derive(Clone, Copy, Debug)]
 pub struct DeconvolutionResult<const C: usize> {
-    /// Denoised calcium concentration c[t] for each channel
+    /// Denoised calcium concentration c\[t\] for each channel
     pub calcium: [f32; C],
-    /// Inferred spike s[t] for each channel
+    /// Inferred spike s\[t\] for each channel
     pub spike: [f32; C],
 }
 
@@ -137,9 +137,9 @@ pub struct DeconvolutionResult<const C: usize> {
 /// For each new observation:
 /// 1. Subtract baseline to get ∆F/F
 /// 2. Add new pool with current observation
-/// 3. Check constraint: pool[i].value <= γ * pool[i-1].value + threshold
+/// 3. Check constraint: pool\[i\].value <= γ * pool\[i-1\].value + threshold
 /// 4. If violated, merge pools backward and recheck
-/// 5. Extract spike from difference: s[t] = c[t] - γ*c[t-1]
+/// 5. Extract spike from difference: s\[t\] = c\[t\] - γ*c\[t-1\]
 ///
 /// # Example
 ///
@@ -267,7 +267,7 @@ impl<const C: usize, const MAX_POOLS: usize> OasisDeconvolution<C, MAX_POOLS> {
     ///
     /// # Arguments
     ///
-    /// * `fluorescence` - Raw fluorescence y[t] for each channel
+    /// * `fluorescence` - Raw fluorescence y\[t\] for each channel
     /// * `baseline` - Baseline b (typically from StreamingPercentile)
     ///
     /// # Returns
