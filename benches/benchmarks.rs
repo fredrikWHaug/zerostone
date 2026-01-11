@@ -1,9 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use zerostone::{
     apply_window, AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, BandPower, BiquadCoeffs,
-    CircularBuffer, Complex, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter,
-    OasisDeconvolution, OnlineCov, Rectification, StreamingPercentile, ThresholdDetector,
-    UpdateConfig, WindowType,
+    CircularBuffer, Complex, Cwt, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter,
+    MultiChannelCwt, OasisDeconvolution, OnlineCov, Rectification, StreamingPercentile,
+    ThresholdDetector, UpdateConfig, WindowType,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -1081,6 +1081,73 @@ fn bench_oasis_full_pipeline(c: &mut Criterion) {
     group.finish();
 }
 
+// Continuous Wavelet Transform benchmarks - time-frequency analysis
+fn bench_cwt(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cwt");
+
+    // 256-point CWT with 8 scales (typical BCI use case)
+    {
+        let cwt = Cwt::<256, 8>::new(250.0, 1.0, 50.0);
+        let signal = [0.5f32; 256];
+
+        group.bench_function("256_point_8_scales_transform", |b| {
+            let mut output = [[Complex::new(0.0, 0.0); 256]; 8];
+            b.iter(|| {
+                cwt.transform(black_box(&signal), black_box(&mut output));
+            });
+        });
+
+        group.bench_function("256_point_8_scales_power", |b| {
+            let mut output = [[0.0f32; 256]; 8];
+            b.iter(|| {
+                cwt.power(black_box(&signal), black_box(&mut output));
+            });
+        });
+    }
+
+    // 512-point CWT with 16 scales (higher resolution)
+    {
+        let cwt = Cwt::<512, 16>::new(250.0, 1.0, 100.0);
+        let signal = [0.5f32; 512];
+
+        group.bench_function("512_point_16_scales_power", |b| {
+            let mut output = [[0.0f32; 512]; 16];
+            b.iter(|| {
+                cwt.power(black_box(&signal), black_box(&mut output));
+            });
+        });
+    }
+
+    // Single scale transform (streaming use case)
+    {
+        let cwt = Cwt::<256, 8>::new(250.0, 1.0, 50.0);
+        let signal = [0.5f32; 256];
+
+        group.bench_function("256_point_single_scale", |b| {
+            let mut output = [Complex::new(0.0, 0.0); 256];
+            b.iter(|| {
+                cwt.transform_scale(black_box(&signal), 4, black_box(&mut output));
+            });
+        });
+    }
+
+    // Multi-channel CWT (8 channels)
+    {
+        let cwt = MultiChannelCwt::<256, 8, 8>::new(250.0, 1.0, 50.0);
+        let signals = [[0.5f32; 256]; 8];
+
+        group.throughput(Throughput::Elements(8));
+        group.bench_function("256_point_8_scales_8_channels", |b| {
+            let mut output = [[[0.0f32; 256]; 8]; 8];
+            b.iter(|| {
+                cwt.power(black_box(&signals), black_box(&mut output));
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -1101,6 +1168,7 @@ criterion_group!(
     bench_window,
     bench_streaming_percentile,
     bench_oasis_deconvolution,
-    bench_oasis_full_pipeline
+    bench_oasis_full_pipeline,
+    bench_cwt
 );
 criterion_main!(benches);
