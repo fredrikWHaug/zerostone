@@ -2,7 +2,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use zerostone::{
     apply_window, AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, BandPower, BiquadCoeffs,
     CircularBuffer, Complex, Cwt, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter,
-    MultiChannelCwt, OasisDeconvolution, OnlineCov, Rectification, StreamingPercentile,
+    MultiChannelCwt, OasisDeconvolution, OnlineCov, Rectification, Stft, StreamingPercentile,
     ThresholdDetector, UpdateConfig, WindowType,
 };
 
@@ -1148,6 +1148,72 @@ fn bench_cwt(c: &mut Criterion) {
     group.finish();
 }
 
+// Short-Time Fourier Transform benchmarks - spectrogram analysis
+fn bench_stft(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stft");
+
+    // 256-point window, 50% overlap, typical EEG analysis
+    {
+        let stft = Stft::<256>::new(128, WindowType::Hann);
+        let signal = [0.5f32; 1024];
+
+        group.bench_function("256_window_128_hop_power", |b| {
+            let mut output = [[0.0f32; 256]; 7];
+            b.iter(|| {
+                stft.power(black_box(&signal), black_box(&mut output));
+            });
+        });
+
+        group.bench_function("256_window_128_hop_transform", |b| {
+            let mut output = [[Complex::new(0.0, 0.0); 256]; 7];
+            b.iter(|| {
+                stft.transform(black_box(&signal), black_box(&mut output));
+            });
+        });
+    }
+
+    // 512-point window for higher frequency resolution
+    {
+        let stft = Stft::<512>::new(256, WindowType::Hann);
+        let signal = [0.5f32; 2048];
+
+        group.bench_function("512_window_256_hop_power", |b| {
+            let mut output = [[0.0f32; 512]; 7];
+            b.iter(|| {
+                stft.power(black_box(&signal), black_box(&mut output));
+            });
+        });
+    }
+
+    // Single frame processing (streaming use case)
+    {
+        let stft = Stft::<256>::new(128, WindowType::Hann);
+        let signal = [0.5f32; 256];
+
+        group.bench_function("256_single_frame", |b| {
+            let mut output = [Complex::new(0.0, 0.0); 256];
+            b.iter(|| {
+                stft.transform_frame(black_box(&signal), 0, black_box(&mut output));
+            });
+        });
+    }
+
+    // 75% overlap for smoother spectrogram
+    {
+        let stft = Stft::<256>::new(64, WindowType::Hann);
+        let signal = [0.5f32; 1024];
+
+        group.bench_function("256_window_64_hop_power", |b| {
+            let mut output = [[0.0f32; 256]; 13];
+            b.iter(|| {
+                stft.power(black_box(&signal), black_box(&mut output));
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -1169,6 +1235,7 @@ criterion_group!(
     bench_streaming_percentile,
     bench_oasis_deconvolution,
     bench_oasis_full_pipeline,
-    bench_cwt
+    bench_cwt,
+    bench_stft
 );
 criterion_main!(benches);

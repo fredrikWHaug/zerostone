@@ -21,6 +21,7 @@
 //! - **[`OasisDeconvolution`]** - OASIS calcium imaging deconvolution
 //! - **[`WindowType`]** - Window functions for spectral analysis (Hann, Hamming, Blackman, etc.)
 //! - **[`Cwt`]** - Continuous Wavelet Transform for time-frequency analysis
+//! - **[`Stft`]** - Short-Time Fourier Transform for spectrograms
 //!
 //! # Example
 //!
@@ -58,6 +59,7 @@ mod filter;
 pub mod linalg;
 mod percentile;
 mod stats;
+mod stft;
 pub mod wavelet;
 mod window;
 
@@ -74,6 +76,7 @@ pub use fft::{BandPower, Complex, Fft};
 pub use filter::{AcCoupler, BiquadCoeffs, FirFilter, IirFilter};
 pub use percentile::StreamingPercentile;
 pub use stats::{OnlineCov, OnlineStats};
+pub use stft::Stft;
 pub use wavelet::{morlet_coefficient, wavelet_half_width, Cwt, MultiChannelCwt, WaveletType};
 pub use window::{
     apply_window, apply_window_f64, coherent_gain, equivalent_noise_bandwidth, window_coefficient,
