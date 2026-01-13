@@ -1,9 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use zerostone::{
-    apply_window, AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, BandPower, BiquadCoeffs,
-    CircularBuffer, Complex, Cwt, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter,
-    MultiChannelCwt, OasisDeconvolution, OnlineCov, Rectification, Stft, StreamingPercentile,
-    ThresholdDetector, UpdateConfig, WindowType,
+    apply_window, AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, ArtifactDetector, BandPower,
+    BiquadCoeffs, CircularBuffer, Complex, Cwt, Decimator, EnvelopeFollower, Fft, FirFilter,
+    IirFilter, MultiChannelCwt, OasisDeconvolution, OnlineCov, Rectification, Stft,
+    StreamingPercentile, ThresholdDetector, UpdateConfig, WindowType, ZscoreArtifact,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -1214,6 +1214,124 @@ fn bench_stft(c: &mut Criterion) {
     group.finish();
 }
 
+// Artifact detection benchmarks
+fn bench_artifact_detector(c: &mut Criterion) {
+    let mut group = c.benchmark_group("artifact_detector");
+
+    // 8-channel artifact detection
+    group.throughput(Throughput::Elements(8));
+    group.bench_function("8_channels_detect", |b| {
+        let mut detector: ArtifactDetector<8> = ArtifactDetector::new(100.0, 50.0);
+        let samples = [50.0f32; 8];
+        b.iter(|| {
+            let _ = black_box(detector.detect(black_box(&samples)));
+        });
+    });
+
+    // 32-channel artifact detection
+    group.throughput(Throughput::Elements(32));
+    group.bench_function("32_channels_detect", |b| {
+        let mut detector: ArtifactDetector<32> = ArtifactDetector::new(100.0, 50.0);
+        let samples = [50.0f32; 32];
+        b.iter(|| {
+            let _ = black_box(detector.detect(black_box(&samples)));
+        });
+    });
+
+    // 128-channel artifact detection
+    group.throughput(Throughput::Elements(128));
+    group.bench_function("128_channels_detect", |b| {
+        let mut detector: ArtifactDetector<128> = ArtifactDetector::new(100.0, 50.0);
+        let samples = [50.0f32; 128];
+        b.iter(|| {
+            let _ = black_box(detector.detect(black_box(&samples)));
+        });
+    });
+
+    // Detailed detection (returns ArtifactType per channel)
+    group.throughput(Throughput::Elements(32));
+    group.bench_function("32_channels_detect_detailed", |b| {
+        let mut detector: ArtifactDetector<32> = ArtifactDetector::new(100.0, 50.0);
+        let samples = [50.0f32; 32];
+        b.iter(|| {
+            let _ = black_box(detector.detect_detailed(black_box(&samples)));
+        });
+    });
+
+    group.finish();
+}
+
+// Z-score artifact detection benchmarks
+fn bench_zscore_artifact(c: &mut Criterion) {
+    let mut group = c.benchmark_group("zscore_artifact");
+
+    // 8-channel z-score detection (frozen)
+    group.throughput(Throughput::Elements(8));
+    group.bench_function("8_channels_frozen", |b| {
+        let mut detector: ZscoreArtifact<8> = ZscoreArtifact::new(3.0, 100);
+        // Calibrate
+        for i in 0..100 {
+            let val = if i % 2 == 0 { 1.0 } else { -1.0 };
+            detector.update(&[val; 8]);
+        }
+        detector.freeze();
+
+        let samples = [0.5f32; 8];
+        b.iter(|| {
+            let _ = black_box(detector.detect(black_box(&samples)));
+        });
+    });
+
+    // 32-channel z-score detection (frozen)
+    group.throughput(Throughput::Elements(32));
+    group.bench_function("32_channels_frozen", |b| {
+        let mut detector: ZscoreArtifact<32> = ZscoreArtifact::new(3.0, 100);
+        for i in 0..100 {
+            let val = if i % 2 == 0 { 1.0 } else { -1.0 };
+            detector.update(&[val; 32]);
+        }
+        detector.freeze();
+
+        let samples = [0.5f32; 32];
+        b.iter(|| {
+            let _ = black_box(detector.detect(black_box(&samples)));
+        });
+    });
+
+    // 32-channel z-score detection (adapting - includes stats update)
+    group.bench_function("32_channels_adapting", |b| {
+        let mut detector: ZscoreArtifact<32> = ZscoreArtifact::new(3.0, 100);
+        for i in 0..100 {
+            let val = if i % 2 == 0 { 1.0 } else { -1.0 };
+            detector.update(&[val; 32]);
+        }
+        // Don't freeze - keep adapting
+
+        let samples = [0.5f32; 32];
+        b.iter(|| {
+            let _ = black_box(detector.update_and_detect(black_box(&samples)));
+        });
+    });
+
+    // 128-channel z-score detection (frozen)
+    group.throughput(Throughput::Elements(128));
+    group.bench_function("128_channels_frozen", |b| {
+        let mut detector: ZscoreArtifact<128> = ZscoreArtifact::new(3.0, 100);
+        for i in 0..100 {
+            let val = if i % 2 == 0 { 1.0 } else { -1.0 };
+            detector.update(&[val; 128]);
+        }
+        detector.freeze();
+
+        let samples = [0.5f32; 128];
+        b.iter(|| {
+            let _ = black_box(detector.detect(black_box(&samples)));
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -1236,6 +1354,8 @@ criterion_group!(
     bench_oasis_deconvolution,
     bench_oasis_full_pipeline,
     bench_cwt,
-    bench_stft
+    bench_stft,
+    bench_artifact_detector,
+    bench_zscore_artifact
 );
 criterion_main!(benches);
