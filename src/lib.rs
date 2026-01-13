@@ -22,6 +22,8 @@
 //! - **[`WindowType`]** - Window functions for spectral analysis (Hann, Hamming, Blackman, etc.)
 //! - **[`Cwt`]** - Continuous Wavelet Transform for time-frequency analysis
 //! - **[`Stft`]** - Short-Time Fourier Transform for spectrograms
+//! - **[`ArtifactDetector`]** - Threshold-based artifact detection (amplitude/gradient)
+//! - **[`ZscoreArtifact`]** - Adaptive z-score based artifact detection
 //!
 //! # Example
 //!
@@ -48,6 +50,7 @@
 
 #![no_std]
 
+mod artifact;
 mod buffer;
 mod csp;
 mod decimate;
@@ -64,6 +67,7 @@ pub mod wavelet;
 mod window;
 
 // Re-export at crate root for convenience
+pub use artifact::{ArtifactDetector, ArtifactType, ZscoreArtifact};
 pub use buffer::CircularBuffer;
 pub use csp::{AdaptiveCsp, CspError, UpdateConfig};
 pub use decimate::Decimator;
