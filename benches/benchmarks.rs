@@ -1,10 +1,11 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use zerostone::{
-    apply_window, AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, ArtifactDetector, BandPower,
-    BiquadCoeffs, CircularBuffer, Complex, Cwt, Decimator, EnvelopeFollower, Fft, FirFilter,
-    IirFilter, Interpolator, MultiChannelCwt, OasisDeconvolution, OnlineCov, Rectification, Stft,
+    apply_window,
+    xcorr::{autocorr, autocorr_batch, xcorr, xcorr_batch, Normalization},
+    AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, ArtifactDetector, BandPower, BiquadCoeffs,
+    CircularBuffer, Complex, Cwt, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter,
+    Interpolator, MultiChannelCwt, OasisDeconvolution, OnlineCov, Rectification, Stft,
     StreamingPercentile, ThresholdDetector, UpdateConfig, WindowType, ZscoreArtifact,
-    xcorr::{xcorr, autocorr, xcorr_batch, autocorr_batch, Normalization},
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -1409,7 +1410,12 @@ fn bench_xcorr(c: &mut Criterion) {
 
         group.bench_function("xcorr_64x64", |b| {
             b.iter(|| {
-                xcorr(black_box(&x), black_box(&y), black_box(&mut output), Normalization::None);
+                xcorr(
+                    black_box(&x),
+                    black_box(&y),
+                    black_box(&mut output),
+                    Normalization::None,
+                );
             });
         });
     }
@@ -1422,14 +1428,24 @@ fn bench_xcorr(c: &mut Criterion) {
 
         group.bench_function("xcorr_256x256", |b| {
             b.iter(|| {
-                xcorr(black_box(&x), black_box(&y), black_box(&mut output), Normalization::None);
+                xcorr(
+                    black_box(&x),
+                    black_box(&y),
+                    black_box(&mut output),
+                    Normalization::None,
+                );
             });
         });
 
         // With coefficient normalization
         group.bench_function("xcorr_256x256_coeff", |b| {
             b.iter(|| {
-                xcorr(black_box(&x), black_box(&y), black_box(&mut output), Normalization::Coeff);
+                xcorr(
+                    black_box(&x),
+                    black_box(&y),
+                    black_box(&mut output),
+                    Normalization::Coeff,
+                );
             });
         });
     }
@@ -1461,7 +1477,12 @@ fn bench_xcorr(c: &mut Criterion) {
         group.throughput(Throughput::Elements(8));
         group.bench_function("xcorr_batch_8ch_64x64", |b| {
             b.iter(|| {
-                xcorr_batch(black_box(&x), black_box(&y), black_box(&mut output), Normalization::None);
+                xcorr_batch(
+                    black_box(&x),
+                    black_box(&y),
+                    black_box(&mut output),
+                    Normalization::None,
+                );
             });
         });
     }
@@ -1483,11 +1504,16 @@ fn bench_xcorr(c: &mut Criterion) {
     {
         let x = [1.0f32; 256];
         let y = [0.5f32; 64];
-        let mut output = [0.0f32; 319];  // 256 + 64 - 1
+        let mut output = [0.0f32; 319]; // 256 + 64 - 1
 
         group.bench_function("xcorr_256x64", |b| {
             b.iter(|| {
-                xcorr(black_box(&x), black_box(&y), black_box(&mut output), Normalization::None);
+                xcorr(
+                    black_box(&x),
+                    black_box(&y),
+                    black_box(&mut output),
+                    Normalization::None,
+                );
             });
         });
     }
