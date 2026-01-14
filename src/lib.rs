@@ -12,6 +12,7 @@
 //! - **[`FirFilter`]** - Direct-form FIR filter with linear phase
 //! - **[`AcCoupler`]** - AC coupling filter for DC offset removal
 //! - **[`Decimator`]** - Sample rate reduction (downsampling)
+//! - **[`Interpolator`]** - Sample rate increase (upsampling)
 //! - **[`EnvelopeFollower`]** - Amplitude envelope extraction
 //! - **[`Fft`]** - Fast Fourier Transform for spectral analysis
 //! - **[`ThresholdDetector`]** - Multi-channel spike detection with refractory period
@@ -59,6 +60,7 @@ mod detector;
 mod envelope;
 mod fft;
 mod filter;
+mod interpolate;
 pub mod linalg;
 mod percentile;
 mod stats;
@@ -78,6 +80,7 @@ pub use detector::{
 pub use envelope::{EnvelopeFollower, Rectification};
 pub use fft::{BandPower, Complex, Fft};
 pub use filter::{AcCoupler, BiquadCoeffs, FirFilter, IirFilter};
+pub use interpolate::{InterpolationMethod, Interpolator};
 pub use percentile::StreamingPercentile;
 pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;
