@@ -2,7 +2,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use zerostone::{
     apply_window, AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, ArtifactDetector, BandPower,
     BiquadCoeffs, CircularBuffer, Complex, Cwt, Decimator, EnvelopeFollower, Fft, FirFilter,
-    IirFilter, MultiChannelCwt, OasisDeconvolution, OnlineCov, Rectification, Stft,
+    IirFilter, Interpolator, MultiChannelCwt, OasisDeconvolution, OnlineCov, Rectification, Stft,
     StreamingPercentile, ThresholdDetector, UpdateConfig, WindowType, ZscoreArtifact,
 };
 
@@ -1332,6 +1332,70 @@ fn bench_zscore_artifact(c: &mut Criterion) {
     group.finish();
 }
 
+// Interpolator benchmarks
+fn bench_interpolator(c: &mut Criterion) {
+    let mut group = c.benchmark_group("interpolator");
+
+    // 8-channel zero-order interpolation (4x)
+    group.throughput(Throughput::Elements(8 * 4));
+    group.bench_function("8ch_zero_order_4x", |b| {
+        let mut interp: Interpolator<8> = Interpolator::zero_order(4);
+        let input = [1.0f32; 8];
+        let mut output = [[0.0f32; 8]; 4];
+        b.iter(|| {
+            let _ = black_box(interp.process(black_box(&input), black_box(&mut output)));
+        });
+    });
+
+    // 8-channel linear interpolation (4x)
+    group.bench_function("8ch_linear_4x", |b| {
+        let mut interp: Interpolator<8> = Interpolator::linear(4);
+        let input = [1.0f32; 8];
+        let mut output = [[0.0f32; 8]; 4];
+        // Initialize
+        interp.process(&input, &mut output);
+        b.iter(|| {
+            let _ = black_box(interp.process(black_box(&input), black_box(&mut output)));
+        });
+    });
+
+    // 32-channel zero-order interpolation (4x)
+    group.throughput(Throughput::Elements(32 * 4));
+    group.bench_function("32ch_zero_order_4x", |b| {
+        let mut interp: Interpolator<32> = Interpolator::zero_order(4);
+        let input = [1.0f32; 32];
+        let mut output = [[0.0f32; 32]; 4];
+        b.iter(|| {
+            let _ = black_box(interp.process(black_box(&input), black_box(&mut output)));
+        });
+    });
+
+    // 32-channel linear interpolation (4x)
+    group.bench_function("32ch_linear_4x", |b| {
+        let mut interp: Interpolator<32> = Interpolator::linear(4);
+        let input = [1.0f32; 32];
+        let mut output = [[0.0f32; 32]; 4];
+        interp.process(&input, &mut output);
+        b.iter(|| {
+            let _ = black_box(interp.process(black_box(&input), black_box(&mut output)));
+        });
+    });
+
+    // Block processing: 32-channel, 4x, 100 samples -> 400 output
+    group.throughput(Throughput::Elements(32 * 400));
+    group.bench_function("32ch_block_100_linear_4x", |b| {
+        let mut interp: Interpolator<32> = Interpolator::linear(4);
+        let input = [[1.0f32; 32]; 100];
+        let mut output = [[0.0f32; 32]; 400];
+        b.iter(|| {
+            interp.reset();
+            let _ = black_box(interp.process_block(black_box(&input), black_box(&mut output)));
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -1356,6 +1420,7 @@ criterion_group!(
     bench_cwt,
     bench_stft,
     bench_artifact_detector,
-    bench_zscore_artifact
+    bench_zscore_artifact,
+    bench_interpolator
 );
 criterion_main!(benches);
