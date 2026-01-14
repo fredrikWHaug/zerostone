@@ -4,6 +4,7 @@ use zerostone::{
     BiquadCoeffs, CircularBuffer, Complex, Cwt, Decimator, EnvelopeFollower, Fft, FirFilter,
     IirFilter, Interpolator, MultiChannelCwt, OasisDeconvolution, OnlineCov, Rectification, Stft,
     StreamingPercentile, ThresholdDetector, UpdateConfig, WindowType, ZscoreArtifact,
+    xcorr::{xcorr, autocorr, xcorr_batch, autocorr_batch, Normalization},
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -1396,6 +1397,104 @@ fn bench_interpolator(c: &mut Criterion) {
     group.finish();
 }
 
+// Cross-correlation benchmarks
+fn bench_xcorr(c: &mut Criterion) {
+    let mut group = c.benchmark_group("xcorr");
+
+    // 64×64 cross-correlation (small, typical for feature extraction)
+    {
+        let x = [1.0f32; 64];
+        let y = [0.5f32; 64];
+        let mut output = [0.0f32; 127];
+
+        group.bench_function("xcorr_64x64", |b| {
+            b.iter(|| {
+                xcorr(black_box(&x), black_box(&y), black_box(&mut output), Normalization::None);
+            });
+        });
+    }
+
+    // 256×256 cross-correlation (typical BCI segment)
+    {
+        let x = [1.0f32; 256];
+        let y = [0.5f32; 256];
+        let mut output = [0.0f32; 511];
+
+        group.bench_function("xcorr_256x256", |b| {
+            b.iter(|| {
+                xcorr(black_box(&x), black_box(&y), black_box(&mut output), Normalization::None);
+            });
+        });
+
+        // With coefficient normalization
+        group.bench_function("xcorr_256x256_coeff", |b| {
+            b.iter(|| {
+                xcorr(black_box(&x), black_box(&y), black_box(&mut output), Normalization::Coeff);
+            });
+        });
+    }
+
+    // Auto-correlation (optimized for symmetry)
+    {
+        let x = [1.0f32; 256];
+        let mut output = [0.0f32; 511];
+
+        group.bench_function("autocorr_256", |b| {
+            b.iter(|| {
+                autocorr(black_box(&x), black_box(&mut output), Normalization::None);
+            });
+        });
+
+        group.bench_function("autocorr_256_coeff", |b| {
+            b.iter(|| {
+                autocorr(black_box(&x), black_box(&mut output), Normalization::Coeff);
+            });
+        });
+    }
+
+    // Batch cross-correlation (8 channels)
+    {
+        let x: [[f32; 64]; 8] = [[1.0f32; 64]; 8];
+        let y: [[f32; 64]; 8] = [[0.5f32; 64]; 8];
+        let mut output = [[0.0f32; 127]; 8];
+
+        group.throughput(Throughput::Elements(8));
+        group.bench_function("xcorr_batch_8ch_64x64", |b| {
+            b.iter(|| {
+                xcorr_batch(black_box(&x), black_box(&y), black_box(&mut output), Normalization::None);
+            });
+        });
+    }
+
+    // Batch auto-correlation (8 channels)
+    {
+        let x: [[f32; 64]; 8] = [[1.0f32; 64]; 8];
+        let mut output = [[0.0f32; 127]; 8];
+
+        group.throughput(Throughput::Elements(8));
+        group.bench_function("autocorr_batch_8ch_64", |b| {
+            b.iter(|| {
+                autocorr_batch(black_box(&x), black_box(&mut output), Normalization::None);
+            });
+        });
+    }
+
+    // Different signal lengths (asymmetric correlation)
+    {
+        let x = [1.0f32; 256];
+        let y = [0.5f32; 64];
+        let mut output = [0.0f32; 319];  // 256 + 64 - 1
+
+        group.bench_function("xcorr_256x64", |b| {
+            b.iter(|| {
+                xcorr(black_box(&x), black_box(&y), black_box(&mut output), Normalization::None);
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -1421,6 +1520,7 @@ criterion_group!(
     bench_stft,
     bench_artifact_detector,
     bench_zscore_artifact,
-    bench_interpolator
+    bench_interpolator,
+    bench_xcorr
 );
 criterion_main!(benches);

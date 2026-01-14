@@ -25,6 +25,7 @@
 //! - **[`Stft`]** - Short-Time Fourier Transform for spectrograms
 //! - **[`ArtifactDetector`]** - Threshold-based artifact detection (amplitude/gradient)
 //! - **[`ZscoreArtifact`]** - Adaptive z-score based artifact detection
+//! - **[`xcorr`]** - Cross-correlation and auto-correlation functions
 //!
 //! # Example
 //!
@@ -67,6 +68,7 @@ mod stats;
 mod stft;
 pub mod wavelet;
 mod window;
+pub mod xcorr;
 
 // Re-export at crate root for convenience
 pub use artifact::{ArtifactDetector, ArtifactType, ZscoreArtifact};
