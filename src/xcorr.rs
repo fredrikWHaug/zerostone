@@ -143,7 +143,11 @@ pub fn xcorr<const N: usize, const M: usize, const OUT: usize>(
 
     let norm_factor = if norm == Normalization::Coeff {
         let denom = libm::sqrtf(energy_x * energy_y);
-        if denom > 1e-10 { denom } else { 1.0 }
+        if denom > 1e-10 {
+            denom
+        } else {
+            1.0
+        }
     } else {
         1.0
     };
@@ -245,7 +249,11 @@ pub fn xcorr_into<const N: usize, const M: usize>(
 
     let norm_factor = if norm == Normalization::Coeff {
         let denom = libm::sqrtf(energy_x * energy_y);
-        if denom > 1e-10 { denom } else { 1.0 }
+        if denom > 1e-10 {
+            denom
+        } else {
+            1.0
+        }
     } else {
         1.0
     };
