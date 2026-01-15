@@ -26,6 +26,7 @@
 //! - **[`ArtifactDetector`]** - Threshold-based artifact detection (amplitude/gradient)
 //! - **[`ZscoreArtifact`]** - Adaptive z-score based artifact detection
 //! - **[`xcorr`]** - Cross-correlation and auto-correlation functions
+//! - **[`hilbert`]** - Hilbert transform for analytic signal and instantaneous parameters
 //!
 //! # Example
 //!
@@ -61,6 +62,7 @@ mod detector;
 mod envelope;
 mod fft;
 mod filter;
+pub mod hilbert;
 mod interpolate;
 pub mod linalg;
 mod percentile;
@@ -82,6 +84,7 @@ pub use detector::{
 pub use envelope::{EnvelopeFollower, Rectification};
 pub use fft::{BandPower, Complex, Fft};
 pub use filter::{AcCoupler, BiquadCoeffs, FirFilter, IirFilter};
+pub use hilbert::HilbertTransform;
 pub use interpolate::{InterpolationMethod, Interpolator};
 pub use percentile::StreamingPercentile;
 pub use stats::{OnlineCov, OnlineStats};

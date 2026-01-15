@@ -1,6 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use zerostone::{
     apply_window,
+    hilbert::{hilbert_batch, HilbertTransform},
     xcorr::{autocorr, autocorr_batch, xcorr, xcorr_batch, Normalization},
     AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, ArtifactDetector, BandPower, BiquadCoeffs,
     CircularBuffer, Complex, Cwt, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter,
@@ -1521,6 +1522,118 @@ fn bench_xcorr(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_hilbert(c: &mut Criterion) {
+    let mut group = c.benchmark_group("hilbert_transform");
+
+    // Generate test signal (4 Hz sine wave at 256 Hz sample rate)
+    let mut signal_128 = [0.0f32; 128];
+    let mut signal_256 = [0.0f32; 256];
+    let mut signal_512 = [0.0f32; 512];
+
+    for (i, sample) in signal_128.iter_mut().enumerate() {
+        let t = i as f32 / 256.0;
+        *sample = (2.0 * core::f32::consts::PI * 4.0 * t).sin();
+    }
+
+    for (i, sample) in signal_256.iter_mut().enumerate() {
+        let t = i as f32 / 256.0;
+        *sample = (2.0 * core::f32::consts::PI * 4.0 * t).sin();
+    }
+
+    for (i, sample) in signal_512.iter_mut().enumerate() {
+        let t = i as f32 / 256.0;
+        *sample = (2.0 * core::f32::consts::PI * 4.0 * t).sin();
+    }
+
+    // Benchmark analytic_signal for different sizes
+    {
+        let hilbert = HilbertTransform::<128>::new();
+        let mut output = [Complex::new(0.0, 0.0); 128];
+
+        group.bench_function("analytic_signal_128", |b| {
+            b.iter(|| {
+                hilbert.analytic_signal(black_box(&signal_128), black_box(&mut output));
+            });
+        });
+    }
+
+    {
+        let hilbert = HilbertTransform::<256>::new();
+        let mut output = [Complex::new(0.0, 0.0); 256];
+
+        group.bench_function("analytic_signal_256", |b| {
+            b.iter(|| {
+                hilbert.analytic_signal(black_box(&signal_256), black_box(&mut output));
+            });
+        });
+    }
+
+    {
+        let hilbert = HilbertTransform::<512>::new();
+        let mut output = [Complex::new(0.0, 0.0); 512];
+
+        group.bench_function("analytic_signal_512", |b| {
+            b.iter(|| {
+                hilbert.analytic_signal(black_box(&signal_512), black_box(&mut output));
+            });
+        });
+    }
+
+    // Benchmark instantaneous amplitude
+    {
+        let hilbert = HilbertTransform::<256>::new();
+        let mut output = [0.0f32; 256];
+
+        group.bench_function("instantaneous_amplitude_256", |b| {
+            b.iter(|| {
+                hilbert.instantaneous_amplitude(black_box(&signal_256), black_box(&mut output));
+            });
+        });
+    }
+
+    // Benchmark instantaneous phase
+    {
+        let hilbert = HilbertTransform::<256>::new();
+        let mut output = [0.0f32; 256];
+
+        group.bench_function("instantaneous_phase_256", |b| {
+            b.iter(|| {
+                hilbert.instantaneous_phase(black_box(&signal_256), black_box(&mut output));
+            });
+        });
+    }
+
+    // Benchmark instantaneous frequency
+    {
+        let hilbert = HilbertTransform::<256>::new();
+        let mut output = [0.0f32; 255];
+
+        group.bench_function("instantaneous_frequency_256", |b| {
+            b.iter(|| {
+                let _ = hilbert.instantaneous_frequency(
+                    black_box(&signal_256),
+                    black_box(&mut output),
+                    256.0,
+                );
+            });
+        });
+    }
+
+    // Benchmark batch processing (8 channels × 256 samples)
+    {
+        let signals = [[0.0f32; 256]; 8];
+        let mut output = [[Complex::new(0.0, 0.0); 256]; 8];
+
+        group.bench_function("batch_8ch_x_256", |b| {
+            b.iter(|| {
+                hilbert_batch(black_box(&signals), black_box(&mut output));
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -1547,6 +1660,7 @@ criterion_group!(
     bench_artifact_detector,
     bench_zscore_artifact,
     bench_interpolator,
-    bench_xcorr
+    bench_xcorr,
+    bench_hilbert
 );
 criterion_main!(benches);
