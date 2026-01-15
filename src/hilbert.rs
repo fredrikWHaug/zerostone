@@ -355,7 +355,7 @@ impl<const N: usize> HilbertTransform<N> {
     ///     *sample = (2.0 * PI * 15.0 * t).sin();
     /// }
     ///
-    /// let mut freq = vec![0.0f32; 127];
+    /// let mut freq = [0.0f32; 127];
     /// let hilbert = HilbertTransform::<128>::new();
     /// let n = hilbert.instantaneous_frequency(&signal, &mut freq, sample_rate);
     ///
@@ -534,6 +534,29 @@ mod tests {
                 i,
                 expected,
                 hilbert_out[i]
+            );
+        }
+    }
+
+    #[test]
+    fn test_hilbert_inverse_property() {
+        // H[H[x]] = -x (applying Hilbert transform twice negates the signal)
+        // Note: This property only holds for zero-mean signals (DC is zeroed by Hilbert)
+        let signal = [1.0f32, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0]; // Zero-mean
+        let mut h1 = [0.0f32; 8];
+        let mut h2 = [0.0f32; 8];
+
+        let hilbert = HilbertTransform::<8>::new();
+        hilbert.transform(&signal, &mut h1);
+        hilbert.transform(&h1, &mut h2);
+
+        for (i, (&result, &original)) in h2.iter().zip(signal.iter()).enumerate() {
+            assert!(
+                (result + original).abs() < 0.15,
+                "H[H[x]] should equal -x at i={}: got {}, expected {}",
+                i,
+                result,
+                -original
             );
         }
     }
@@ -719,10 +742,7 @@ mod tests {
 
         // Amplitude should vary between 0.5 and 1.5 (modulation envelope)
         let max_amp = amplitude.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-        let min_amp = amplitude
-            .iter()
-            .copied()
-            .fold(f32::INFINITY, |a, b| if a < b { a } else { b });
+        let min_amp = amplitude.iter().copied().fold(f32::INFINITY, f32::min);
 
         assert!(
             max_amp > 1.2,
