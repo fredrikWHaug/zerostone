@@ -72,6 +72,7 @@ use crate::filter::lms::AdaptiveOutput;
 /// let mut nlms = NlmsFilter::<32>::new(0.5, 0.01);
 /// let result = nlms.process_sample(0.5, 1.0);
 /// ```
+#[derive(Debug, Clone)]
 pub struct NlmsFilter<const N: usize> {
     /// Adaptive filter coefficients (weights)
     weights: [f32; N],
@@ -90,8 +91,12 @@ impl<const N: usize> NlmsFilter<N> {
     ///
     /// # Arguments
     ///
-    /// * `mu` - Normalized step size, typically 0.1 - 1.0
-    /// * `epsilon` - Regularization constant, typically 0.01
+    /// * `mu` - Normalized step size, typically 0.1 - 1.0 (must be > 0)
+    /// * `epsilon` - Regularization constant, typically 0.01 (must be > 0)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mu <= 0` or `epsilon <= 0`.
     ///
     /// # Example
     ///
@@ -101,6 +106,8 @@ impl<const N: usize> NlmsFilter<N> {
     /// let nlms = NlmsFilter::<64>::new(0.5, 0.01);
     /// ```
     pub fn new(mu: f32, epsilon: f32) -> Self {
+        assert!(mu > 0.0, "step size mu must be positive");
+        assert!(epsilon > 0.0, "regularization epsilon must be positive");
         Self {
             weights: [0.0; N],
             delay_line: [0.0; N],
@@ -114,9 +121,13 @@ impl<const N: usize> NlmsFilter<N> {
     ///
     /// # Arguments
     ///
-    /// * `mu` - Normalized step size
-    /// * `epsilon` - Regularization constant
+    /// * `mu` - Normalized step size (must be > 0)
+    /// * `epsilon` - Regularization constant (must be > 0)
     /// * `weights` - Initial filter coefficients
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mu <= 0` or `epsilon <= 0`.
     ///
     /// # Example
     ///
@@ -127,6 +138,8 @@ impl<const N: usize> NlmsFilter<N> {
     /// let nlms = NlmsFilter::<3>::with_weights(0.5, 0.01, weights);
     /// ```
     pub fn with_weights(mu: f32, epsilon: f32, weights: [f32; N]) -> Self {
+        assert!(mu > 0.0, "step size mu must be positive");
+        assert!(epsilon > 0.0, "regularization epsilon must be positive");
         Self {
             weights,
             delay_line: [0.0; N],
@@ -161,29 +174,22 @@ impl<const N: usize> NlmsFilter<N> {
         // 1. Store input in circular buffer
         self.delay_line[self.index] = input;
 
-        // 2. Compute output: y(n) = w^T * u(n)
+        // 2. Compute output y(n) = w^T * u(n) AND input power ||u(n)||² in single pass
         let mut output = 0.0;
+        let mut input_power = 0.0;
         let mut delay_idx = self.index;
 
         for tap in 0..N {
-            output += self.weights[tap] * self.delay_line[delay_idx];
+            let val = self.delay_line[delay_idx];
+            output += self.weights[tap] * val;
+            input_power += val * val;
             delay_idx = if delay_idx == 0 { N - 1 } else { delay_idx - 1 };
         }
 
         // 3. Compute error: e(n) = d(n) - y(n)
         let error = desired - output;
 
-        // 4. NLMS: Compute input power ||u(n)||²
-        let mut input_power = 0.0;
-        delay_idx = self.index;
-
-        for _ in 0..N {
-            let val = self.delay_line[delay_idx];
-            input_power += val * val;
-            delay_idx = if delay_idx == 0 { N - 1 } else { delay_idx - 1 };
-        }
-
-        // Normalized step size: μ/(ε + ||u||²)
+        // 4. Normalized step size: μ/(ε + ||u||²)
         let norm_mu = self.mu / (self.epsilon + input_power);
 
         // 5. Update weights with normalized step
@@ -330,7 +336,12 @@ impl<const N: usize> NlmsFilter<N> {
     }
 
     /// Sets the step size.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mu <= 0`.
     pub fn set_mu(&mut self, mu: f32) {
+        assert!(mu > 0.0, "step size mu must be positive");
         self.mu = mu;
     }
 
@@ -343,7 +354,11 @@ impl<const N: usize> NlmsFilter<N> {
     ///
     /// # Arguments
     ///
-    /// * `epsilon` - New epsilon value (typically 0.001 - 0.1)
+    /// * `epsilon` - New epsilon value (typically 0.001 - 0.1, must be > 0)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `epsilon <= 0`.
     ///
     /// # Example
     ///
@@ -354,6 +369,7 @@ impl<const N: usize> NlmsFilter<N> {
     /// nlms.set_epsilon(0.001); // Lower for better precision
     /// ```
     pub fn set_epsilon(&mut self, epsilon: f32) {
+        assert!(epsilon > 0.0, "regularization epsilon must be positive");
         self.epsilon = epsilon;
     }
 }
@@ -419,11 +435,14 @@ mod tests {
 
     #[test]
     fn test_nlms_converges_faster_than_lms() {
-        // NLMS should converge faster with varying amplitude signals
+        // NLMS should handle varying amplitude signals better than LMS
         use crate::filter::LmsFilter;
 
         let mut lms = LmsFilter::<2>::new(0.01);
         let mut nlms = NlmsFilter::<2>::new(0.5, 0.01);
+
+        // System to identify - created ONCE outside the loop to maintain state
+        let mut system = FirFilter::new([0.8, 0.5]);
 
         let mut lms_error_sum = 0.0;
         let mut nlms_error_sum = 0.0;
@@ -433,8 +452,7 @@ mod tests {
             let amplitude = 1.0 + 0.5 * libm::sinf(i as f32 * 0.05);
             let input = amplitude * ((i % 11) as f32 / 11.0 - 0.5);
 
-            let mut sys_clone = FirFilter::new([0.8, 0.5]);
-            let desired = sys_clone.process_sample(input);
+            let desired = system.process_sample(input);
 
             let lms_result = lms.process_sample(input, desired);
             let nlms_result = nlms.process_sample(input, desired);
@@ -446,7 +464,7 @@ mod tests {
             }
         }
 
-        // NLMS should have lower average error
+        // NLMS should have lower average error with varying amplitude
         assert!(
             nlms_error_sum < lms_error_sum,
             "NLMS error {} should be < LMS error {}",
