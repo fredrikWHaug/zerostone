@@ -11,6 +11,7 @@
 //! - **[`IirFilter`]** - Cascaded biquad IIR filters (Butterworth lowpass/highpass/bandpass)
 //! - **[`FirFilter`]** - Direct-form FIR filter with linear phase
 //! - **[`AcCoupler`]** - AC coupling filter for DC offset removal
+//! - **[`LmsFilter`], [`NlmsFilter`]** - Adaptive filters for real-time noise cancellation
 //! - **[`Decimator`]** - Sample rate reduction (downsampling)
 //! - **[`Interpolator`]** - Sample rate increase (upsampling)
 //! - **[`EnvelopeFollower`]** - Amplitude envelope extraction
@@ -83,7 +84,9 @@ pub use detector::{
 };
 pub use envelope::{EnvelopeFollower, Rectification};
 pub use fft::{BandPower, Complex, Fft};
-pub use filter::{AcCoupler, BiquadCoeffs, FirFilter, IirFilter};
+pub use filter::{
+    AcCoupler, AdaptiveOutput, BiquadCoeffs, FirFilter, IirFilter, LmsFilter, NlmsFilter,
+};
 pub use hilbert::HilbertTransform;
 pub use interpolate::{InterpolationMethod, Interpolator};
 pub use percentile::StreamingPercentile;
