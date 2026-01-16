@@ -5,8 +5,9 @@ use zerostone::{
     xcorr::{autocorr, autocorr_batch, xcorr, xcorr_batch, Normalization},
     AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, ArtifactDetector, BandPower, BiquadCoeffs,
     CircularBuffer, Complex, Cwt, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter,
-    Interpolator, MultiChannelCwt, OasisDeconvolution, OnlineCov, Rectification, Stft,
-    StreamingPercentile, ThresholdDetector, UpdateConfig, WindowType, ZscoreArtifact,
+    Interpolator, LmsFilter, MultiChannelCwt, NlmsFilter, OasisDeconvolution, OnlineCov,
+    Rectification, Stft, StreamingPercentile, ThresholdDetector, UpdateConfig, WindowType,
+    ZscoreArtifact,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -1634,6 +1635,154 @@ fn bench_hilbert(c: &mut Criterion) {
     group.finish();
 }
 
+// LMS adaptive filter benchmarks - target: <500 ns/sample for N=32, <1 μs for N=64
+fn bench_lms_filter(c: &mut Criterion) {
+    let mut group = c.benchmark_group("lms_filter");
+
+    // 32-tap LMS (typical for powerline/EOG cancellation)
+    {
+        let mut lms = LmsFilter::<32>::new(0.01);
+        group.bench_function("lms_32_taps", |b| {
+            b.iter(|| black_box(lms.process_sample(black_box(1.0), black_box(0.5))));
+        });
+    }
+
+    // 64-tap LMS (typical for EMG artifact removal)
+    {
+        let mut lms = LmsFilter::<64>::new(0.01);
+        group.bench_function("lms_64_taps", |b| {
+            b.iter(|| black_box(lms.process_sample(black_box(1.0), black_box(0.5))));
+        });
+    }
+
+    // 128-tap LMS (high-order adaptive filtering)
+    {
+        let mut lms = LmsFilter::<128>::new(0.01);
+        group.bench_function("lms_128_taps", |b| {
+            b.iter(|| black_box(lms.process_sample(black_box(1.0), black_box(0.5))));
+        });
+    }
+
+    // Prediction mode (no adaptation)
+    {
+        let mut lms = LmsFilter::<32>::new(0.01);
+        group.bench_function("lms_32_predict_only", |b| {
+            b.iter(|| black_box(lms.predict(black_box(1.0))));
+        });
+    }
+
+    // Block processing (256 samples, 32 taps)
+    {
+        use zerostone::AdaptiveOutput;
+        let mut lms = LmsFilter::<32>::new(0.01);
+        group.bench_function("lms_32_block_256", |b| {
+            let input = [1.0f32; 256];
+            let desired = [0.5f32; 256];
+            let mut output = [AdaptiveOutput {
+                output: 0.0,
+                error: 0.0,
+            }; 256];
+            b.iter(|| {
+                lms.process_block(
+                    black_box(&input),
+                    black_box(&desired),
+                    black_box(&mut output),
+                );
+            });
+        });
+    }
+
+    group.finish();
+}
+
+// NLMS adaptive filter benchmarks - normalized step size for stability
+fn bench_nlms_filter(c: &mut Criterion) {
+    let mut group = c.benchmark_group("nlms_filter");
+
+    // 32-tap NLMS
+    {
+        let mut nlms = NlmsFilter::<32>::new(0.5, 0.01);
+        group.bench_function("nlms_32_taps", |b| {
+            b.iter(|| black_box(nlms.process_sample(black_box(1.0), black_box(0.5))));
+        });
+    }
+
+    // 64-tap NLMS
+    {
+        let mut nlms = NlmsFilter::<64>::new(0.5, 0.01);
+        group.bench_function("nlms_64_taps", |b| {
+            b.iter(|| black_box(nlms.process_sample(black_box(1.0), black_box(0.5))));
+        });
+    }
+
+    // 128-tap NLMS
+    {
+        let mut nlms = NlmsFilter::<128>::new(0.5, 0.01);
+        group.bench_function("nlms_128_taps", |b| {
+            b.iter(|| black_box(nlms.process_sample(black_box(1.0), black_box(0.5))));
+        });
+    }
+
+    // Prediction mode (no adaptation)
+    {
+        let mut nlms = NlmsFilter::<32>::new(0.5, 0.01);
+        group.bench_function("nlms_32_predict_only", |b| {
+            b.iter(|| black_box(nlms.predict(black_box(1.0))));
+        });
+    }
+
+    // Block processing (256 samples, 32 taps)
+    {
+        use zerostone::AdaptiveOutput;
+        let mut nlms = NlmsFilter::<32>::new(0.5, 0.01);
+        group.bench_function("nlms_32_block_256", |b| {
+            let input = [1.0f32; 256];
+            let desired = [0.5f32; 256];
+            let mut output = [AdaptiveOutput {
+                output: 0.0,
+                error: 0.0,
+            }; 256];
+            b.iter(|| {
+                nlms.process_block(
+                    black_box(&input),
+                    black_box(&desired),
+                    black_box(&mut output),
+                );
+            });
+        });
+    }
+
+    // Comparison with varying amplitude (NLMS advantage)
+    {
+        let mut lms = LmsFilter::<32>::new(0.01);
+        let mut nlms = NlmsFilter::<32>::new(0.5, 0.01);
+
+        group.bench_function("lms_32_varying_amplitude", |b| {
+            let mut counter = 0u32;
+            b.iter(|| {
+                counter = counter.wrapping_add(1);
+                let amplitude = 1.0 + 0.5 * (counter as f32 * 0.1).sin();
+                let input = amplitude;
+                let desired = amplitude * 0.5;
+                black_box(lms.process_sample(black_box(input), black_box(desired)))
+            });
+        });
+
+        group.bench_function("nlms_32_varying_amplitude", |b| {
+            let mut counter = 0u32;
+            b.iter(|| {
+                counter = counter.wrapping_add(1);
+                let amplitude = 1.0 + 0.5 * (counter as f32 * 0.1).sin();
+                let input = amplitude;
+                let desired = amplitude * 0.5;
+                black_box(nlms.process_sample(black_box(input), black_box(desired)))
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -1661,6 +1810,8 @@ criterion_group!(
     bench_zscore_artifact,
     bench_interpolator,
     bench_xcorr,
-    bench_hilbert
+    bench_hilbert,
+    bench_lms_filter,
+    bench_nlms_filter
 );
 criterion_main!(benches);
