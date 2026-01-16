@@ -45,8 +45,8 @@
 //! # let eeg_data = [0.0f32; 100];
 //! for i in 0..eeg_data.len() {
 //!     let result = lms.process_sample(eog_data[i], eeg_data[i]);
-//!     let clean_eeg = result.output;  // Artifact removed
-//!     let artifact = result.error;     // Estimated artifact
+//!     let clean_eeg = result.error;   // Clean signal (artifact removed)
+//!     let artifact = result.output;   // Filter's estimate of the artifact
 //! }
 //! ```
 //!
@@ -122,6 +122,7 @@ pub struct AdaptiveOutput {
 /// let result = lms.process_sample(0.5, 1.0);  // input=0.5, desired=1.0
 /// assert!(result.error.abs() > 0.0);  // Initial error before adaptation
 /// ```
+#[derive(Debug, Clone)]
 pub struct LmsFilter<const N: usize> {
     /// Adaptive filter coefficients (weights)
     weights: [f32; N],
@@ -138,7 +139,11 @@ impl<const N: usize> LmsFilter<N> {
     ///
     /// # Arguments
     ///
-    /// * `mu` - Step size (learning rate), typically 0.001 - 0.1 for EEG/BCI
+    /// * `mu` - Step size (learning rate), typically 0.001 - 0.1 for EEG/BCI (must be > 0)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mu <= 0`.
     ///
     /// # Example
     ///
@@ -148,6 +153,7 @@ impl<const N: usize> LmsFilter<N> {
     /// let lms = LmsFilter::<64>::new(0.01);
     /// ```
     pub fn new(mu: f32) -> Self {
+        assert!(mu > 0.0, "step size mu must be positive");
         Self {
             weights: [0.0; N],
             delay_line: [0.0; N],
@@ -163,8 +169,12 @@ impl<const N: usize> LmsFilter<N> {
     ///
     /// # Arguments
     ///
-    /// * `mu` - Step size (learning rate)
+    /// * `mu` - Step size (learning rate, must be > 0)
     /// * `weights` - Initial filter coefficients
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mu <= 0`.
     ///
     /// # Example
     ///
@@ -175,6 +185,7 @@ impl<const N: usize> LmsFilter<N> {
     /// let lms = LmsFilter::<3>::with_weights(0.01, weights);
     /// ```
     pub fn with_weights(mu: f32, weights: [f32; N]) -> Self {
+        assert!(mu > 0.0, "step size mu must be positive");
         Self {
             weights,
             delay_line: [0.0; N],
@@ -424,7 +435,11 @@ impl<const N: usize> LmsFilter<N> {
     ///
     /// # Arguments
     ///
-    /// * `mu` - New step size
+    /// * `mu` - New step size (must be > 0)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mu <= 0`.
     ///
     /// # Example
     ///
@@ -436,6 +451,7 @@ impl<const N: usize> LmsFilter<N> {
     /// assert_eq!(lms.mu(), 0.05);
     /// ```
     pub fn set_mu(&mut self, mu: f32) {
+        assert!(mu > 0.0, "step size mu must be positive");
         self.mu = mu;
     }
 }
