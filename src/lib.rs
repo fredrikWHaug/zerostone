@@ -28,6 +28,10 @@
 //! - **[`ZscoreArtifact`]** - Adaptive z-score based artifact detection
 //! - **[`xcorr`]** - Cross-correlation and auto-correlation functions
 //! - **[`hilbert`]** - Hilbert transform for analytic signal and instantaneous parameters
+//! - **[`ClockOffset`]** - Single timestamp offset measurement (NTP-style)
+//! - **[`SampleClock`]** - Sample index ↔ timestamp conversion
+//! - **[`LinearDrift`]** - Online linear regression for clock drift estimation
+//! - **[`OffsetBuffer`]** - Filtered clock offset buffer with quality selection
 //!
 //! # Example
 //!
@@ -69,6 +73,7 @@ pub mod linalg;
 mod percentile;
 mod stats;
 mod stft;
+mod sync;
 pub mod wavelet;
 mod window;
 pub mod xcorr;
@@ -92,6 +97,7 @@ pub use interpolate::{InterpolationMethod, Interpolator};
 pub use percentile::StreamingPercentile;
 pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;
+pub use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
 pub use wavelet::{morlet_coefficient, wavelet_half_width, Cwt, MultiChannelCwt, WaveletType};
 pub use window::{
     apply_window, apply_window_f64, coherent_gain, equivalent_noise_bandwidth, window_coefficient,
