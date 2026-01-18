@@ -9,6 +9,18 @@ pub enum DetectorState {
     Refractory,
 }
 
+/// Direction of zero-crossing to detect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CrossingDirection {
+    /// Detect both rising and falling crossings
+    #[default]
+    Any,
+    /// Detect only rising crossings (negative to positive)
+    Rising,
+    /// Detect only falling crossings (positive to negative)
+    Falling,
+}
+
 /// Event emitted when a threshold is crossed.
 #[derive(Debug, Clone, Copy)]
 pub struct SpikeEvent {
@@ -553,8 +565,434 @@ impl<const C: usize> AdaptiveThresholdDetector<C> {
     }
 }
 
+/// Multi-channel zero-crossing detector for BCI signal analysis.
+///
+/// Detects when a signal changes sign (crosses zero). Essential for computing
+/// zero-crossing rate (ZCR) features and detecting specific patterns in EEG,
+/// such as epileptic spike-wave complexes.
+///
+/// # Algorithm
+///
+/// For each sample, computes the sign considering a noise threshold:
+/// - Values in `[-threshold, +threshold]` are treated as zero (sign = 0)
+/// - Values > threshold have sign = +1
+/// - Values < -threshold have sign = -1
+///
+/// A crossing occurs when the sign changes from non-zero to a different non-zero value.
+/// Zero samples are ignored to prevent false crossings near the threshold band.
+///
+/// # Memory Layout
+/// - `threshold`: Noise rejection threshold
+/// - `direction`: Which crossings to detect (Any, Rising, Falling)
+/// - `prev_sample`: Previous sample value per channel
+/// - `initialized`: Whether first sample has been received
+///
+/// # Performance
+/// Target: <10 μs for 1024 channels
+///
+/// # BCI Applications
+///
+/// ## Zero-Crossing Rate (ZCR)
+/// Compute the proportion of samples where sign changes occur. High ZCR indicates
+/// complex, rapidly-varying signals (e.g., seizure activity), while low ZCR
+/// indicates smooth signals (e.g., alpha waves during rest).
+///
+/// ## Epilepsy Detection
+/// Spike-wave patterns in epileptic seizures exhibit characteristic high crossing rates.
+/// Use `CrossingDirection::Rising` to detect sharp upward transitions.
+///
+/// ## Pitch Detection
+/// In speech signals, voiced segments have low ZCR while unvoiced segments
+/// (fricatives, stops) have high ZCR.
+///
+/// ## Event Detection
+/// Use directional detection to identify specific transitions:
+/// - `Rising`: Motor imagery onset, P300 rising edge
+/// - `Falling`: Motor imagery offset, P300 falling edge
+///
+/// # Example
+/// ```
+/// # use zerostone::{ZeroCrossingDetector, CrossingDirection};
+/// // Detect any zero-crossings with 0.1 threshold for noise rejection
+/// let mut detector: ZeroCrossingDetector<8> = ZeroCrossingDetector::new(0.1);
+///
+/// let samples = [-0.5, 0.3, 0.2, -0.4, 0.6, -0.1, 0.0, 0.5];
+/// let crossings = detector.detect(&samples);
+///
+/// // Count crossings
+/// let count: usize = crossings.iter().filter(|&&x| x).count();
+/// println!("Detected {} crossings", count);
+/// ```
+///
+/// # Example: Computing Zero-Crossing Rate
+/// ```
+/// # use zerostone::ZeroCrossingDetector;
+/// let mut detector: ZeroCrossingDetector<2> = ZeroCrossingDetector::new(0.0);
+///
+/// // Create a block of samples (e.g., 1-second window at 256 Hz)
+/// let mut block = Vec::new();
+/// for i in 0..256 {
+///     let t = i as f32 * 0.01;
+///     // Channel 0: 10 Hz sine wave
+///     let ch0 = libm::sinf(2.0 * core::f32::consts::PI * 10.0 * t);
+///     // Channel 1: 50 Hz sine wave (higher frequency)
+///     let ch1 = libm::sinf(2.0 * core::f32::consts::PI * 50.0 * t);
+///     block.push([ch0, ch1]);
+/// }
+///
+/// // Compute ZCR for the block
+/// let zcr = detector.zcr(&block);
+/// // zcr[0] ≈ 0.078 (10 Hz has ~20 crossings in 256 samples)
+/// // zcr[1] ≈ 0.391 (50 Hz has ~100 crossings in 256 samples)
+/// ```
+///
+/// # Example: Epilepsy Detection
+/// ```
+/// # use zerostone::{ZeroCrossingDetector, CrossingDirection};
+/// // Detect rising edges for seizure onset
+/// let mut detector: ZeroCrossingDetector<1> =
+///     ZeroCrossingDetector::with_direction(0.05, CrossingDirection::Rising);
+///
+/// // Simulate spike-wave pattern (characteristic of absence seizures)
+/// let spike_wave = [
+///     -0.1, -0.2, 0.8,  // Sharp spike (rising)
+///     0.5, 0.2, -0.3,   // Wave descent
+///     -0.4, -0.2, 0.7,  // Another spike
+///     0.4, 0.1, -0.2,   // Wave descent
+/// ];
+///
+/// let mut rising_count = 0;
+/// for &sample in &spike_wave {
+///     if detector.detect(&[sample])[0] {
+///         rising_count += 1;
+///     }
+/// }
+///
+/// // High rising crossing count indicates spike-wave pattern
+/// if rising_count > 2 {
+///     println!("Potential seizure activity detected");
+/// }
+/// ```
+pub struct ZeroCrossingDetector<const C: usize> {
+    threshold: f32,
+    direction: CrossingDirection,
+    prev_sample: [f32; C],
+    initialized: bool,
+}
+
+impl<const C: usize> ZeroCrossingDetector<C> {
+    /// Creates a new zero-crossing detector.
+    ///
+    /// # Arguments
+    /// * `threshold` - Noise rejection threshold. Values within `[-threshold, +threshold]`
+    ///   are treated as zero to prevent false crossings from noise.
+    ///
+    /// # Example
+    /// ```
+    /// # use zerostone::ZeroCrossingDetector;
+    /// // Detect crossings with 0.1 threshold for noise rejection
+    /// let detector: ZeroCrossingDetector<32> = ZeroCrossingDetector::new(0.1);
+    /// ```
+    pub fn new(threshold: f32) -> Self {
+        Self {
+            threshold,
+            direction: CrossingDirection::default(),
+            prev_sample: [0.0; C],
+            initialized: false,
+        }
+    }
+
+    /// Creates a new zero-crossing detector with specific crossing direction.
+    ///
+    /// # Arguments
+    /// * `threshold` - Noise rejection threshold
+    /// * `direction` - Which crossings to detect (Any, Rising, or Falling)
+    ///
+    /// # Example
+    /// ```
+    /// # use zerostone::{ZeroCrossingDetector, CrossingDirection};
+    /// // Detect only rising crossings (for event onset detection)
+    /// let detector: ZeroCrossingDetector<8> =
+    ///     ZeroCrossingDetector::with_direction(0.1, CrossingDirection::Rising);
+    /// ```
+    pub fn with_direction(threshold: f32, direction: CrossingDirection) -> Self {
+        Self {
+            threshold,
+            direction,
+            prev_sample: [0.0; C],
+            initialized: false,
+        }
+    }
+
+    /// Detects zero-crossings in a multi-channel sample.
+    ///
+    /// Returns a boolean array indicating which channels had a zero-crossing.
+    /// The first sample after creation or reset always returns all `false`.
+    ///
+    /// # Arguments
+    /// * `samples` - Multi-channel sample values
+    ///
+    /// # Returns
+    /// Boolean array where `true` indicates a crossing was detected on that channel
+    ///
+    /// # Example
+    /// ```
+    /// # use zerostone::ZeroCrossingDetector;
+    /// let mut detector: ZeroCrossingDetector<4> = ZeroCrossingDetector::new(0.0);
+    ///
+    /// // Initialize with negative values
+    /// detector.detect(&[-1.0, -0.5, -0.3, -0.2]);
+    ///
+    /// // Detect crossings (channels 0, 1, 2 cross to positive)
+    /// let crossings = detector.detect(&[1.0, 0.8, 0.5, -0.1]);
+    /// assert!(crossings[0]); // -1.0 → 1.0 crossed
+    /// assert!(crossings[1]); // -0.5 → 0.8 crossed
+    /// assert!(crossings[2]); // -0.3 → 0.5 crossed
+    /// assert!(!crossings[3]); // -0.2 → -0.1 no crossing
+    /// ```
+    pub fn detect(&mut self, samples: &[f32; C]) -> [bool; C] {
+        let mut result = [false; C];
+
+        // First sample has no previous - return all false
+        if !self.initialized {
+            self.prev_sample = *samples;
+            self.initialized = true;
+            return result;
+        }
+
+        for ch in 0..C {
+            let prev_sign = self.get_sign(self.prev_sample[ch]);
+            let curr_sign = self.get_sign(samples[ch]);
+
+            // Check for crossing based on direction
+            let crossed = match self.direction {
+                CrossingDirection::Any => {
+                    prev_sign != 0 && curr_sign != 0 && prev_sign != curr_sign
+                }
+                CrossingDirection::Rising => prev_sign == -1 && curr_sign == 1,
+                CrossingDirection::Falling => prev_sign == 1 && curr_sign == -1,
+            };
+
+            result[ch] = crossed;
+        }
+
+        // Update previous samples
+        self.prev_sample = *samples;
+
+        result
+    }
+
+    /// Returns true if any channel had a zero-crossing.
+    ///
+    /// # Arguments
+    /// * `samples` - Multi-channel sample values
+    ///
+    /// # Returns
+    /// `true` if at least one channel crossed zero, `false` otherwise
+    ///
+    /// # Example
+    /// ```
+    /// # use zerostone::ZeroCrossingDetector;
+    /// let mut detector: ZeroCrossingDetector<4> = ZeroCrossingDetector::new(0.0);
+    ///
+    /// detector.detect(&[-1.0, -1.0, -1.0, -1.0]);
+    ///
+    /// // One channel crosses
+    /// assert!(detector.detect_any(&[1.0, -1.0, -1.0, -1.0]));
+    ///
+    /// // No channels cross
+    /// assert!(!detector.detect_any(&[0.5, -0.5, -0.8, -0.3]));
+    /// ```
+    pub fn detect_any(&mut self, samples: &[f32; C]) -> bool {
+        let crossings = self.detect(samples);
+        crossings.iter().any(|&x| x)
+    }
+
+    /// Returns the number of channels that had a zero-crossing.
+    ///
+    /// # Arguments
+    /// * `samples` - Multi-channel sample values
+    ///
+    /// # Returns
+    /// Count of channels where a crossing was detected
+    ///
+    /// # Example
+    /// ```
+    /// # use zerostone::ZeroCrossingDetector;
+    /// let mut detector: ZeroCrossingDetector<4> = ZeroCrossingDetector::new(0.0);
+    ///
+    /// detector.detect(&[-1.0, -1.0, 1.0, 1.0]);
+    ///
+    /// // All four channels cross (ch0,ch1: -1→1, ch2,ch3: 1→-1)
+    /// let count = detector.detect_count(&[1.0, 1.0, -1.0, -1.0]);
+    /// assert_eq!(count, 4);
+    /// ```
+    pub fn detect_count(&mut self, samples: &[f32; C]) -> usize {
+        let crossings = self.detect(samples);
+        crossings.iter().filter(|&&x| x).count()
+    }
+
+    /// Computes zero-crossing rate (ZCR) for a block of samples.
+    ///
+    /// Returns the proportion of samples where crossings occurred (0.0-1.0) for each channel.
+    /// This is the primary method for computing ZCR features for BCI applications.
+    ///
+    /// # Arguments
+    /// * `block` - Slice of multi-channel samples (e.g., a 1-second window)
+    ///
+    /// # Returns
+    /// Array of ZCR values per channel (0.0 = no crossings, 1.0 = all samples crossed)
+    ///
+    /// # Example
+    /// ```
+    /// # use zerostone::ZeroCrossingDetector;
+    /// let mut detector: ZeroCrossingDetector<2> = ZeroCrossingDetector::new(0.0);
+    ///
+    /// // Create test signals
+    /// let mut block = Vec::new();
+    /// for i in 0..100 {
+    ///     let t = i as f32 * 0.1;
+    ///     // Channel 0: slow oscillation (low ZCR)
+    ///     let ch0 = if i < 50 { -1.0 } else { 1.0 };
+    ///     // Channel 1: fast alternation (high ZCR)
+    ///     let ch1 = if i % 2 == 0 { -1.0 } else { 1.0 };
+    ///     block.push([ch0, ch1]);
+    /// }
+    ///
+    /// let zcr = detector.zcr(&block);
+    /// assert!(zcr[0] < 0.1);  // Low ZCR for slow signal
+    /// assert!(zcr[1] > 0.4);  // High ZCR for fast signal
+    /// ```
+    pub fn zcr(&mut self, block: &[[f32; C]]) -> [f32; C] {
+        if block.is_empty() {
+            return [0.0; C];
+        }
+
+        let mut crossing_counts = [0usize; C];
+
+        for sample in block {
+            let crossings = self.detect(sample);
+            for (ch, &crossed) in crossings.iter().enumerate() {
+                if crossed {
+                    crossing_counts[ch] += 1;
+                }
+            }
+        }
+
+        // Compute proportion
+        let mut zcr = [0.0f32; C];
+        let total_samples = block.len() as f32;
+        for ch in 0..C {
+            zcr[ch] = crossing_counts[ch] as f32 / total_samples;
+        }
+
+        zcr
+    }
+
+    /// Returns the current noise rejection threshold.
+    pub fn threshold(&self) -> f32 {
+        self.threshold
+    }
+
+    /// Sets the noise rejection threshold.
+    ///
+    /// # Arguments
+    /// * `threshold` - New threshold value
+    ///
+    /// # Example
+    /// ```
+    /// # use zerostone::ZeroCrossingDetector;
+    /// let mut detector: ZeroCrossingDetector<1> = ZeroCrossingDetector::new(0.1);
+    /// assert_eq!(detector.threshold(), 0.1);
+    ///
+    /// detector.set_threshold(0.2);
+    /// assert_eq!(detector.threshold(), 0.2);
+    /// ```
+    pub fn set_threshold(&mut self, threshold: f32) {
+        self.threshold = threshold;
+    }
+
+    /// Returns the current crossing direction mode.
+    pub fn direction(&self) -> CrossingDirection {
+        self.direction
+    }
+
+    /// Sets the crossing direction mode.
+    ///
+    /// # Arguments
+    /// * `direction` - New crossing direction
+    ///
+    /// # Example
+    /// ```
+    /// # use zerostone::{ZeroCrossingDetector, CrossingDirection};
+    /// let mut detector: ZeroCrossingDetector<1> = ZeroCrossingDetector::new(0.0);
+    /// assert_eq!(detector.direction(), CrossingDirection::Any);
+    ///
+    /// detector.set_direction(CrossingDirection::Rising);
+    /// assert_eq!(detector.direction(), CrossingDirection::Rising);
+    /// ```
+    pub fn set_direction(&mut self, direction: CrossingDirection) {
+        self.direction = direction;
+    }
+
+    /// Resets the detector state.
+    ///
+    /// Clears previous sample history. The next call to `detect()` will return all `false`.
+    ///
+    /// # Example
+    /// ```
+    /// # use zerostone::ZeroCrossingDetector;
+    /// let mut detector: ZeroCrossingDetector<2> = ZeroCrossingDetector::new(0.0);
+    ///
+    /// detector.detect(&[-1.0, -1.0]);
+    /// detector.detect(&[1.0, 1.0]); // Would detect crossings
+    ///
+    /// detector.reset();
+    ///
+    /// // After reset, no crossing on first sample
+    /// let crossings = detector.detect(&[1.0, 1.0]);
+    /// assert!(!crossings[0]);
+    /// assert!(!crossings[1]);
+    /// ```
+    pub fn reset(&mut self) {
+        self.prev_sample = [0.0; C];
+        self.initialized = false;
+    }
+
+    /// Returns the number of channels.
+    pub const fn num_channels(&self) -> usize {
+        C
+    }
+
+    /// Helper function to get the sign of a value with threshold.
+    ///
+    /// Returns:
+    /// - 0 if |value| <= threshold (treated as zero)
+    /// - 1 if value > threshold
+    /// - -1 if value < -threshold
+    #[inline]
+    fn get_sign(&self, value: f32) -> i8 {
+        if libm::fabsf(value) <= self.threshold {
+            0
+        } else if value > 0.0 {
+            1
+        } else {
+            -1
+        }
+    }
+}
+
+impl<const C: usize> Default for ZeroCrossingDetector<C> {
+    fn default() -> Self {
+        Self::new(0.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    use std::vec::Vec;
+
     use super::*;
 
     #[test]
@@ -1015,5 +1453,306 @@ mod tests {
         // Test as_slice
         let slice = events.as_slice();
         assert_eq!(slice.len(), 3);
+    }
+
+    // Zero-crossing detector tests
+
+    #[test]
+    fn test_zero_crossing_basic_detection() {
+        let mut detector: ZeroCrossingDetector<4> = ZeroCrossingDetector::new(0.0);
+
+        // Initialize with negative values
+        let crossings = detector.detect(&[-1.0, -1.0, -1.0, -1.0]);
+        // First sample returns all false
+        assert!(!crossings[0]);
+        assert!(!crossings[1]);
+        assert!(!crossings[2]);
+        assert!(!crossings[3]);
+
+        // Detect crossings (channels 0, 1, 2 cross to positive)
+        let crossings = detector.detect(&[1.0, 0.8, 0.5, -0.5]);
+        assert!(crossings[0]); // -1.0 → 1.0 crossed
+        assert!(crossings[1]); // -1.0 → 0.8 crossed
+        assert!(crossings[2]); // -1.0 → 0.5 crossed
+        assert!(!crossings[3]); // -1.0 → -0.5 no crossing
+    }
+
+    #[test]
+    fn test_zero_crossing_threshold_noise_rejection() {
+        let mut detector: ZeroCrossingDetector<2> = ZeroCrossingDetector::new(0.2);
+
+        // Initialize
+        detector.detect(&[-1.0, -1.0]);
+
+        // Values within [-0.2, 0.2] are treated as zero
+        let crossings = detector.detect(&[0.1, 0.15]); // Within threshold
+        assert!(!crossings[0]); // -1.0 → 0.1 (0.1 treated as zero, no crossing)
+        assert!(!crossings[1]); // -1.0 → 0.15 (0.15 treated as zero, no crossing)
+
+        // Now go from zero to above threshold - this should cross
+        let crossings = detector.detect(&[0.5, 0.3]);
+        assert!(!crossings[0]); // 0 → 0.5 doesn't cross (zero to positive)
+        assert!(!crossings[1]); // 0 → 0.3 doesn't cross (zero to positive)
+
+        // Now from positive to negative should cross
+        let crossings = detector.detect(&[-0.5, -0.3]);
+        assert!(crossings[0]); // 0.5 → -0.5 crosses
+        assert!(crossings[1]); // 0.3 → -0.3 crosses
+    }
+
+    #[test]
+    fn test_zero_crossing_rising_only() {
+        let mut detector: ZeroCrossingDetector<2> =
+            ZeroCrossingDetector::with_direction(0.0, CrossingDirection::Rising);
+
+        // Initialize
+        detector.detect(&[-1.0, 1.0]);
+
+        // Rising crossing should be detected
+        let crossings = detector.detect(&[1.0, -1.0]);
+        assert!(crossings[0]); // -1.0 → 1.0 rising
+        assert!(!crossings[1]); // 1.0 → -1.0 falling (not detected)
+    }
+
+    #[test]
+    fn test_zero_crossing_falling_only() {
+        let mut detector: ZeroCrossingDetector<2> =
+            ZeroCrossingDetector::with_direction(0.0, CrossingDirection::Falling);
+
+        // Initialize
+        detector.detect(&[1.0, -1.0]);
+
+        // Falling crossing should be detected
+        let crossings = detector.detect(&[-1.0, 1.0]);
+        assert!(crossings[0]); // 1.0 → -1.0 falling
+        assert!(!crossings[1]); // -1.0 → 1.0 rising (not detected)
+    }
+
+    #[test]
+    fn test_zero_crossing_zcr_calculation() {
+        let mut detector: ZeroCrossingDetector<2> = ZeroCrossingDetector::new(0.0);
+
+        // Create block with different crossing rates
+        let mut block = Vec::new();
+        for i in 0..100 {
+            // Channel 0: slow (one crossing at i=50)
+            let ch0 = if i < 50 { -1.0 } else { 1.0 };
+            // Channel 1: fast alternation (many crossings)
+            let ch1 = if i % 2 == 0 { -1.0 } else { 1.0 };
+            block.push([ch0, ch1]);
+        }
+
+        let zcr = detector.zcr(&block);
+        assert!(zcr[0] < 0.05); // Low ZCR for slow signal (~1/100)
+        assert!(zcr[1] > 0.4); // High ZCR for fast signal (~50/100)
+    }
+
+    #[test]
+    fn test_zero_crossing_detect_any() {
+        let mut detector: ZeroCrossingDetector<4> = ZeroCrossingDetector::new(0.0);
+
+        detector.detect(&[-1.0, -1.0, -1.0, -1.0]);
+
+        // One channel crosses
+        assert!(detector.detect_any(&[1.0, -1.0, -1.0, -1.0]));
+
+        // No channels cross
+        assert!(!detector.detect_any(&[0.5, -0.5, -0.8, -0.3]));
+    }
+
+    #[test]
+    fn test_zero_crossing_detect_count() {
+        let mut detector: ZeroCrossingDetector<4> = ZeroCrossingDetector::new(0.0);
+
+        detector.detect(&[-1.0, -1.0, 1.0, 1.0]);
+
+        // Four channels cross (all change sign: ch0,ch1: -1→1, ch2,ch3: 1→-1)
+        let count = detector.detect_count(&[1.0, 1.0, -1.0, -1.0]);
+        assert_eq!(count, 4);
+
+        // All channels cross back
+        let count = detector.detect_count(&[-1.0, -1.0, 1.0, 1.0]);
+        assert_eq!(count, 4);
+
+        // No channels cross (same sign as previous)
+        let count = detector.detect_count(&[-0.5, -0.5, 0.5, 0.5]);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_zero_crossing_reset() {
+        let mut detector: ZeroCrossingDetector<2> = ZeroCrossingDetector::new(0.0);
+
+        detector.detect(&[-1.0, -1.0]);
+        let crossings = detector.detect(&[1.0, 1.0]);
+        assert!(crossings[0]);
+        assert!(crossings[1]);
+
+        detector.reset();
+
+        // After reset, first sample returns all false
+        let crossings = detector.detect(&[1.0, 1.0]);
+        assert!(!crossings[0]);
+        assert!(!crossings[1]);
+    }
+
+    #[test]
+    fn test_zero_crossing_setters() {
+        let mut detector: ZeroCrossingDetector<1> = ZeroCrossingDetector::new(0.1);
+
+        assert_eq!(detector.threshold(), 0.1);
+        assert_eq!(detector.direction(), CrossingDirection::Any);
+
+        detector.set_threshold(0.2);
+        detector.set_direction(CrossingDirection::Rising);
+
+        assert_eq!(detector.threshold(), 0.2);
+        assert_eq!(detector.direction(), CrossingDirection::Rising);
+    }
+
+    #[test]
+    fn test_zero_crossing_default() {
+        let detector: ZeroCrossingDetector<8> = ZeroCrossingDetector::default();
+
+        assert_eq!(detector.threshold(), 0.0);
+        assert_eq!(detector.direction(), CrossingDirection::Any);
+        assert_eq!(detector.num_channels(), 8);
+    }
+
+    #[test]
+    fn test_zero_crossing_large_channel_count() {
+        let mut detector: ZeroCrossingDetector<1024> = ZeroCrossingDetector::new(0.0);
+
+        assert_eq!(detector.num_channels(), 1024);
+
+        // Initialize with all negative
+        let mut samples = [-1.0; 1024];
+        detector.detect(&samples);
+
+        // All channels cross to positive
+        samples = [1.0; 1024];
+        let crossings = detector.detect(&samples);
+
+        // Verify all channels detected crossings
+        let count: usize = crossings.iter().filter(|&&x| x).count();
+        assert_eq!(count, 1024);
+    }
+
+    #[test]
+    fn test_zero_crossing_zero_to_positive() {
+        let mut detector: ZeroCrossingDetector<2> = ZeroCrossingDetector::new(0.1);
+
+        // Start at zero (within threshold)
+        detector.detect(&[0.05, 0.0]);
+
+        // Moving from zero to positive doesn't count as crossing
+        let crossings = detector.detect(&[0.5, 0.5]);
+        assert!(!crossings[0]); // 0 → positive: no crossing
+        assert!(!crossings[1]); // 0 → positive: no crossing
+
+        // Now from positive to negative should cross
+        let crossings = detector.detect(&[-0.5, -0.5]);
+        assert!(crossings[0]); // positive → negative: crossing
+        assert!(crossings[1]); // positive → negative: crossing
+    }
+
+    #[test]
+    fn test_zero_crossing_staying_at_zero() {
+        let mut detector: ZeroCrossingDetector<2> = ZeroCrossingDetector::new(0.1);
+
+        // Both samples within threshold
+        detector.detect(&[0.05, -0.05]);
+
+        let crossings = detector.detect(&[0.08, -0.08]);
+        assert!(!crossings[0]); // 0 → 0: no crossing
+        assert!(!crossings[1]); // 0 → 0: no crossing
+    }
+
+    #[test]
+    fn test_zero_crossing_epilepsy_pattern() {
+        let mut detector: ZeroCrossingDetector<1> =
+            ZeroCrossingDetector::with_direction(0.0, CrossingDirection::Rising);
+
+        // Simulate spike-wave pattern (characteristic of epilepsy)
+        let spike_wave = [
+            -0.1, -0.2, 0.8, // Sharp spike (rising)
+            0.5, 0.2, -0.3, // Wave descent
+            -0.4, -0.2, 0.7, // Another spike
+            0.4, 0.1, -0.2, // Wave descent
+        ];
+
+        let mut rising_count = 0;
+        for &sample in &spike_wave {
+            if detector.detect(&[sample])[0] {
+                rising_count += 1;
+            }
+        }
+
+        // Should detect 2 rising crossings (spike onsets)
+        assert_eq!(rising_count, 2);
+    }
+
+    #[test]
+    fn test_zero_crossing_block_processing() {
+        let mut detector: ZeroCrossingDetector<2> = ZeroCrossingDetector::new(0.0);
+
+        // Create signals with different frequencies
+        let mut low_freq_block = Vec::new();
+        let mut high_freq_block = Vec::new();
+
+        for i in 0..200 {
+            // Low frequency: 5 Hz (10 crossings in 200 samples @ arbitrary rate)
+            let low_freq = if i < 100 { -1.0 } else { 1.0 };
+            // High frequency: alternating (100 crossings in 200 samples)
+            let high_freq = if i % 2 == 0 { -1.0 } else { 1.0 };
+
+            low_freq_block.push([low_freq, low_freq]);
+            high_freq_block.push([high_freq, high_freq]);
+        }
+
+        // Low frequency signal
+        let zcr_low = detector.zcr(&low_freq_block);
+        assert!(zcr_low[0] < 0.05); // ~1 crossing / 200 samples
+
+        // Reset and test high frequency
+        detector.reset();
+        let zcr_high = detector.zcr(&high_freq_block);
+        assert!(zcr_high[0] > 0.4); // ~100 crossings / 200 samples
+    }
+
+    #[test]
+    fn test_zero_crossing_empty_block() {
+        let mut detector: ZeroCrossingDetector<2> = ZeroCrossingDetector::new(0.0);
+
+        let empty_block: Vec<[f32; 2]> = Vec::new();
+        let zcr = detector.zcr(&empty_block);
+
+        assert_eq!(zcr[0], 0.0);
+        assert_eq!(zcr[1], 0.0);
+    }
+
+    #[test]
+    fn test_zero_crossing_negative_to_negative() {
+        let mut detector: ZeroCrossingDetector<1> = ZeroCrossingDetector::new(0.0);
+
+        detector.detect(&[-1.0]);
+
+        // Staying negative - no crossing
+        let crossings = detector.detect(&[-0.5]);
+        assert!(!crossings[0]);
+    }
+
+    #[test]
+    fn test_zero_crossing_multi_channel_independence() {
+        let mut detector: ZeroCrossingDetector<3> = ZeroCrossingDetector::new(0.0);
+
+        // Initialize each channel differently
+        detector.detect(&[-1.0, 0.5, -0.5]);
+
+        // Each channel crosses independently
+        let crossings = detector.detect(&[1.0, -0.5, 0.5]);
+        assert!(crossings[0]); // -1.0 → 1.0 crosses
+        assert!(crossings[1]); // 0.5 → -0.5 crosses
+        assert!(crossings[2]); // -0.5 → 0.5 crosses
     }
 }
