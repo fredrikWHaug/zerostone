@@ -17,6 +17,7 @@
 //! - **[`EnvelopeFollower`]** - Amplitude envelope extraction
 //! - **[`Fft`]** - Fast Fourier Transform for spectral analysis
 //! - **[`ThresholdDetector`]** - Multi-channel spike detection with refractory period
+//! - **[`ZeroCrossingDetector`]** - Zero-crossing detection for ZCR features and epilepsy patterns
 //! - **[`OnlineStats`]** - Welford's algorithm for streaming mean/variance
 //! - **[`OnlineCov`]** - Streaming covariance matrix estimation for CSP
 //! - **[`StreamingPercentile`]** - P² algorithm for streaming percentile estimation
@@ -85,7 +86,8 @@ pub use csp::{AdaptiveCsp, CspError, UpdateConfig};
 pub use decimate::Decimator;
 pub use deconvolution::{DeconvolutionResult, OasisDeconvolution};
 pub use detector::{
-    AdaptiveThresholdDetector, DetectorState, SpikeEvent, SpikeEvents, ThresholdDetector,
+    AdaptiveThresholdDetector, CrossingDirection, DetectorState, SpikeEvent, SpikeEvents,
+    ThresholdDetector, ZeroCrossingDetector,
 };
 pub use envelope::{EnvelopeFollower, Rectification};
 pub use fft::{BandPower, Complex, Fft};
