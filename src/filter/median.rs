@@ -34,8 +34,8 @@
 ///
 /// # Algorithm
 ///
-/// - Window 3, 5, 7: Optimized sorting networks (5-16 comparisons)
-/// - Window 9+: Partial sort using nth_element (O(n) average)
+/// - Window 2-7: Optimized sorting networks (1-16 comparisons)
+/// - Window 8+: Partial sort using nth_element (O(n) average)
 ///
 /// # Memory
 ///
@@ -49,8 +49,13 @@
 ///
 /// # Type Parameters
 ///
-/// * `C` - Number of channels
-/// * `WINDOW` - Size of the sliding window (must be odd for symmetric median)
+/// * `C` - Number of channels (must be >= 1)
+/// * `WINDOW` - Size of the sliding window (must be >= 1)
+///
+/// # NaN Handling
+///
+/// Input samples must be finite (not NaN or infinity). NaN values will produce
+/// undefined ordering behavior in sorting networks and may corrupt results.
 ///
 /// # Examples
 ///
@@ -88,6 +93,8 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
     /// ```
     #[must_use]
     pub fn new() -> Self {
+        const { assert!(WINDOW >= 1, "WINDOW must be at least 1") };
+        const { assert!(C >= 1, "C (channels) must be at least 1") };
         Self {
             delay_lines: [[0.0; WINDOW]; C],
             indices: [0; C],
@@ -233,7 +240,7 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
     fn median(window: &mut [f32; WINDOW]) -> f32 {
         match WINDOW {
             1 => window[0],
-            2 => window[0], // Lower middle for even windows
+            2 => Self::median2(window[0], window[1]),
             3 => Self::median3(window[0], window[1], window[2]),
             4 => Self::median4([window[0], window[1], window[2], window[3]]),
             5 => Self::median5([window[0], window[1], window[2], window[3], window[4]]),
@@ -244,6 +251,16 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
                 window[0], window[1], window[2], window[3], window[4], window[5], window[6],
             ]),
             _ => Self::median_partial_sort(window),
+        }
+    }
+
+    /// 2-element median returns lower middle (minimum).
+    #[inline]
+    fn median2(a: f32, b: f32) -> f32 {
+        if a < b {
+            a
+        } else {
+            b
         }
     }
 
@@ -307,7 +324,7 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
         w[2] // Middle element
     }
 
-    /// Sorting network for 6 elements, returns lower middle (index 2).
+    /// Sorting network for 6 elements (12 comparisons), returns lower middle (index 2).
     #[inline]
     fn median6(mut w: [f32; 6]) -> f32 {
         macro_rules! cmp_swap {
@@ -318,16 +335,16 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
             };
         }
 
-        // Sorting network for 6 elements
+        // Batcher's odd-even merge sort network for 6 elements
         cmp_swap!(0, 1);
         cmp_swap!(2, 3);
         cmp_swap!(4, 5);
         cmp_swap!(0, 2);
-        cmp_swap!(1, 3);
-        cmp_swap!(4, 2);
-        cmp_swap!(5, 3);
         cmp_swap!(1, 4);
         cmp_swap!(3, 5);
+        cmp_swap!(0, 1);
+        cmp_swap!(2, 3);
+        cmp_swap!(4, 5);
         cmp_swap!(1, 2);
         cmp_swap!(3, 4);
         cmp_swap!(2, 3);
@@ -707,5 +724,111 @@ mod tests {
         let filter = MedianFilter::<4, 5>::default();
         assert_eq!(filter.window_size(), 5);
         assert_eq!(filter.num_channels(), 4);
+    }
+
+    #[test]
+    fn test_window2_both_orderings() {
+        // Test that window=2 returns minimum regardless of input order
+        let mut filter1 = MedianFilter::<1, 2>::new();
+        filter1.process(&[10.0]);
+        filter1.process(&[20.0]);
+        // Now in steady state, process with smaller value second
+        let out1 = filter1.process(&[5.0]);
+        // Window contains [20, 5], lower middle should be 5
+        assert!(approx_eq(out1[0], 5.0));
+
+        let mut filter2 = MedianFilter::<1, 2>::new();
+        filter2.process(&[5.0]);
+        filter2.process(&[20.0]);
+        // Now in steady state, process with larger value
+        let out2 = filter2.process(&[30.0]);
+        // Window contains [20, 30], lower middle should be 20
+        assert!(approx_eq(out2[0], 20.0));
+    }
+
+    #[test]
+    fn test_window4_sorting_network() {
+        let mut filter = MedianFilter::<1, 4>::new();
+
+        // Test with reverse-sorted input
+        filter.process(&[4.0]);
+        filter.process(&[3.0]);
+        filter.process(&[2.0]);
+        filter.process(&[1.0]);
+        // Window: [4,3,2,1], sorted: [1,2,3,4], lower middle (index 1) = 2
+        let out1 = filter.process(&[0.0]);
+        // Window: [3,2,1,0], sorted: [0,1,2,3], lower middle = 1
+        assert!(approx_eq(out1[0], 1.0));
+
+        // Test with already sorted input
+        let mut filter2 = MedianFilter::<1, 4>::new();
+        filter2.process(&[1.0]);
+        filter2.process(&[2.0]);
+        filter2.process(&[3.0]);
+        filter2.process(&[4.0]);
+        let out2 = filter2.process(&[5.0]);
+        // Window: [2,3,4,5], sorted: [2,3,4,5], lower middle = 3
+        assert!(approx_eq(out2[0], 3.0));
+    }
+
+    #[test]
+    fn test_window6_sorting_network() {
+        let mut filter = MedianFilter::<1, 6>::new();
+
+        // Test with reverse-sorted input (worst case for sorting)
+        filter.process(&[6.0]);
+        filter.process(&[5.0]);
+        filter.process(&[4.0]);
+        filter.process(&[3.0]);
+        filter.process(&[2.0]);
+        filter.process(&[1.0]);
+        // Window: [6,5,4,3,2,1], sorted: [1,2,3,4,5,6], lower middle (index 2) = 3
+        let out1 = filter.process(&[0.0]);
+        // Window: [5,4,3,2,1,0], sorted: [0,1,2,3,4,5], lower middle = 2
+        assert!(approx_eq(out1[0], 2.0));
+
+        // Test with mixed input
+        let mut filter2 = MedianFilter::<1, 6>::new();
+        filter2.process(&[3.0]);
+        filter2.process(&[1.0]);
+        filter2.process(&[4.0]);
+        filter2.process(&[1.0]);
+        filter2.process(&[5.0]);
+        filter2.process(&[9.0]);
+        // Window: [3,1,4,1,5,9], sorted: [1,1,3,4,5,9], lower middle = 3
+        let out2 = filter2.process(&[2.0]);
+        // Window: [1,4,1,5,9,2], sorted: [1,1,2,4,5,9], lower middle = 2
+        assert!(approx_eq(out2[0], 2.0));
+    }
+
+    #[test]
+    fn test_window6_all_permutations_of_small_set() {
+        // Test several permutations to verify sorting network
+        let test_cases: [[f32; 6]; 4] = [
+            [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], // sorted
+            [6.0, 5.0, 4.0, 3.0, 2.0, 1.0], // reverse
+            [3.0, 1.0, 4.0, 1.0, 5.0, 9.0], // pi digits
+            [2.0, 6.0, 1.0, 5.0, 3.0, 4.0], // random
+        ];
+
+        for (i, input) in test_cases.iter().enumerate() {
+            let mut filter = MedianFilter::<1, 6>::new();
+            for &val in input {
+                filter.process(&[val]);
+            }
+
+            // Process one more to get a full window result
+            let out = filter.process(&[input[0]]);
+            // The window now has input[1..6] + input[0]
+            let mut new_window = [input[1], input[2], input[3], input[4], input[5], input[0]];
+            new_window.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            assert!(
+                approx_eq(out[0], new_window[2]),
+                "Case {}: expected {}, got {}",
+                i,
+                new_window[2],
+                out[0]
+            );
+        }
     }
 }
