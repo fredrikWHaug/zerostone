@@ -80,6 +80,11 @@ pub struct MedianFilter<const C: usize, const WINDOW: usize> {
 }
 
 impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
+    /// Compile-time assertion that WINDOW >= 1
+    const _ASSERT_WINDOW: () = assert!(WINDOW >= 1, "WINDOW must be at least 1");
+    /// Compile-time assertion that C >= 1
+    const _ASSERT_C: () = assert!(C >= 1, "C (channels) must be at least 1");
+
     /// Creates a new median filter with zero-initialized state.
     ///
     /// # Examples
@@ -93,8 +98,11 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
     /// ```
     #[must_use]
     pub fn new() -> Self {
-        const { assert!(WINDOW >= 1, "WINDOW must be at least 1") };
-        const { assert!(C >= 1, "C (channels) must be at least 1") };
+        // Trigger compile-time assertions
+        #[allow(clippy::let_unit_value)]
+        let () = Self::_ASSERT_WINDOW;
+        #[allow(clippy::let_unit_value)]
+        let () = Self::_ASSERT_C;
         Self {
             delay_lines: [[0.0; WINDOW]; C],
             indices: [0; C],
