@@ -7,7 +7,7 @@ use zerostone::{
     CircularBuffer, Complex, Cwt, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter,
     Interpolator, LmsFilter, MultiChannelCwt, NlmsFilter, OasisDeconvolution, OnlineCov,
     Rectification, Stft, StreamingPercentile, ThresholdDetector, UpdateConfig, WindowType,
-    ZscoreArtifact,
+    WindowedRms, ZscoreArtifact,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -1783,6 +1783,155 @@ fn bench_nlms_filter(c: &mut Criterion) {
     group.finish();
 }
 
+// WindowedRms benchmarks - windowed RMS and power computation
+fn bench_windowed_rms(c: &mut Criterion) {
+    let mut group = c.benchmark_group("windowed_rms");
+
+    // Single-sample processing (typical EEG window: 64 samples, 32 channels)
+    {
+        let mut rms: WindowedRms<32, 64> = WindowedRms::new();
+        let sample = [1.0f32; 32];
+        group.throughput(Throughput::Elements(32));
+        group.bench_function("process_64win_32ch", |b| {
+            b.iter(|| {
+                rms.process(black_box(&sample));
+            });
+        });
+    }
+
+    // RMS retrieval cost
+    {
+        let mut rms: WindowedRms<32, 64> = WindowedRms::new();
+        for _ in 0..64 {
+            rms.process(&[1.0; 32]);
+        }
+        group.bench_function("rms_retrieval_64win_32ch", |b| {
+            b.iter(|| black_box(rms.rms()));
+        });
+    }
+
+    // Power retrieval (no sqrt)
+    {
+        let mut rms: WindowedRms<32, 64> = WindowedRms::new();
+        for _ in 0..64 {
+            rms.process(&[1.0; 32]);
+        }
+        group.bench_function("power_retrieval_64win_32ch", |b| {
+            b.iter(|| black_box(rms.power()));
+        });
+    }
+
+    // Different window sizes (32 channels)
+    for window in [16, 64, 256].iter() {
+        let window_size = *window;
+        match window_size {
+            16 => {
+                let mut rms: WindowedRms<32, 16> = WindowedRms::new();
+                let sample = [1.0f32; 32];
+                group.bench_with_input(
+                    BenchmarkId::from_parameter(format!("process_{}win_32ch", window)),
+                    window,
+                    |b, _| {
+                        b.iter(|| {
+                            rms.process(black_box(&sample));
+                        });
+                    },
+                );
+            }
+            64 => {
+                let mut rms: WindowedRms<32, 64> = WindowedRms::new();
+                let sample = [1.0f32; 32];
+                group.bench_with_input(
+                    BenchmarkId::from_parameter(format!("process_{}win_32ch", window)),
+                    window,
+                    |b, _| {
+                        b.iter(|| {
+                            rms.process(black_box(&sample));
+                        });
+                    },
+                );
+            }
+            256 => {
+                let mut rms: WindowedRms<32, 256> = WindowedRms::new();
+                let sample = [1.0f32; 32];
+                group.bench_with_input(
+                    BenchmarkId::from_parameter(format!("process_{}win_32ch", window)),
+                    window,
+                    |b, _| {
+                        b.iter(|| {
+                            rms.process(black_box(&sample));
+                        });
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+
+    // Different channel counts (64-sample window)
+    for channels in [8, 32, 128].iter() {
+        let channel_count = *channels;
+        match channel_count {
+            8 => {
+                let mut rms: WindowedRms<8, 64> = WindowedRms::new();
+                let sample = [1.0f32; 8];
+                group.throughput(Throughput::Elements(8));
+                group.bench_with_input(
+                    BenchmarkId::from_parameter(format!("process_64win_{}ch", channels)),
+                    channels,
+                    |b, _| {
+                        b.iter(|| {
+                            rms.process(black_box(&sample));
+                        });
+                    },
+                );
+            }
+            32 => {
+                let mut rms: WindowedRms<32, 64> = WindowedRms::new();
+                let sample = [1.0f32; 32];
+                group.throughput(Throughput::Elements(32));
+                group.bench_with_input(
+                    BenchmarkId::from_parameter(format!("process_64win_{}ch", channels)),
+                    channels,
+                    |b, _| {
+                        b.iter(|| {
+                            rms.process(black_box(&sample));
+                        });
+                    },
+                );
+            }
+            128 => {
+                let mut rms: WindowedRms<128, 64> = WindowedRms::new();
+                let sample = [1.0f32; 128];
+                group.throughput(Throughput::Elements(128));
+                group.bench_with_input(
+                    BenchmarkId::from_parameter(format!("process_64win_{}ch", channels)),
+                    channels,
+                    |b, _| {
+                        b.iter(|| {
+                            rms.process(black_box(&sample));
+                        });
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+
+    // Block processing (256 samples, 4 channels, 64-sample window)
+    {
+        let mut rms: WindowedRms<4, 64> = WindowedRms::new();
+        group.bench_function("block_256samples_4ch_64win", |b| {
+            let mut block: Vec<[f32; 4]> = (0..256).map(|i| [(i as f32 * 0.01).sin(); 4]).collect();
+            b.iter(|| {
+                rms.process_block(black_box(&mut block));
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -1812,6 +1961,7 @@ criterion_group!(
     bench_xcorr,
     bench_hilbert,
     bench_lms_filter,
-    bench_nlms_filter
+    bench_nlms_filter,
+    bench_windowed_rms
 );
 criterion_main!(benches);
