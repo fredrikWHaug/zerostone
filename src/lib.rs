@@ -22,6 +22,7 @@
 //! - **[`OnlineStats`]** - Welford's algorithm for streaming mean/variance
 //! - **[`OnlineCov`]** - Streaming covariance matrix estimation for CSP
 //! - **[`StreamingPercentile`]** - P² algorithm for streaming percentile estimation
+//! - **[`WindowedRms`]** - Windowed RMS and power computation for amplitude tracking
 //! - **[`OasisDeconvolution`]** - OASIS calcium imaging deconvolution
 //! - **[`WindowType`]** - Window functions for spectral analysis (Hann, Hamming, Blackman, etc.)
 //! - **[`Cwt`]** - Continuous Wavelet Transform for time-frequency analysis
@@ -73,6 +74,7 @@ pub mod hilbert;
 mod interpolate;
 pub mod linalg;
 mod percentile;
+mod rms;
 mod stats;
 mod stft;
 mod sync;
@@ -99,6 +101,7 @@ pub use filter::{
 pub use hilbert::HilbertTransform;
 pub use interpolate::{InterpolationMethod, Interpolator};
 pub use percentile::StreamingPercentile;
+pub use rms::WindowedRms;
 pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;
 pub use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
