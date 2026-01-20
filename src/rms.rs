@@ -53,6 +53,9 @@ pub struct WindowedRms<const C: usize, const WINDOW_SIZE: usize> {
 }
 
 impl<const C: usize, const WINDOW_SIZE: usize> WindowedRms<C, WINDOW_SIZE> {
+    /// Compile-time assertion that WINDOW_SIZE >= 1
+    const _ASSERT_WINDOW_SIZE: () = assert!(WINDOW_SIZE >= 1, "WINDOW_SIZE must be at least 1");
+
     /// Creates a new windowed RMS tracker.
     ///
     /// # Panics
@@ -68,7 +71,9 @@ impl<const C: usize, const WINDOW_SIZE: usize> WindowedRms<C, WINDOW_SIZE> {
     /// let rms: WindowedRms<8, 64> = WindowedRms::new();
     /// ```
     pub fn new() -> Self {
-        const { assert!(WINDOW_SIZE >= 1, "Window size must be at least 1") };
+        // Trigger compile-time assertion
+        #[allow(clippy::let_unit_value)]
+        let () = Self::_ASSERT_WINDOW_SIZE;
         Self {
             buffer: [[0.0; C]; WINDOW_SIZE],
             index: 0,
