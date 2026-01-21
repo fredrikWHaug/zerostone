@@ -12,6 +12,7 @@
 //! - **[`FirFilter`]** - Direct-form FIR filter with linear phase
 //! - **[`AcCoupler`]** - AC coupling filter for DC offset removal
 //! - **[`MedianFilter`]** - Non-linear median filter for impulsive noise rejection
+//! - **[`SurfaceLaplacian`]** - Surface Laplacian spatial filter for volume conduction reduction
 //! - **[`LmsFilter`], [`NlmsFilter`]** - Adaptive filters for real-time noise cancellation
 //! - **[`Decimator`]** - Sample rate reduction (downsampling)
 //! - **[`Interpolator`]** - Sample rate increase (upsampling)
@@ -96,7 +97,7 @@ pub use envelope::{EnvelopeFollower, Rectification};
 pub use fft::{BandPower, Complex, Fft};
 pub use filter::{
     AcCoupler, AdaptiveOutput, BiquadCoeffs, FirFilter, IirFilter, LmsFilter, MedianFilter,
-    NlmsFilter,
+    NlmsFilter, SurfaceLaplacian,
 };
 pub use hilbert::HilbertTransform;
 pub use interpolate::{InterpolationMethod, Interpolator};
