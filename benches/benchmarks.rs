@@ -6,8 +6,8 @@ use zerostone::{
     AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, ArtifactDetector, BandPower, BiquadCoeffs,
     CircularBuffer, Complex, Cwt, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter,
     Interpolator, LmsFilter, MultiChannelCwt, NlmsFilter, OasisDeconvolution, OnlineCov,
-    Rectification, Stft, StreamingPercentile, ThresholdDetector, UpdateConfig, WindowType,
-    WindowedRms, ZscoreArtifact,
+    Rectification, Stft, StreamingPercentile, SurfaceLaplacian, ThresholdDetector, UpdateConfig,
+    WindowType, WindowedRms, ZscoreArtifact,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -1932,6 +1932,202 @@ fn bench_windowed_rms(c: &mut Criterion) {
     group.finish();
 }
 
+// Surface Laplacian benchmarks - spatial filtering for EEG volume conduction reduction
+fn bench_surface_laplacian(c: &mut Criterion) {
+    let mut group = c.benchmark_group("surface_laplacian");
+
+    // 8-channel configuration with 4 neighbors per channel (typical)
+    {
+        // Ring topology: each channel connected to 2 neighbors
+        let neighbors = [
+            [1, 7, u16::MAX, u16::MAX],
+            [0, 2, u16::MAX, u16::MAX],
+            [1, 3, u16::MAX, u16::MAX],
+            [2, 4, u16::MAX, u16::MAX],
+            [3, 5, u16::MAX, u16::MAX],
+            [4, 6, u16::MAX, u16::MAX],
+            [5, 7, u16::MAX, u16::MAX],
+            [6, 0, u16::MAX, u16::MAX],
+        ];
+
+        let laplacian: SurfaceLaplacian<8, 4> = SurfaceLaplacian::unweighted(neighbors);
+        let samples = [1.0f32; 8];
+
+        group.throughput(Throughput::Elements(8));
+        group.bench_function("8_channels_2_neighbors", |b| {
+            b.iter(|| {
+                black_box(laplacian.process(black_box(&samples)));
+            });
+        });
+    }
+
+    // 32-channel configuration with 4 neighbors (typical EEG)
+    {
+        // Grid topology: each channel has up to 4 neighbors
+        let mut neighbors = [[u16::MAX; 4]; 32];
+        // Simple ring topology for benchmarking
+        for (i, neighbor) in neighbors.iter_mut().enumerate() {
+            neighbor[0] = ((i + 31) % 32) as u16;
+            neighbor[1] = ((i + 1) % 32) as u16;
+            // Leave other slots as INVALID
+        }
+
+        let laplacian: SurfaceLaplacian<32, 4> = SurfaceLaplacian::unweighted(neighbors);
+        let samples = [1.0f32; 32];
+
+        group.throughput(Throughput::Elements(32));
+        group.bench_function("32_channels_2_neighbors", |b| {
+            b.iter(|| {
+                black_box(laplacian.process(black_box(&samples)));
+            });
+        });
+    }
+
+    // 32-channel with full 4 neighbors each
+    {
+        let mut neighbors = [[u16::MAX; 4]; 32];
+        for (i, neighbor) in neighbors.iter_mut().enumerate() {
+            neighbor[0] = ((i + 31) % 32) as u16;
+            neighbor[1] = ((i + 1) % 32) as u16;
+            neighbor[2] = ((i + 30) % 32) as u16;
+            neighbor[3] = ((i + 2) % 32) as u16;
+        }
+
+        let laplacian: SurfaceLaplacian<32, 4> = SurfaceLaplacian::unweighted(neighbors);
+        let samples = [1.0f32; 32];
+
+        group.throughput(Throughput::Elements(32));
+        group.bench_function("32_channels_4_neighbors", |b| {
+            b.iter(|| {
+                black_box(laplacian.process(black_box(&samples)));
+            });
+        });
+    }
+
+    // 64-channel configuration (high-density EEG)
+    {
+        let mut neighbors = [[u16::MAX; 4]; 64];
+        for (i, neighbor) in neighbors.iter_mut().enumerate() {
+            neighbor[0] = ((i + 63) % 64) as u16;
+            neighbor[1] = ((i + 1) % 64) as u16;
+            neighbor[2] = ((i + 62) % 64) as u16;
+            neighbor[3] = ((i + 2) % 64) as u16;
+        }
+
+        let laplacian: SurfaceLaplacian<64, 4> = SurfaceLaplacian::unweighted(neighbors);
+        let samples = [1.0f32; 64];
+
+        group.throughput(Throughput::Elements(64));
+        group.bench_function("64_channels_4_neighbors", |b| {
+            b.iter(|| {
+                black_box(laplacian.process(black_box(&samples)));
+            });
+        });
+    }
+
+    // 128-channel configuration (ultra-high-density EEG)
+    {
+        let mut neighbors = [[u16::MAX; 4]; 128];
+        for (i, neighbor) in neighbors.iter_mut().enumerate() {
+            neighbor[0] = ((i + 127) % 128) as u16;
+            neighbor[1] = ((i + 1) % 128) as u16;
+            neighbor[2] = ((i + 126) % 128) as u16;
+            neighbor[3] = ((i + 2) % 128) as u16;
+        }
+
+        let laplacian: SurfaceLaplacian<128, 4> = SurfaceLaplacian::unweighted(neighbors);
+        let samples = [1.0f32; 128];
+
+        group.throughput(Throughput::Elements(128));
+        group.bench_function("128_channels_4_neighbors", |b| {
+            b.iter(|| {
+                black_box(laplacian.process(black_box(&samples)));
+            });
+        });
+    }
+
+    // Weighted vs unweighted comparison (32 channels)
+    {
+        let mut neighbors = [[u16::MAX; 4]; 32];
+        let mut distances = [[0.0f32; 4]; 32];
+        for (i, (neighbor, distance)) in neighbors.iter_mut().zip(distances.iter_mut()).enumerate()
+        {
+            neighbor[0] = ((i + 31) % 32) as u16;
+            neighbor[1] = ((i + 1) % 32) as u16;
+            neighbor[2] = ((i + 30) % 32) as u16;
+            neighbor[3] = ((i + 2) % 32) as u16;
+
+            // Non-uniform distances
+            distance[0] = 1.0;
+            distance[1] = 1.0;
+            distance[2] = 1.5;
+            distance[3] = 1.5;
+        }
+
+        let laplacian_weighted: SurfaceLaplacian<32, 4> =
+            SurfaceLaplacian::weighted(neighbors, distances);
+        let samples = [1.0f32; 32];
+
+        group.throughput(Throughput::Elements(32));
+        group.bench_function("32_channels_4_neighbors_weighted", |b| {
+            b.iter(|| {
+                black_box(laplacian_weighted.process(black_box(&samples)));
+            });
+        });
+    }
+
+    // Neighbor count impact (32 channels with 8 neighbors)
+    {
+        let mut neighbors = [[u16::MAX; 8]; 32];
+        for (i, neighbor) in neighbors.iter_mut().enumerate() {
+            for (j, slot) in neighbor.iter_mut().enumerate() {
+                // Skip self by adding 1 when j would create self-reference
+                let offset = if j < 4 { j as i32 - 4 } else { j as i32 - 3 };
+                *slot = ((i as i32 + offset + 32) % 32) as u16;
+            }
+        }
+
+        let laplacian: SurfaceLaplacian<32, 8> = SurfaceLaplacian::unweighted(neighbors);
+        let samples = [1.0f32; 32];
+
+        group.throughput(Throughput::Elements(32));
+        group.bench_function("32_channels_8_neighbors", |b| {
+            b.iter(|| {
+                black_box(laplacian.process(black_box(&samples)));
+            });
+        });
+    }
+
+    // Realistic EEG signal (varying values)
+    {
+        let mut neighbors = [[u16::MAX; 4]; 32];
+        for (i, neighbor) in neighbors.iter_mut().enumerate() {
+            neighbor[0] = ((i + 31) % 32) as u16;
+            neighbor[1] = ((i + 1) % 32) as u16;
+            neighbor[2] = ((i + 30) % 32) as u16;
+            neighbor[3] = ((i + 2) % 32) as u16;
+        }
+
+        let laplacian: SurfaceLaplacian<32, 4> = SurfaceLaplacian::unweighted(neighbors);
+
+        group.bench_function("32_channels_realistic_signal", |b| {
+            let mut counter = 0u32;
+            b.iter(|| {
+                counter = counter.wrapping_add(1);
+                // Simulate varying EEG signal
+                let mut samples = [0.0f32; 32];
+                for (i, sample) in samples.iter_mut().enumerate() {
+                    let t = (counter as f32 + i as f32) * 0.1;
+                    *sample = (t * 0.5).sin() + 0.1 * (t * 2.0).sin();
+                }
+                black_box(laplacian.process(black_box(&samples)));
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -1962,6 +2158,7 @@ criterion_group!(
     bench_hilbert,
     bench_lms_filter,
     bench_nlms_filter,
-    bench_windowed_rms
+    bench_windowed_rms,
+    bench_surface_laplacian
 );
 criterion_main!(benches);
