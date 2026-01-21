@@ -162,7 +162,7 @@ impl<const C: usize, const MAX_N: usize> SurfaceLaplacian<C, MAX_N> {
     /// let laplacian: SurfaceLaplacian<3, 2> = SurfaceLaplacian::unweighted(neighbors);
     /// assert_eq!(laplacian.neighbor_count(1), 2); // Middle channel has 2 neighbors
     /// ```
-    pub const fn unweighted(neighbors: [[u16; MAX_N]; C]) -> Self {
+    pub fn unweighted(neighbors: [[u16; MAX_N]; C]) -> Self {
         // Trigger compile-time assertions
         #[allow(clippy::let_unit_value)]
         let () = Self::_ASSERT_C;
