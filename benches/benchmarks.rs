@@ -4,10 +4,10 @@ use zerostone::{
     hilbert::{hilbert_batch, HilbertTransform},
     xcorr::{autocorr, autocorr_batch, xcorr, xcorr_batch, Normalization},
     AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, ArtifactDetector, BandPower, BiquadCoeffs,
-    CircularBuffer, Complex, Cwt, Decimator, EnvelopeFollower, Fft, FirFilter, IirFilter,
-    Interpolator, LmsFilter, MultiChannelCwt, NlmsFilter, OasisDeconvolution, OnlineCov,
-    Rectification, Stft, StreamingPercentile, SurfaceLaplacian, ThresholdDetector, UpdateConfig,
-    WindowType, WindowedRms, ZscoreArtifact,
+    CircularBuffer, CommonAverageReference, Complex, Cwt, Decimator, EnvelopeFollower, Fft,
+    FirFilter, IirFilter, Interpolator, LmsFilter, MultiChannelCwt, NlmsFilter, OasisDeconvolution,
+    OnlineCov, Rectification, Stft, StreamingPercentile, SurfaceLaplacian, ThresholdDetector,
+    UpdateConfig, WindowType, WindowedRms, ZscoreArtifact,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -2128,6 +2128,110 @@ fn bench_surface_laplacian(c: &mut Criterion) {
     group.finish();
 }
 
+// Common Average Reference benchmarks - spatial filtering for EEG preprocessing
+fn bench_common_average_reference(c: &mut Criterion) {
+    let mut group = c.benchmark_group("common_average_reference");
+
+    // 8-channel CAR (target: <100 ns)
+    {
+        let car: CommonAverageReference<8> = CommonAverageReference::new();
+        let samples = [1.0f32; 8];
+
+        group.throughput(Throughput::Elements(8));
+        group.bench_function("8_channels", |b| {
+            b.iter(|| {
+                black_box(car.process(black_box(&samples)));
+            });
+        });
+    }
+
+    // 32-channel CAR (target: <100 ns)
+    {
+        let car: CommonAverageReference<32> = CommonAverageReference::new();
+        let samples = [1.0f32; 32];
+
+        group.throughput(Throughput::Elements(32));
+        group.bench_function("32_channels", |b| {
+            b.iter(|| {
+                black_box(car.process(black_box(&samples)));
+            });
+        });
+    }
+
+    // 64-channel CAR
+    {
+        let car: CommonAverageReference<64> = CommonAverageReference::new();
+        let samples = [1.0f32; 64];
+
+        group.throughput(Throughput::Elements(64));
+        group.bench_function("64_channels", |b| {
+            b.iter(|| {
+                black_box(car.process(black_box(&samples)));
+            });
+        });
+    }
+
+    // 128-channel CAR
+    {
+        let car: CommonAverageReference<128> = CommonAverageReference::new();
+        let samples = [1.0f32; 128];
+
+        group.throughput(Throughput::Elements(128));
+        group.bench_function("128_channels", |b| {
+            b.iter(|| {
+                black_box(car.process(black_box(&samples)));
+            });
+        });
+    }
+
+    // Compare CAR vs Surface Laplacian (CAR should be faster)
+    {
+        let car: CommonAverageReference<32> = CommonAverageReference::new();
+
+        // Ring topology for Surface Laplacian
+        let mut neighbors = [[u16::MAX; 4]; 32];
+        for (i, neighbor) in neighbors.iter_mut().enumerate() {
+            neighbor[0] = ((i + 31) % 32) as u16;
+            neighbor[1] = ((i + 1) % 32) as u16;
+        }
+        let laplacian: SurfaceLaplacian<32, 4> = SurfaceLaplacian::unweighted(neighbors);
+        let samples = [1.0f32; 32];
+
+        group.bench_function("car_32ch_vs_laplacian", |b| {
+            b.iter(|| {
+                black_box(car.process(black_box(&samples)));
+            });
+        });
+
+        group.bench_function("laplacian_32ch_vs_car", |b| {
+            b.iter(|| {
+                black_box(laplacian.process(black_box(&samples)));
+            });
+        });
+    }
+
+    // Realistic EEG signal (varying values)
+    {
+        let car: CommonAverageReference<32> = CommonAverageReference::new();
+
+        group.bench_function("32_channels_realistic_signal", |b| {
+            let mut counter = 0u32;
+            b.iter(|| {
+                counter = counter.wrapping_add(1);
+                // Simulate varying EEG signal
+                let mut samples = [0.0f32; 32];
+                for (i, sample) in samples.iter_mut().enumerate() {
+                    let t = (counter as f32 + i as f32) * 0.1;
+                    *sample = (t * 0.5).sin() + 0.1 * (t * 2.0).sin();
+                }
+                black_box(car.process(black_box(&samples)));
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -2159,6 +2263,7 @@ criterion_group!(
     bench_lms_filter,
     bench_nlms_filter,
     bench_windowed_rms,
-    bench_surface_laplacian
+    bench_surface_laplacian,
+    bench_common_average_reference
 );
 criterion_main!(benches);
