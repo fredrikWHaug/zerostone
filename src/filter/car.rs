@@ -1,12 +1,15 @@
-//! Common Average Reference (CAR) spatial filter for EEG preprocessing.
+//! Common Average Reference (CAR) spatial filter for multi-channel neural recordings.
 //!
 //! The Common Average Reference is a spatial filtering technique that removes common-mode
 //! noise by subtracting the mean of all channels from each channel. This is particularly
 //! useful for:
 //!
 //! - Removing reference electrode bias
-//! - Reducing global noise sources (e.g., powerline interference)
-//! - Making EEG recordings reference-independent
+//! - Reducing global noise sources (e.g., powerline interference, movement artifacts)
+//! - Making recordings reference-independent
+//!
+//! CAR is widely used across electrophysiology modalities including microelectrode arrays
+//! (Utah arrays, Neuropixels), electrocorticography (ECoG), stereo-EEG, and scalp EEG.
 //!
 //! # Mathematical Background
 //!
