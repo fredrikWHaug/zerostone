@@ -13,6 +13,7 @@
 //! - **[`AcCoupler`]** - AC coupling filter for DC offset removal
 //! - **[`MedianFilter`]** - Non-linear median filter for impulsive noise rejection
 //! - **[`SurfaceLaplacian`]** - Surface Laplacian spatial filter for volume conduction reduction
+//! - **[`CommonAverageReference`]** - Common Average Reference spatial filter for EEG preprocessing
 //! - **[`LmsFilter`], [`NlmsFilter`]** - Adaptive filters for real-time noise cancellation
 //! - **[`Decimator`]** - Sample rate reduction (downsampling)
 //! - **[`Interpolator`]** - Sample rate increase (upsampling)
@@ -96,8 +97,8 @@ pub use detector::{
 pub use envelope::{EnvelopeFollower, Rectification};
 pub use fft::{BandPower, Complex, Fft};
 pub use filter::{
-    AcCoupler, AdaptiveOutput, BiquadCoeffs, FirFilter, IirFilter, LmsFilter, MedianFilter,
-    NlmsFilter, SurfaceLaplacian,
+    AcCoupler, AdaptiveOutput, BiquadCoeffs, CommonAverageReference, FirFilter, IirFilter,
+    LmsFilter, MedianFilter, NlmsFilter, SurfaceLaplacian,
 };
 pub use hilbert::HilbertTransform;
 pub use interpolate::{InterpolationMethod, Interpolator};
