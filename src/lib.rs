@@ -13,7 +13,7 @@
 //! - **[`AcCoupler`]** - AC coupling filter for DC offset removal
 //! - **[`MedianFilter`]** - Non-linear median filter for impulsive noise rejection
 //! - **[`SurfaceLaplacian`]** - Surface Laplacian spatial filter for volume conduction reduction
-//! - **[`CommonAverageReference`]** - Common Average Reference spatial filter for EEG preprocessing
+//! - **[`CommonAverageReference`]** - Common Average Reference spatial filter for multi-channel recordings
 //! - **[`LmsFilter`], [`NlmsFilter`]** - Adaptive filters for real-time noise cancellation
 //! - **[`Decimator`]** - Sample rate reduction (downsampling)
 //! - **[`Interpolator`]** - Sample rate increase (upsampling)
