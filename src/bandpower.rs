@@ -192,7 +192,7 @@ impl FrequencyBand {
     /// assert_eq!(band.low_hz, 18.0);
     /// assert_eq!(band.high_hz, 22.0);
     /// ```
-    pub const fn new(low_hz: f32, high_hz: f32) -> Self {
+    pub fn new(low_hz: f32, high_hz: f32) -> Self {
         assert!(low_hz >= 0.0, "Lower frequency bound must be non-negative");
         assert!(
             high_hz > low_hz,
