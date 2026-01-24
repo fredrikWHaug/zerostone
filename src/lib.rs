@@ -90,7 +90,7 @@ pub mod xcorr;
 pub use artifact::{ArtifactDetector, ArtifactType, ZscoreArtifact};
 pub use bandpower::{FrequencyBand, IntegrationMethod, MultiBandPower};
 pub use buffer::CircularBuffer;
-pub use csp::{AdaptiveCsp, CspError, UpdateConfig};
+pub use csp::{AdaptiveCsp, CspError, MulticlassCsp, UpdateConfig};
 pub use decimate::Decimator;
 pub use deconvolution::{DeconvolutionResult, OasisDeconvolution};
 pub use detector::{
