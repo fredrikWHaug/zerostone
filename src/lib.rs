@@ -19,6 +19,7 @@
 //! - **[`Interpolator`]** - Sample rate increase (upsampling)
 //! - **[`EnvelopeFollower`]** - Amplitude envelope extraction
 //! - **[`Fft`]** - Fast Fourier Transform for spectral analysis
+//! - **[`MultiBandPower`]** - Multi-channel band power extraction with proper PSD normalization
 //! - **[`ThresholdDetector`]** - Multi-channel spike detection with refractory period
 //! - **[`ZeroCrossingDetector`]** - Zero-crossing detection for ZCR features and epilepsy patterns
 //! - **[`OnlineStats`]** - Welford's algorithm for streaming mean/variance
@@ -64,6 +65,7 @@
 #![no_std]
 
 mod artifact;
+mod bandpower;
 mod buffer;
 mod csp;
 mod decimate;
@@ -86,6 +88,7 @@ pub mod xcorr;
 
 // Re-export at crate root for convenience
 pub use artifact::{ArtifactDetector, ArtifactType, ZscoreArtifact};
+pub use bandpower::{FrequencyBand, IntegrationMethod, MultiBandPower};
 pub use buffer::CircularBuffer;
 pub use csp::{AdaptiveCsp, CspError, UpdateConfig};
 pub use decimate::Decimator;
