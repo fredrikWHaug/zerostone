@@ -38,6 +38,8 @@
 //! - **[`SampleClock`]** - Sample index ↔ timestamp conversion
 //! - **[`LinearDrift`]** - Online linear regression for clock drift estimation
 //! - **[`OffsetBuffer`]** - Filtered clock offset buffer with quality selection
+//! - **[`TangentSpace`]** - Riemannian tangent space projection for SPD matrices
+//! - **[`matrix_log`], [`matrix_exp`]** - Matrix logarithm/exponential for SPD matrices
 //!
 //! # Example
 //!
@@ -78,6 +80,7 @@ pub mod hilbert;
 mod interpolate;
 pub mod linalg;
 mod percentile;
+pub mod riemannian;
 mod rms;
 mod stats;
 mod stft;
@@ -106,6 +109,7 @@ pub use filter::{
 pub use hilbert::HilbertTransform;
 pub use interpolate::{InterpolationMethod, Interpolator};
 pub use percentile::StreamingPercentile;
+pub use riemannian::{matrix_exp, matrix_inv_sqrt, matrix_log, matrix_sqrt, TangentSpace};
 pub use rms::WindowedRms;
 pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;
