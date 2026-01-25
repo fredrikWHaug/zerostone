@@ -80,6 +80,7 @@ pub mod hilbert;
 mod interpolate;
 pub mod linalg;
 mod percentile;
+mod pipeline;
 pub mod riemannian;
 mod rms;
 mod stats;
@@ -109,6 +110,7 @@ pub use filter::{
 pub use hilbert::HilbertTransform;
 pub use interpolate::{InterpolationMethod, Interpolator};
 pub use percentile::StreamingPercentile;
+pub use pipeline::{BlockProcessor, CloneableProcessor, RateChangingProcessor};
 pub use riemannian::{matrix_exp, matrix_inv_sqrt, matrix_log, matrix_sqrt, TangentSpace};
 pub use rms::WindowedRms;
 pub use stats::{OnlineCov, OnlineStats};
