@@ -89,12 +89,21 @@ pub struct TangentSpace<const C: usize, const M: usize, const V: usize> {
 }
 
 impl<const C: usize, const M: usize, const V: usize> TangentSpace<C, M, V> {
+    /// Compile-time assertion that M = C * C
+    const _ASSERT_M: () = assert!(M == C * C, "M must equal C * C");
+
+    /// Compile-time assertion that V = C * (C + 1) / 2
+    const _ASSERT_V: () = assert!(V == C * (C + 1) / 2, "V must equal C * (C + 1) / 2");
+
     /// Create a new tangent space projector.
     ///
     /// Call `fit()` to set the reference point before using `transform()`.
     pub fn new() -> Self {
-        const { assert!(M == C * C, "M must equal C * C") };
-        const { assert!(V == C * (C + 1) / 2, "V must equal C * (C + 1) / 2") };
+        // Trigger compile-time assertions
+        #[allow(clippy::let_unit_value)]
+        let () = Self::_ASSERT_M;
+        #[allow(clippy::let_unit_value)]
+        let () = Self::_ASSERT_V;
 
         Self {
             reference: None,
