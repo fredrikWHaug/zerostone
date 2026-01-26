@@ -104,6 +104,24 @@ impl<const TAPS: usize> FirFilter<TAPS> {
     }
 }
 
+impl<const TAPS: usize> crate::pipeline::BlockProcessor<1> for FirFilter<TAPS> {
+    type Sample = f32;
+
+    fn process_block_inplace(&mut self, block: &mut [[f32; 1]]) {
+        for sample in block.iter_mut() {
+            sample[0] = self.process_sample(sample[0]);
+        }
+    }
+
+    fn reset(&mut self) {
+        self.reset();
+    }
+
+    fn name(&self) -> &str {
+        "FirFilter"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +227,59 @@ mod tests {
 
         assert_eq!(filter.process_sample(1.0), 2.0);
         assert_eq!(filter.process_sample(3.0), 6.0);
+    }
+
+    #[test]
+    fn test_block_processor_inplace() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut filter: FirFilter<3> = FirFilter::moving_average();
+
+        let mut block = [[1.0], [2.0], [3.0], [4.0]];
+        BlockProcessor::process_block_inplace(&mut filter, &mut block);
+
+        // Samples should be processed (moving average)
+        assert_ne!(block[1][0], 2.0);
+    }
+
+    #[test]
+    fn test_block_processor_out_of_place() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut filter: FirFilter<5> = FirFilter::moving_average();
+
+        let input = [[1.0], [1.0], [1.0], [1.0], [1.0]];
+        let mut output = [[0.0]; 5];
+
+        let n = BlockProcessor::process_block(&mut filter, &input, &mut output);
+
+        assert_eq!(n, 5);
+        // After 5 samples of 1.0, moving average should converge toward 1.0
+        assert!((output[4][0] - 1.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn test_block_processor_reset() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut filter: FirFilter<3> = FirFilter::moving_average();
+
+        // Process some data
+        let mut block = [[5.0], [6.0], [7.0]];
+        BlockProcessor::process_block_inplace(&mut filter, &mut block);
+
+        // Reset using trait method
+        BlockProcessor::reset(&mut filter);
+
+        // Should match fresh filter
+        let mut fresh: FirFilter<3> = FirFilter::moving_average();
+
+        let mut block1 = [[10.0]];
+        let mut block2 = [[10.0]];
+
+        BlockProcessor::process_block_inplace(&mut filter, &mut block1);
+        BlockProcessor::process_block_inplace(&mut fresh, &mut block2);
+
+        assert_eq!(block1[0][0], block2[0][0]);
     }
 }

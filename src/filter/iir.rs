@@ -261,6 +261,24 @@ impl<const SECTIONS: usize> IirFilter<SECTIONS> {
     }
 }
 
+impl<const SECTIONS: usize> crate::pipeline::BlockProcessor<1> for IirFilter<SECTIONS> {
+    type Sample = f32;
+
+    fn process_block_inplace(&mut self, block: &mut [[f32; 1]]) {
+        for sample in block.iter_mut() {
+            sample[0] = self.process_sample(sample[0]);
+        }
+    }
+
+    fn reset(&mut self) {
+        self.reset();
+    }
+
+    fn name(&self) -> &str {
+        "IirFilter"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -491,5 +509,67 @@ mod tests {
         }
 
         assert!(max_50hz < 0.1, "50 Hz should be rejected, got {}", max_50hz);
+    }
+
+    #[test]
+    fn test_block_processor_inplace() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut filter: IirFilter<1> =
+            IirFilter::new([BiquadCoeffs::butterworth_lowpass(1000.0, 100.0)]);
+
+        // Create block of single-channel samples
+        let mut block = [[1.0], [2.0], [3.0], [4.0]];
+        BlockProcessor::process_block_inplace(&mut filter, &mut block);
+
+        // All samples should be processed (modified)
+        assert_ne!(block[0][0], 1.0);
+        assert_ne!(block[1][0], 2.0);
+    }
+
+    #[test]
+    fn test_block_processor_out_of_place() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut filter: IirFilter<2> = IirFilter::new([
+            BiquadCoeffs::butterworth_lowpass(1000.0, 40.0),
+            BiquadCoeffs::butterworth_lowpass(1000.0, 40.0),
+        ]);
+
+        let input = [[1.0], [2.0], [3.0], [4.0]];
+        let mut output = [[0.0]; 4];
+
+        let n = BlockProcessor::process_block(&mut filter, &input, &mut output);
+
+        assert_eq!(n, 4);
+        // Output should be different from input (filtered)
+        assert_ne!(output[0][0], 1.0);
+    }
+
+    #[test]
+    fn test_block_processor_reset() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut filter: IirFilter<1> =
+            IirFilter::new([BiquadCoeffs::butterworth_lowpass(1000.0, 40.0)]);
+
+        // Process some data
+        let mut block = [[1.0], [2.0], [3.0]];
+        BlockProcessor::process_block_inplace(&mut filter, &mut block);
+
+        // Reset using trait method
+        BlockProcessor::reset(&mut filter);
+
+        // After reset, should match fresh filter
+        let mut fresh: IirFilter<1> =
+            IirFilter::new([BiquadCoeffs::butterworth_lowpass(1000.0, 40.0)]);
+
+        let mut block1 = [[5.0]];
+        let mut block2 = [[5.0]];
+
+        BlockProcessor::process_block_inplace(&mut filter, &mut block1);
+        BlockProcessor::process_block_inplace(&mut fresh, &mut block2);
+
+        assert_eq!(block1[0][0], block2[0][0]);
     }
 }

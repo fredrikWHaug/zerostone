@@ -145,21 +145,19 @@
 //!
 //! # Examples
 //!
-//! ```ignore
+//! ```
 //! use zerostone::{BlockProcessor, IirFilter, BiquadCoeffs};
 //!
 //! // Create 4th-order Butterworth lowpass (2 cascaded biquads)
 //! let coeffs = BiquadCoeffs::butterworth_lowpass(1000.0, 100.0);
 //! let mut filter: IirFilter<2> = IirFilter::new([coeffs, coeffs]);
 //!
-//! // Process a block of 2-channel data
-//! let input = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];  // 3 samples × 2 channels
-//! let mut output = [[0.0; 2]; 3];
-//! let n_written = filter.process_block(&input, &mut output);
+//! // Process a block of single-channel data
+//! let input = [[1.0], [3.0], [5.0]];  // 3 samples × 1 channel
+//! let mut output = [[0.0]; 3];
+//! let n_written = BlockProcessor::process_block(&mut filter, &input, &mut output);
 //! assert_eq!(n_written, 3);
 //! ```
-
-#![allow(unused_variables)] // Trait definitions only, no implementations yet
 
 use core::default::Default;
 

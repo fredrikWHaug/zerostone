@@ -170,6 +170,24 @@ impl<const C: usize> Default for AcCoupler<C> {
     }
 }
 
+impl<const C: usize> crate::pipeline::BlockProcessor<C> for AcCoupler<C> {
+    type Sample = f32;
+
+    fn process_block_inplace(&mut self, block: &mut [[f32; C]]) {
+        for sample in block.iter_mut() {
+            *sample = self.process(sample);
+        }
+    }
+
+    fn reset(&mut self) {
+        self.reset();
+    }
+
+    fn name(&self) -> &str {
+        "AcCoupler"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,5 +308,63 @@ mod tests {
     fn test_ac_coupler_default() {
         let blocker: AcCoupler<4> = AcCoupler::default();
         assert!((blocker.alpha() - 0.995).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_block_processor_inplace() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut coupler: AcCoupler<2> = AcCoupler::new(250.0, 0.5);
+
+        let mut block = [[1.0, 2.0], [1.0, 2.0], [1.0, 2.0], [1.0, 2.0]];
+        BlockProcessor::process_block_inplace(&mut coupler, &mut block);
+
+        // DC should start being removed
+        assert!(block[3][0] < 1.0);
+        assert!(block[3][1] < 2.0);
+    }
+
+    #[test]
+    fn test_block_processor_out_of_place() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut coupler: AcCoupler<3> = AcCoupler::new(250.0, 0.5);
+
+        let input = [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [1.0, 2.0, 3.0]];
+        let mut output = [[0.0; 3]; 3];
+
+        let n = BlockProcessor::process_block(&mut coupler, &input, &mut output);
+
+        assert_eq!(n, 3);
+        // First sample passes through
+        assert!((output[0][0] - 1.0).abs() < 1e-5);
+        // Subsequent samples have DC removal
+        assert!(output[2][0] < 1.0);
+    }
+
+    #[test]
+    fn test_block_processor_reset() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut coupler: AcCoupler<2> = AcCoupler::new(250.0, 0.5);
+
+        // Process some data
+        let mut block = [[1.0, 2.0], [1.0, 2.0]];
+        BlockProcessor::process_block_inplace(&mut coupler, &mut block);
+
+        // Reset using trait method
+        BlockProcessor::reset(&mut coupler);
+
+        // Should match fresh coupler
+        let mut fresh: AcCoupler<2> = AcCoupler::new(250.0, 0.5);
+
+        let mut block1 = [[5.0, 10.0]];
+        let mut block2 = [[5.0, 10.0]];
+
+        BlockProcessor::process_block_inplace(&mut coupler, &mut block1);
+        BlockProcessor::process_block_inplace(&mut fresh, &mut block2);
+
+        assert!((block1[0][0] - block2[0][0]).abs() < 1e-5);
+        assert!((block1[0][1] - block2[0][1]).abs() < 1e-5);
     }
 }
