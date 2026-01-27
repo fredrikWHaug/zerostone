@@ -143,6 +143,20 @@ impl<const C: usize> CommonAverageReference<C> {
     }
 }
 
+impl<const C: usize> crate::pipeline::BlockProcessor<C> for CommonAverageReference<C> {
+    type Sample = f32;
+
+    fn process_block_inplace(&mut self, block: &mut [[f32; C]]) {
+        for sample in block.iter_mut() {
+            *sample = self.process(sample);
+        }
+    }
+
+    fn name(&self) -> &str {
+        "CommonAverageReference"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,5 +353,49 @@ mod tests {
         assert!((filtered[1] - (-0.5)).abs() < 1e-6);
         assert!((filtered[2] - 0.5).abs() < 1e-6);
         assert!((filtered[3] - 1.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_block_processor_inplace() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut car: CommonAverageReference<2> = CommonAverageReference::new();
+
+        // Create block: [[1, 2], [3, 4], [5, 6]]
+        let mut block = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
+        BlockProcessor::process_block_inplace(&mut car, &mut block);
+
+        // Each sample should have its mean subtracted
+        // Sample 0: [1, 2] mean=1.5 -> [-0.5, 0.5]
+        assert!((block[0][0] - (-0.5)).abs() < 1e-6);
+        assert!((block[0][1] - 0.5).abs() < 1e-6);
+
+        // Sample 1: [3, 4] mean=3.5 -> [-0.5, 0.5]
+        assert!((block[1][0] - (-0.5)).abs() < 1e-6);
+        assert!((block[1][1] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_block_processor_out_of_place() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut car: CommonAverageReference<3> = CommonAverageReference::new();
+
+        let input = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let mut output = [[0.0; 3]; 2];
+
+        let n = BlockProcessor::process_block(&mut car, &input, &mut output);
+
+        assert_eq!(n, 2);
+
+        // Sample 0: [1, 2, 3] mean=2 -> [-1, 0, 1]
+        assert!((output[0][0] - (-1.0)).abs() < 1e-6);
+        assert!((output[0][1] - 0.0).abs() < 1e-6);
+        assert!((output[0][2] - 1.0).abs() < 1e-6);
+
+        // Sample 1: [4, 5, 6] mean=5 -> [-1, 0, 1]
+        assert!((output[1][0] - (-1.0)).abs() < 1e-6);
+        assert!((output[1][1] - 0.0).abs() < 1e-6);
+        assert!((output[1][2] - 1.0).abs() < 1e-6);
     }
 }

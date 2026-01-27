@@ -412,6 +412,26 @@ impl<const C: usize, const WINDOW: usize> Default for MedianFilter<C, WINDOW> {
     }
 }
 
+impl<const C: usize, const WINDOW: usize> crate::pipeline::BlockProcessor<C>
+    for MedianFilter<C, WINDOW>
+{
+    type Sample = f32;
+
+    fn process_block_inplace(&mut self, block: &mut [[f32; C]]) {
+        for sample in block.iter_mut() {
+            *sample = self.process(sample);
+        }
+    }
+
+    fn reset(&mut self) {
+        self.reset();
+    }
+
+    fn name(&self) -> &str {
+        "MedianFilter"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -837,6 +857,67 @@ mod tests {
                 new_window[2],
                 out[0]
             );
+        }
+    }
+
+    #[test]
+    fn test_block_processor_inplace() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut filter = MedianFilter::<2, 3>::new();
+
+        // Create block of 2-channel samples
+        let mut block = [[1.0, 10.0], [2.0, 20.0], [3.0, 30.0]];
+        BlockProcessor::process_block_inplace(&mut filter, &mut block);
+
+        // After processing 3 samples with window=3, should have full windows
+        // Channel 0: window=[1,2,3], median=2
+        // Channel 1: window=[10,20,30], median=20
+        assert!(approx_eq(block[2][0], 2.0));
+        assert!(approx_eq(block[2][1], 20.0));
+    }
+
+    #[test]
+    fn test_block_processor_out_of_place() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut filter = MedianFilter::<1, 5>::new();
+
+        let input = [[1.0], [5.0], [3.0], [7.0], [2.0]];
+        let mut output = [[0.0]; 5];
+
+        let n = BlockProcessor::process_block(&mut filter, &input, &mut output);
+
+        assert_eq!(n, 5);
+
+        // After 5 samples, window is full: [1,5,3,7,2], median=3
+        assert!(approx_eq(output[4][0], 3.0));
+    }
+
+    #[test]
+    fn test_block_processor_reset() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut filter = MedianFilter::<1, 3>::new();
+
+        // Process some data to build up state
+        let mut block = [[5.0], [10.0], [15.0]];
+        BlockProcessor::process_block_inplace(&mut filter, &mut block);
+
+        // Reset using trait method
+        BlockProcessor::reset(&mut filter);
+
+        // After reset, should match fresh filter
+        let mut fresh = MedianFilter::<1, 3>::new();
+
+        let mut block1 = [[1.0], [2.0], [3.0]];
+        let mut block2 = [[1.0], [2.0], [3.0]];
+
+        BlockProcessor::process_block_inplace(&mut filter, &mut block1);
+        BlockProcessor::process_block_inplace(&mut fresh, &mut block2);
+
+        for i in 0..3 {
+            assert!(approx_eq(block1[i][0], block2[i][0]));
         }
     }
 }

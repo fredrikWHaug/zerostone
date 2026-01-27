@@ -494,6 +494,22 @@ impl<const C: usize, const MAX_N: usize> SurfaceLaplacian<C, MAX_N> {
     }
 }
 
+impl<const C: usize, const MAX_N: usize> crate::pipeline::BlockProcessor<C>
+    for SurfaceLaplacian<C, MAX_N>
+{
+    type Sample = f32;
+
+    fn process_block_inplace(&mut self, block: &mut [[f32; C]]) {
+        for sample in block.iter_mut() {
+            *sample = self.process(sample);
+        }
+    }
+
+    fn name(&self) -> &str {
+        "SurfaceLaplacian"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -842,5 +858,51 @@ mod tests {
                 assert!((laplacian.neighbor_weight(ch, n) - 0.25).abs() < 1e-6);
             }
         }
+    }
+
+    #[test]
+    fn test_block_processor_inplace() {
+        use crate::pipeline::BlockProcessor;
+
+        // 3-channel linear array: 0-1-2
+        let neighbors = [[1, INVALID_INDEX], [0, 2], [1, INVALID_INDEX]];
+        let mut laplacian: SurfaceLaplacian<3, 2> = SurfaceLaplacian::unweighted(neighbors);
+
+        // Create block with 2 samples
+        let mut block = [[1.0, 5.0, 1.0], [2.0, 6.0, 2.0]];
+        BlockProcessor::process_block_inplace(&mut laplacian, &mut block);
+
+        // Sample 0: [1, 5, 1]
+        // Channel 1: 5 - (1+1)/2 = 4.0
+        assert!((block[0][1] - 4.0).abs() < 1e-6);
+
+        // Sample 1: [2, 6, 2]
+        // Channel 1: 6 - (2+2)/2 = 4.0
+        assert!((block[1][1] - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_block_processor_out_of_place() {
+        use crate::pipeline::BlockProcessor;
+
+        // 5-channel linear array: 0-1-2-3-4
+        let neighbors = [
+            [1, INVALID_INDEX],
+            [0, 2],
+            [1, 3],
+            [2, 4],
+            [3, INVALID_INDEX],
+        ];
+        let mut laplacian: SurfaceLaplacian<5, 2> = SurfaceLaplacian::unweighted(neighbors);
+
+        let input = [[1.0, 2.0, 5.0, 2.0, 1.0]];
+        let mut output = [[0.0; 5]; 1];
+
+        let n = BlockProcessor::process_block(&mut laplacian, &input, &mut output);
+
+        assert_eq!(n, 1);
+
+        // Channel 2 (center): 5.0 - (2.0 + 2.0)/2 = 3.0
+        assert!((output[0][2] - 3.0).abs() < 1e-6);
     }
 }
