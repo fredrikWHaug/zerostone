@@ -200,6 +200,24 @@ impl<const C: usize> Default for EnvelopeFollower<C> {
     }
 }
 
+impl<const C: usize> crate::pipeline::BlockProcessor<C> for EnvelopeFollower<C> {
+    type Sample = f32;
+
+    fn process_block_inplace(&mut self, block: &mut [[f32; C]]) {
+        for sample in block.iter_mut() {
+            *sample = self.process(sample);
+        }
+    }
+
+    fn reset(&mut self) {
+        self.reset();
+    }
+
+    fn name(&self) -> &str {
+        "EnvelopeFollower"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,5 +357,50 @@ mod tests {
         let output = env.process(&[1.0]);
         // Should immediately reach input value
         assert!((output[0] - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_block_processor_inplace() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut env: EnvelopeFollower<2> =
+            EnvelopeFollower::symmetric(100.0, 0.050, Rectification::Absolute);
+
+        let mut block = [[1.0, -1.0], [2.0, -2.0], [0.5, -0.5]];
+        BlockProcessor::process_block_inplace(&mut env, &mut block);
+
+        // Envelope should be smooth and positive
+        for sample in &block {
+            assert!(sample[0] >= 0.0 && sample[1] >= 0.0);
+        }
+    }
+
+    #[test]
+    fn test_block_processor_reset() {
+        use crate::pipeline::BlockProcessor;
+
+        let mut env: EnvelopeFollower<1> =
+            EnvelopeFollower::symmetric(100.0, 0.050, Rectification::Absolute);
+
+        // Process some data
+        let mut block1 = [[1.0], [2.0], [3.0]];
+        BlockProcessor::process_block_inplace(&mut env, &mut block1);
+
+        // Reset
+        BlockProcessor::reset(&mut env);
+
+        // After reset, should match fresh filter
+        let mut fresh: EnvelopeFollower<1> =
+            EnvelopeFollower::symmetric(100.0, 0.050, Rectification::Absolute);
+
+        let mut block2 = [[1.0], [2.0], [3.0]];
+        let mut block3 = [[1.0], [2.0], [3.0]];
+
+        BlockProcessor::process_block_inplace(&mut env, &mut block2);
+        BlockProcessor::process_block_inplace(&mut fresh, &mut block3);
+
+        for i in 0..3 {
+            assert!((block2[i][0] - block3[i][0]).abs() < 1e-6);
+        }
     }
 }

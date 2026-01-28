@@ -164,6 +164,30 @@ impl<const C: usize> Default for Decimator<C> {
     }
 }
 
+impl<const C: usize> crate::pipeline::BlockProcessor<C> for Decimator<C> {
+    type Sample = f32;
+
+    fn process_block(&mut self, input: &[[f32; C]], output: &mut [[f32; C]]) -> usize {
+        // Use existing process_block implementation
+        self.process_block(input, output)
+    }
+
+    fn reset(&mut self) {
+        self.reset();
+    }
+
+    fn name(&self) -> &str {
+        "Decimator"
+    }
+}
+
+impl<const C: usize> crate::pipeline::RateChangingProcessor<C> for Decimator<C> {
+    fn output_length(&self, input_length: usize) -> Option<usize> {
+        #[allow(clippy::manual_div_ceil)]
+        Some((input_length + self.factor - 1) / self.factor)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,5 +321,34 @@ mod tests {
     #[should_panic(expected = "Decimation factor must be at least 1")]
     fn test_decimator_factor_zero_panics() {
         let _dec: Decimator<1> = Decimator::new(0);
+    }
+
+    #[test]
+    fn test_block_processor_trait() {
+        use crate::pipeline::{BlockProcessor, RateChangingProcessor};
+
+        let mut dec: Decimator<2> = Decimator::new(4);
+
+        // 8 input samples → 2 output samples (decimation by 4)
+        let input = [[1.0, 2.0]; 8];
+        let mut output = [[0.0; 2]; 2];
+
+        let n_written = BlockProcessor::process_block(&mut dec, &input, &mut output);
+        assert_eq!(n_written, 2);
+
+        // Verify RateChangingProcessor marker trait
+        fn assert_rate_changing<P: RateChangingProcessor<2>>() {}
+        assert_rate_changing::<Decimator<2>>();
+    }
+
+    #[test]
+    fn test_rate_changing_output_length() {
+        use crate::pipeline::RateChangingProcessor;
+
+        let dec: Decimator<1> = Decimator::new(4);
+        assert_eq!(dec.output_length(16), Some(4));
+        assert_eq!(dec.output_length(15), Some(4));
+        assert_eq!(dec.output_length(13), Some(4));
+        assert_eq!(dec.output_length(12), Some(3));
     }
 }
