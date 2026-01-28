@@ -289,6 +289,40 @@ impl<const C: usize> Default for Interpolator<C> {
     }
 }
 
+impl<const C: usize> crate::pipeline::BlockProcessor<C> for Interpolator<C> {
+    type Sample = f32;
+
+    fn process_block(&mut self, input: &[[f32; C]], output: &mut [[f32; C]]) -> usize {
+        let mut total_written = 0;
+
+        for sample in input {
+            let remaining = output.len() - total_written;
+            if remaining == 0 {
+                break;
+            }
+
+            let written = self.process(sample, &mut output[total_written..]);
+            total_written += written;
+        }
+
+        total_written
+    }
+
+    fn reset(&mut self) {
+        self.reset();
+    }
+
+    fn name(&self) -> &str {
+        "Interpolator"
+    }
+}
+
+impl<const C: usize> crate::pipeline::RateChangingProcessor<C> for Interpolator<C> {
+    fn output_length(&self, input_length: usize) -> Option<usize> {
+        Some(input_length * self.factor)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,5 +543,33 @@ mod tests {
         assert_eq!(upsampled[3][0], 1.0);
         assert_eq!(upsampled[4][0], 2.0);
         assert_eq!(upsampled[7][0], 2.0);
+    }
+
+    #[test]
+    fn test_block_processor_trait() {
+        use crate::pipeline::{BlockProcessor, RateChangingProcessor};
+
+        let mut interp: Interpolator<2> = Interpolator::new(4, InterpolationMethod::Linear);
+
+        // 2 input samples → 8 output samples (interpolation by 4)
+        let input = [[1.0, 2.0], [5.0, 6.0]];
+        let mut output = [[0.0; 2]; 8];
+
+        let n_written = BlockProcessor::process_block(&mut interp, &input, &mut output);
+        assert_eq!(n_written, 8);
+
+        // Verify RateChangingProcessor marker trait
+        fn assert_rate_changing<P: RateChangingProcessor<2>>() {}
+        assert_rate_changing::<Interpolator<2>>();
+    }
+
+    #[test]
+    fn test_rate_changing_output_length() {
+        use crate::pipeline::RateChangingProcessor;
+
+        let interp: Interpolator<1> = Interpolator::new(4, InterpolationMethod::Linear);
+        assert_eq!(interp.output_length(10), Some(40));
+        assert_eq!(interp.output_length(1), Some(4));
+        assert_eq!(interp.output_length(0), Some(0));
     }
 }
