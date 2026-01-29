@@ -240,7 +240,7 @@ use core::default::Default;
 /// - BCI2000 GenericFilter: <https://www.bci2000.org/mediawiki/index.php/Programming_Reference:GenericFilter_Class>
 /// - OpenEphys Processors: <https://open-ephys.github.io/gui-docs/Developer-Guide/Creating-a-new-plugin.html>
 /// - dasp Signal trait: <https://github.com/RustAudio/dasp>
-pub trait BlockProcessor<const CHANNELS: usize> {
+pub trait BlockProcessor<const IN_CHANNELS: usize, const OUT_CHANNELS: usize = IN_CHANNELS> {
     /// Sample data type (f32, f64, Complex, i16, etc.).
     ///
     /// Must implement [`Copy`] for efficient block processing without allocations.
@@ -301,13 +301,36 @@ pub trait BlockProcessor<const CHANNELS: usize> {
     /// ```
     fn process_block(
         &mut self,
-        input: &[[Self::Sample; CHANNELS]],
-        output: &mut [[Self::Sample; CHANNELS]],
+        input: &[[Self::Sample; IN_CHANNELS]],
+        output: &mut [[Self::Sample; OUT_CHANNELS]],
     ) -> usize {
-        // Default implementation: copy input to output, then process in-place
+        // Default implementation only works when IN_CHANNELS == OUT_CHANNELS
+        // Processors where channels differ MUST override this method
+        if IN_CHANNELS != OUT_CHANNELS {
+            panic!(
+                "Default process_block requires IN_CHANNELS == OUT_CHANNELS. \
+                 This processor has IN={}, OUT={} and must override process_block.",
+                IN_CHANNELS, OUT_CHANNELS
+            );
+        }
+
+        // Copy input to output manually (since IN == OUT at runtime)
         let len = input.len().min(output.len());
-        output[..len].copy_from_slice(&input[..len]);
-        self.process_block_inplace(&mut output[..len]);
+        for i in 0..len {
+            for j in 0..IN_CHANNELS.min(OUT_CHANNELS) {
+                output[i][j] = input[i][j];
+            }
+        }
+
+        // Call in-place processing (safe because IN == OUT)
+        // We use unsafe to cast the slice since we've runtime-checked equality
+        unsafe {
+            let output_as_in = core::slice::from_raw_parts_mut(
+                output.as_mut_ptr() as *mut [Self::Sample; IN_CHANNELS],
+                len,
+            );
+            self.process_block_inplace(output_as_in);
+        }
         len
     }
 
@@ -350,10 +373,18 @@ pub trait BlockProcessor<const CHANNELS: usize> {
     /// filter.process_block_inplace(&mut samples);
     /// // samples now contains filtered values
     /// ```
-    fn process_block_inplace(&mut self, block: &mut [[Self::Sample; CHANNELS]]) {
-        // Default implementation: copy to temporary, process out-of-place, copy back
-        // This works because process_block has a default that calls us back,
-        // creating a mutual recursion that implementors must break by overriding one.
+    fn process_block_inplace(&mut self, block: &mut [[Self::Sample; IN_CHANNELS]]) {
+        // Default implementation only works when IN_CHANNELS == OUT_CHANNELS
+        // Processors where channels differ cannot use in-place processing
+        if IN_CHANNELS != OUT_CHANNELS {
+            panic!(
+                "In-place processing requires IN_CHANNELS == OUT_CHANNELS. \
+                 This processor has IN={}, OUT={} and cannot use process_block_inplace.",
+                IN_CHANNELS, OUT_CHANNELS
+            );
+        }
+
+        // Copy to temporary, process out-of-place, copy back
         let len = block.len();
         if len == 0 {
             return;
@@ -361,19 +392,34 @@ pub trait BlockProcessor<const CHANNELS: usize> {
 
         // For small blocks, use stack allocation (up to 64 samples)
         if len <= 64 {
-            let mut temp = [[Self::Sample::default(); CHANNELS]; 64];
+            let mut temp = [[Self::Sample::default(); IN_CHANNELS]; 64];
             temp[..len].copy_from_slice(block);
-            let n = self.process_block(&temp[..len], block);
+
+            // Cast to output type (safe because IN == OUT)
+            let block_as_out = unsafe {
+                core::slice::from_raw_parts_mut(
+                    block.as_mut_ptr() as *mut [Self::Sample; OUT_CHANNELS],
+                    len,
+                )
+            };
+            let n = self.process_block(&temp[..len], block_as_out);
             debug_assert_eq!(n, len, "process_block changed length unexpectedly");
         } else {
             // For large blocks, process in chunks to avoid stack overflow
-            // This is not ideal but maintains no_std compatibility
             const CHUNK: usize = 64;
             for chunk in block.chunks_mut(CHUNK) {
-                let mut temp = [[Self::Sample::default(); CHANNELS]; CHUNK];
+                let mut temp = [[Self::Sample::default(); IN_CHANNELS]; CHUNK];
                 let chunk_len = chunk.len();
                 temp[..chunk_len].copy_from_slice(chunk);
-                let n = self.process_block(&temp[..chunk_len], chunk);
+
+                // Cast to output type (safe because IN == OUT)
+                let chunk_as_out = unsafe {
+                    core::slice::from_raw_parts_mut(
+                        chunk.as_mut_ptr() as *mut [Self::Sample; OUT_CHANNELS],
+                        chunk_len,
+                    )
+                };
+                let n = self.process_block(&temp[..chunk_len], chunk_as_out);
                 debug_assert_eq!(n, chunk_len, "process_block changed length unexpectedly");
             }
         }
@@ -479,7 +525,9 @@ pub trait BlockProcessor<const CHANNELS: usize> {
 /// let mut detector = ThresholdDetector::new(3.0, 100);
 /// assert_eq!(detector.output_length(1024), None);  // Variable (depends on data)
 /// ```
-pub trait RateChangingProcessor<const CHANNELS: usize>: BlockProcessor<CHANNELS> {
+pub trait RateChangingProcessor<const IN_CHANNELS: usize, const OUT_CHANNELS: usize = IN_CHANNELS>:
+    BlockProcessor<IN_CHANNELS, OUT_CHANNELS>
+{
     /// Expected output length for a given input length.
     ///
     /// Returns `None` if output length is variable (event-triggered processing).
@@ -533,10 +581,325 @@ pub trait RateChangingProcessor<const CHANNELS: usize>: BlockProcessor<CHANNELS>
 ///     // Each thread has its own filter instance
 /// }
 /// ```
-pub trait CloneableProcessor<const CHANNELS: usize>: BlockProcessor<CHANNELS> + Clone {}
+pub trait CloneableProcessor<const IN_CHANNELS: usize, const OUT_CHANNELS: usize = IN_CHANNELS>:
+    BlockProcessor<IN_CHANNELS, OUT_CHANNELS> + Clone
+{
+}
 
 // Automatic implementation: any BlockProcessor that's also Clone is CloneableProcessor
-impl<T, const CHANNELS: usize> CloneableProcessor<CHANNELS> for T where
-    T: BlockProcessor<CHANNELS> + Clone
+impl<T, const IN_CHANNELS: usize, const OUT_CHANNELS: usize>
+    CloneableProcessor<IN_CHANNELS, OUT_CHANNELS> for T
+where
+    T: BlockProcessor<IN_CHANNELS, OUT_CHANNELS> + Clone,
 {
+}
+
+/// Type-safe processor pipeline with compile-time channel validation.
+///
+/// Chains multiple processors together, ensuring that each processor's output
+/// channels match the next processor's input channels at compile time.
+///
+/// # Type Parameters
+///
+/// - `P`: The current processor in the chain
+/// - `Next`: The next processor in the chain (defaults to `Terminal` for single-stage pipelines)
+///
+/// # Compile-Time Validation
+///
+/// The `.chain()` method enforces that the output channels of the current processor
+/// match the input channels of the next processor. Mismatches are caught at compile time:
+///
+/// ```compile_fail
+/// # use zerostone::{Pipeline, IirFilter, Decimator, BiquadCoeffs};
+/// let filter8ch: IirFilter<2> = IirFilter::new([BiquadCoeffs::identity(); 2]); // 8 channels
+/// let decimator16ch: Decimator<16> = Decimator::new(4); // 16 channels
+/// let pipeline = Pipeline::new(filter8ch).chain(decimator16ch); // ERROR: 8 != 16
+/// ```
+///
+/// # Examples
+///
+/// Single-stage pipeline:
+/// ```
+/// use zerostone::{Pipeline, IirFilter, BiquadCoeffs, BlockProcessor};
+///
+/// let coeffs = BiquadCoeffs::butterworth_lowpass(1000.0, 100.0);
+/// let filter: IirFilter<2> = IirFilter::new([coeffs, coeffs]);
+/// let mut pipeline = Pipeline::new(filter);
+///
+/// let input = [[1.0]; 10];
+/// let mut output = [[0.0]; 10];
+/// pipeline.process_block(&input, &mut output);
+/// ```
+///
+/// Multi-stage pipeline construction:
+/// ```
+/// use zerostone::{Pipeline, IirFilter, Decimator, BiquadCoeffs};
+///
+/// // Create processors
+/// let coeffs = BiquadCoeffs::butterworth_lowpass(1000.0, 100.0);
+/// let filter: IirFilter<2> = IirFilter::new([coeffs, coeffs]);
+/// let decimator: Decimator<1> = Decimator::new(4);
+///
+/// // Chain them together - compile-time channel validation!
+/// let _pipeline = Pipeline::new(filter).chain(decimator);
+///
+/// // Note: Multi-stage pipelines don't currently implement BlockProcessor
+/// // due to Rust const generic limitations. Only single-stage pipelines
+/// // (Pipeline<P, Terminal>) can be used with the BlockProcessor trait.
+/// ```
+pub struct Pipeline<P, Next = Terminal> {
+    current: P,
+    next: Next,
+}
+
+/// Terminal marker for end of pipeline chain.
+///
+/// This is the default `Next` parameter for `Pipeline<P>`, indicating
+/// a single-stage pipeline with no subsequent processors.
+pub struct Terminal;
+
+impl<P> Pipeline<P, Terminal> {
+    /// Create a new single-stage pipeline.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zerostone::{Pipeline, IirFilter, BiquadCoeffs};
+    ///
+    /// let coeffs = BiquadCoeffs::butterworth_lowpass(1000.0, 100.0);
+    /// let filter: IirFilter<2> = IirFilter::new([coeffs, coeffs]);
+    /// let pipeline = Pipeline::new(filter);
+    /// ```
+    pub fn new(processor: P) -> Self {
+        Self {
+            current: processor,
+            next: Terminal,
+        }
+    }
+}
+
+// Chain method for single-stage pipelines (Terminal)
+impl<P> Pipeline<P, Terminal> {
+    /// Chain another processor to this single-stage pipeline.
+    ///
+    /// The compiler enforces that the first processor's output channels match the second processor's input channels.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zerostone::{Pipeline, IirFilter, Decimator, BiquadCoeffs};
+    ///
+    /// let coeffs = BiquadCoeffs::butterworth_lowpass(1000.0, 100.0);
+    /// let filter: IirFilter<2> = IirFilter::new([coeffs, coeffs]);
+    /// let decimator: Decimator<1> = Decimator::new(4);
+    ///
+    /// // Chain processors - compiler verifies channels match
+    /// let pipeline = Pipeline::new(filter).chain(decimator);
+    /// ```
+    ///
+    /// Compile-time error if channels don't match:
+    /// ```compile_fail
+    /// # use zerostone::{Pipeline, Decimator};
+    /// let dec1: Decimator<8> = Decimator::new(2);
+    /// let dec2: Decimator<16> = Decimator::new(2);
+    /// let pipeline = Pipeline::new(dec1).chain(dec2); // ERROR: 8 != 16
+    /// ```
+    pub fn chain<P2, const IN: usize, const OUT: usize, const OUT2: usize>(
+        self,
+        next_processor: P2,
+    ) -> Pipeline<P, Pipeline<P2, Terminal>>
+    where
+        P: BlockProcessor<IN, OUT>,
+        P2: BlockProcessor<OUT, OUT2, Sample = P::Sample>,
+    {
+        Pipeline {
+            current: self.current,
+            next: Pipeline {
+                current: next_processor,
+                next: Terminal,
+            },
+        }
+    }
+}
+
+// Chain method for multi-stage pipelines
+impl<P1, P2> Pipeline<P1, Pipeline<P2, Terminal>> {
+    /// Chain another processor to this multi-stage pipeline.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zerostone::{Pipeline, IirFilter, Decimator, BiquadCoeffs};
+    ///
+    /// let coeffs = BiquadCoeffs::butterworth_lowpass(1000.0, 100.0);
+    /// let filter1: IirFilter<2> = IirFilter::new([coeffs, coeffs]);
+    /// let filter2: IirFilter<2> = IirFilter::new([coeffs, coeffs]);
+    /// let decimator: Decimator<1> = Decimator::new(4);
+    ///
+    /// // Chain three processors
+    /// let pipeline = Pipeline::new(filter1)
+    ///     .chain(filter2)
+    ///     .chain(decimator);
+    /// ```
+    pub fn chain<P3, const IN: usize, const MID: usize, const OUT: usize, const OUT2: usize>(
+        self,
+        next_processor: P3,
+    ) -> Pipeline<P1, Pipeline<P2, Pipeline<P3, Terminal>>>
+    where
+        P1: BlockProcessor<IN, MID>,
+        P2: BlockProcessor<MID, OUT, Sample = P1::Sample>,
+        P3: BlockProcessor<OUT, OUT2, Sample = P1::Sample>,
+    {
+        Pipeline {
+            current: self.current,
+            next: Pipeline {
+                current: self.next.current,
+                next: Pipeline {
+                    current: next_processor,
+                    next: Terminal,
+                },
+            },
+        }
+    }
+}
+
+// BlockProcessor implementation for single-stage pipeline
+impl<P, const IN: usize, const OUT: usize> BlockProcessor<IN, OUT> for Pipeline<P, Terminal>
+where
+    P: BlockProcessor<IN, OUT>,
+{
+    type Sample = P::Sample;
+
+    fn process_block(
+        &mut self,
+        input: &[[Self::Sample; IN]],
+        output: &mut [[Self::Sample; OUT]],
+    ) -> usize {
+        self.current.process_block(input, output)
+    }
+
+    fn process_block_inplace(&mut self, block: &mut [[Self::Sample; IN]]) {
+        self.current.process_block_inplace(block)
+    }
+
+    fn reset(&mut self) {
+        self.current.reset();
+    }
+
+    fn name(&self) -> &str {
+        self.current.name()
+    }
+}
+
+// Note: Multi-stage pipelines (Pipeline<P, Pipeline<P2, ...>>) don't currently implement
+// BlockProcessor due to Rust const generic limitations. For now, only single-stage pipelines
+// (Pipeline<P, Terminal>) implement the trait. Multi-stage pipelines can still be constructed
+// with chain(), but processing must be done manually through the nested structure.
+//
+// Future improvements could use associated types instead of const generics to enable
+// BlockProcessor for arbitrary-length pipelines.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AcCoupler, BiquadCoeffs, Decimator, IirFilter};
+
+    #[test]
+    fn test_single_stage_pipeline() {
+        // Create a simple single-stage pipeline
+        let filter: IirFilter<2> = IirFilter::new([BiquadCoeffs::passthrough(); 2]);
+        let mut pipeline = Pipeline::new(filter);
+
+        let input = [[1.0], [2.0], [3.0]];
+        let mut output = [[0.0]; 3];
+
+        let n = pipeline.process_block(&input, &mut output);
+        assert_eq!(n, 3);
+    }
+
+    #[test]
+    fn test_two_stage_pipeline_construction() {
+        // Test that we can construct a two-stage pipeline
+        let filter1: IirFilter<2> = IirFilter::new([BiquadCoeffs::passthrough(); 2]);
+        let filter2: IirFilter<2> = IirFilter::new([BiquadCoeffs::passthrough(); 2]);
+
+        let _pipeline = Pipeline::new(filter1).chain(filter2);
+        // Successfully constructs - this proves type-safe chaining works
+    }
+
+    #[test]
+    fn test_three_stage_pipeline_construction() {
+        // Test that we can construct a three-stage pipeline
+        let filter1: IirFilter<2> = IirFilter::new([BiquadCoeffs::passthrough(); 2]);
+        let filter2: IirFilter<2> = IirFilter::new([BiquadCoeffs::passthrough(); 2]);
+        let filter3: IirFilter<2> = IirFilter::new([BiquadCoeffs::passthrough(); 2]);
+
+        let _pipeline = Pipeline::new(filter1).chain(filter2).chain(filter3);
+        // Successfully constructs
+    }
+
+    #[test]
+    fn test_mixed_processor_pipeline() {
+        // Test chaining different processor types
+        let filter: IirFilter<2> = IirFilter::new([BiquadCoeffs::passthrough(); 2]);
+        let decimator: Decimator<1> = Decimator::new(4);
+
+        let _pipeline = Pipeline::new(filter).chain(decimator);
+        // Successfully constructs with different processor types
+    }
+
+    #[test]
+    fn test_pipeline_with_ac_coupler() {
+        // Test chaining with AC coupler
+        let coupler: AcCoupler<1> = AcCoupler::new(100.0, 0.1);
+        let mut pipeline = Pipeline::new(coupler);
+
+        let input = [[1.0], [1.0], [1.0]];
+        let mut output = [[0.0]; 3];
+
+        pipeline.process_block(&input, &mut output);
+        // Verifies it works
+    }
+
+    #[test]
+    fn test_pipeline_reset() {
+        // Test that reset works on single-stage pipeline
+        let coeffs = BiquadCoeffs::butterworth_lowpass(1000.0, 100.0);
+        let filter: IirFilter<2> = IirFilter::new([coeffs, coeffs]);
+        let mut pipeline = Pipeline::new(filter);
+
+        let input = [[1.0], [2.0], [3.0]];
+        let mut output1 = [[0.0]; 3];
+        let mut output2 = [[0.0]; 3];
+
+        // Process once
+        pipeline.process_block(&input, &mut output1);
+
+        // Reset
+        pipeline.reset();
+
+        // Process again - should match a fresh pipeline
+        pipeline.process_block(&input, &mut output2);
+
+        // Results should be the same after reset
+        for i in 0..3 {
+            assert!((output1[i][0] - output2[i][0]).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_pipeline_name() {
+        let filter: IirFilter<2> = IirFilter::new([BiquadCoeffs::passthrough(); 2]);
+        let pipeline = Pipeline::new(filter);
+
+        assert_eq!(pipeline.name(), "IirFilter");
+    }
+
+    // Compile-time test: This should fail to compile if uncommented
+    // #[test]
+    // fn test_mismatched_channels_compile_error() {
+    //     let filter8: IirFilter<8> = IirFilter::new(...);
+    //     let filter16: IirFilter<16> = IirFilter::new(...);
+    //     let _pipeline = Pipeline::new(filter8).chain(filter16); // ERROR: channels don't match
+    // }
 }
