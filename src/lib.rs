@@ -17,6 +17,7 @@
 //! - **[`LmsFilter`], [`NlmsFilter`]** - Adaptive filters for real-time noise cancellation
 //! - **[`Decimator`]** - Sample rate reduction (downsampling)
 //! - **[`Interpolator`]** - Sample rate increase (upsampling)
+//! - **[`ChannelRouter`]** - Channel selection, reordering, and duplication for pipeline composition
 //! - **[`EnvelopeFollower`]** - Amplitude envelope extraction
 //! - **[`Fft`]** - Fast Fourier Transform for spectral analysis
 //! - **[`MultiBandPower`]** - Multi-channel band power extraction with proper PSD normalization
@@ -83,6 +84,7 @@ mod percentile;
 mod pipeline;
 pub mod riemannian;
 mod rms;
+mod router;
 mod stats;
 mod stft;
 mod sync;
@@ -113,6 +115,7 @@ pub use percentile::StreamingPercentile;
 pub use pipeline::{BlockProcessor, CloneableProcessor, Pipeline, RateChangingProcessor, Terminal};
 pub use riemannian::{matrix_exp, matrix_inv_sqrt, matrix_log, matrix_sqrt, TangentSpace};
 pub use rms::WindowedRms;
+pub use router::ChannelRouter;
 pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;
 pub use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
