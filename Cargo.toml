@@ -12,7 +12,13 @@ libm = "0.2"
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
+plotters = "0.3"
+csv = "1.3"
 
 [[bench]]
 name = "benchmarks"
 harness = false
+
+[[example]]
+name = "filter_demo"
+path = "examples/filter_demo.rs"

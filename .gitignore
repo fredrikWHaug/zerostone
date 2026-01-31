@@ -5,3 +5,6 @@ Cargo.lock
 
 # Claude Code settings and context (user-specific)
 .claude/
+
+# Generated output from examples (plots, CSV files)
+/output/
