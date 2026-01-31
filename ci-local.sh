@@ -1,5 +1,9 @@
 #!/bin/bash
 # Run the same checks as CI/CD locally before pushing
+#
+# System dependencies (for plotters visualization in examples):
+#   Linux: sudo apt-get install libfontconfig1-dev
+#   macOS: (included by default)
 
 set -e  # Exit on first error
 
