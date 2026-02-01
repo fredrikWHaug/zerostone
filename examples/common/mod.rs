@@ -10,6 +10,7 @@
 #![allow(dead_code)] // Functions used across multiple examples
 
 use std::f32::consts::PI;
+use zerostone::{BiquadCoeffs, Complex, Fft};
 
 /// Generates a sine wave.
 ///
@@ -165,6 +166,126 @@ pub fn step_function(
             }
         })
         .collect()
+}
+
+/// Computes power spectrum in dB from a signal.
+///
+/// # Arguments
+/// * `signal` - Input signal (will be zero-padded or truncated to FFT size)
+/// * `sample_rate` - Sample rate in Hz
+///
+/// # Returns
+/// Tuple of (frequency_vec, power_dB_vec) where frequencies go from 0 to Nyquist
+pub fn compute_power_spectrum(signal: &[f32], sample_rate: f32) -> (Vec<f32>, Vec<f32>) {
+    const FFT_SIZE: usize = 1024;
+
+    // Prepare FFT input (zero-pad or truncate)
+    let mut fft_input = [0.0f32; FFT_SIZE];
+    let copy_len = signal.len().min(FFT_SIZE);
+    fft_input[..copy_len].copy_from_slice(&signal[..copy_len]);
+
+    // Compute power spectrum
+    let fft = Fft::<FFT_SIZE>::new();
+    let mut power_spec = vec![0.0f32; FFT_SIZE / 2 + 1];
+    fft.power_spectrum(&fft_input, &mut power_spec);
+
+    // Convert to dB (10 * log10(power))
+    // Use floor of -100 dB for numerical stability
+    let power_db: Vec<f32> = power_spec
+        .iter()
+        .map(|&p| {
+            if p > 0.0 {
+                10.0 * p.log10()
+            } else {
+                -100.0 // Floor value
+            }
+        })
+        .collect();
+
+    // Generate frequency vector (0 to Nyquist)
+    let freq_resolution = sample_rate / FFT_SIZE as f32;
+    let frequencies: Vec<f32> = (0..=FFT_SIZE / 2)
+        .map(|i| i as f32 * freq_resolution)
+        .collect();
+
+    (frequencies, power_db)
+}
+
+/// Computes filter frequency response (magnitude and phase).
+///
+/// # Arguments
+/// * `coeffs` - Array of biquad coefficient sections
+/// * `sample_rate` - Sample rate in Hz
+/// * `num_points` - Number of frequency points to evaluate (default 512)
+///
+/// # Returns
+/// Tuple of (frequency_vec, magnitude_dB_vec, phase_deg_vec)
+pub fn compute_filter_response(
+    coeffs: &[BiquadCoeffs],
+    sample_rate: f32,
+    num_points: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let nyquist = sample_rate / 2.0;
+    let mut frequencies = Vec::with_capacity(num_points);
+    let mut magnitude_db = Vec::with_capacity(num_points);
+    let mut phase_deg = Vec::with_capacity(num_points);
+
+    for i in 0..num_points {
+        // Frequency from 0 to Nyquist
+        let freq = (i as f32 / (num_points - 1) as f32) * nyquist;
+        frequencies.push(freq);
+
+        // Angular frequency
+        let omega = 2.0 * PI * freq / sample_rate;
+        let cos_omega = omega.cos();
+        let sin_omega = omega.sin();
+
+        // Start with unity response
+        let mut h = Complex::new(1.0, 0.0);
+
+        // Multiply response of each biquad section
+        for coeff in coeffs {
+            // Numerator: b0 + b1*z^-1 + b2*z^-2
+            // z^-1 = e^(-jω) = cos(-ω) + j*sin(-ω)
+            let z_inv = Complex::new(cos_omega, -sin_omega);
+            let z_inv_2 = z_inv.cmul(z_inv);
+
+            let numerator = Complex::new(coeff.b0, 0.0)
+                .cadd(Complex::new(coeff.b1, 0.0).cmul(z_inv))
+                .cadd(Complex::new(coeff.b2, 0.0).cmul(z_inv_2));
+
+            // Denominator: 1 + a1*z^-1 + a2*z^-2
+            let denominator = Complex::new(1.0, 0.0)
+                .cadd(Complex::new(coeff.a1, 0.0).cmul(z_inv))
+                .cadd(Complex::new(coeff.a2, 0.0).cmul(z_inv_2));
+
+            // H(z) = numerator / denominator
+            // Division: a/b = a * conj(b) / |b|^2
+            let denom_mag_sq = denominator.magnitude_squared();
+            let section_response = numerator.cmul(denominator.conj());
+            let section_response = Complex::new(
+                section_response.re / denom_mag_sq,
+                section_response.im / denom_mag_sq,
+            );
+
+            // Cascade: multiply with accumulated response
+            h = h.cmul(section_response);
+        }
+
+        // Convert to magnitude (dB) and phase (degrees)
+        let mag = h.magnitude();
+        let mag_db = if mag > 0.0 {
+            20.0 * mag.log10()
+        } else {
+            -120.0
+        };
+        magnitude_db.push(mag_db);
+
+        let phase = h.im.atan2(h.re) * 180.0 / PI;
+        phase_deg.push(phase);
+    }
+
+    (frequencies, magnitude_db, phase_deg)
 }
 
 #[cfg(test)]
