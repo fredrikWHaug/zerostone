@@ -1,0 +1,101 @@
+# Zerostone Exploration Tool Configuration
+#
+# This file defines a signal processing demonstration with runtime-configurable
+# signal generation and filter chains.
+#
+# Run with: cargo run --example explore
+#
+# For quick demos, use built-in recipes:
+#   cargo run --example explore -- --recipe lowpass
+#   cargo run --example explore -- --recipe highpass
+#   cargo run --example explore -- --recipe bandpass
+#   cargo run --example explore -- --recipe spatial
+#   cargo run --example explore -- --recipe pipeline
+
+# ============================================================================
+# Signal Configuration
+# ============================================================================
+
+[signal]
+# Duration of the signal in seconds
+duration = 1.0
+
+# Sample rate in Hz
+sample_rate = 1000.0
+
+# Number of channels (1 for single-channel, 4 or 8 for spatial filters)
+channels = 1
+
+[signal.components]
+# List of sine wave components as [frequency_hz, amplitude] pairs
+# Each sine wave will be added to the signal
+sine_waves = [
+    [10.0, 1.0],    # 10 Hz signal (e.g., alpha wave)
+    [60.0, 0.3]     # 60 Hz interference (e.g., powerline noise)
+]
+
+# Amplitude of additive white noise
+noise_amplitude = 0.2
+
+# Random seed for reproducible noise generation
+noise_seed = 42
+
+# Optional: Common noise affecting all channels (for multi-channel signals)
+# Uncomment the following section for spatial filter demonstrations:
+# [signal.common_noise]
+# frequency = 50.0    # 50 Hz powerline interference
+# amplitude = 0.5
+
+# ============================================================================
+# Filter Chain
+# ============================================================================
+
+# Filters are applied sequentially in the order they appear
+# Each [[filters]] section defines one filter stage
+
+[[filters]]
+type = "lowpass"
+cutoff = 30.0       # Cutoff frequency in Hz
+order = 4           # Filter order (higher = steeper rolloff)
+
+# Additional filter examples (uncomment to use):
+
+# High-pass filter to remove low-frequency drift
+# [[filters]]
+# type = "highpass"
+# cutoff = 5.0
+# order = 2
+
+# Band-pass filter to isolate a frequency band
+# [[filters]]
+# type = "bandpass"
+# low = 8.0        # Lower cutoff (Hz)
+# high = 30.0      # Upper cutoff (Hz)
+# order = 4
+
+# Common Average Reference (CAR) for multi-channel signals
+# Removes common-mode noise by subtracting the channel average
+# Requires channels = 4 or channels = 8
+# [[filters]]
+# type = "car"
+
+# Surface Laplacian for multi-channel signals
+# Spatial high-pass filter emphasizing local sources
+# Requires channels = 4 or channels = 8
+# [[filters]]
+# type = "laplacian"
+
+# ============================================================================
+# Output Configuration
+# ============================================================================
+
+[output]
+# Path for the output plot (PNG)
+plot_path = "output/explore.png"
+
+# Path for the output data (CSV)
+csv_path = "output/explore.csv"
+
+# Plot layout: "stacked" (vertical) or "grid" (2D grid)
+# Use "stacked" for 2-4 stages, "grid" for 4+ stages
+layout = "stacked"
