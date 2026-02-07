@@ -71,13 +71,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install maturin and pytest
         run: pip install maturin pytest numpy
+      - name: Clean old wheels
+        run: rm -rf python/target/wheels/
       - name: Build Python wheel
         working-directory: python
         run: maturin build --release
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
       - name: Install wheel
-        run: pip install python/target/wheels/npyci-*.whl
+        run: pip install python/target/wheels/npyci-*.whl --force-reinstall
       - name: Run Python tests
         run: pytest python/tests/ -v
 

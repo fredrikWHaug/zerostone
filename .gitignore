@@ -1,6 +1,7 @@
 # Added by cargo
 
 /target
+/python/target
 Cargo.lock
 
 # Claude Code settings and context (user-specific)
