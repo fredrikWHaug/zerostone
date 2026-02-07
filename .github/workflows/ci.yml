@@ -53,6 +53,34 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test
 
+  python:
+    name: Python Bindings (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install maturin and pytest
+        run: pip install maturin pytest numpy
+      - name: Build Python wheel
+        working-directory: python
+        run: maturin build --release
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
+      - name: Install wheel
+        run: pip install python/target/wheels/npyci-*.whl
+      - name: Run Python tests
+        run: pytest python/tests/ -v
+
   doc:
     name: Documentation
     runs-on: ubuntu-latest
