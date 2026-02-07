@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "npyci"
+version = "0.1.0"
+description = "High-performance signal processing for BCI research"
+requires-python = ">=3.8"
+dependencies = ["numpy>=1.20"]
+authors = [
+    { name = "Fredrik Whaug" }
+]
+license = { text = "AGPL-3.0" }
+readme = "README.md"
+keywords = ["signal-processing", "bci", "neuroscience", "eeg", "filtering"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+
+[project.urls]
+Repository = "https://github.com/yourusername/zerostone"
