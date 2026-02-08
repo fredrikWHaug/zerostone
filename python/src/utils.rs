@@ -10,5 +10,5 @@ pub fn numpy_to_vec_f32(_py: Python, array: PyReadonlyArray1<f32>) -> PyResult<V
 /// Convert a Rust Vec<f32> to a Python numpy array
 #[allow(dead_code)]
 pub fn vec_to_numpy_f32(py: Python, vec: Vec<f32>) -> Py<PyArray1<f32>> {
-    PyArray1::from_vec_bound(py, vec).unbind()
+    PyArray1::from_vec(py, vec).unbind()
 }
