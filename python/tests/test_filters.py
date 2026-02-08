@@ -1,0 +1,327 @@
+"""Tests for filter Python bindings (FirFilter, AcCoupler, MedianFilter)."""
+import numpy as np
+import pytest
+
+
+class TestFirFilter:
+    """Tests for FirFilter."""
+
+    def test_import(self):
+        """Test that FirFilter can be imported."""
+        import npyci as npy
+        assert hasattr(npy, 'FirFilter')
+
+    def test_create_with_taps(self):
+        """Test creating FirFilter with custom taps."""
+        import npyci as npy
+
+        fir = npy.FirFilter(taps=[0.2, 0.2, 0.2, 0.2, 0.2])
+        assert fir.num_taps == 5
+
+    def test_moving_average(self):
+        """Test creating a moving average filter."""
+        import npyci as npy
+
+        fir = npy.FirFilter.moving_average(5)
+        assert fir.num_taps == 5
+
+    def test_moving_average_invalid_size(self):
+        """Test that invalid sizes raise errors."""
+        import npyci as npy
+
+        with pytest.raises(ValueError):
+            npy.FirFilter.moving_average(0)
+        with pytest.raises(ValueError):
+            npy.FirFilter.moving_average(65)
+
+    def test_empty_taps_error(self):
+        """Test that empty taps raise error."""
+        import npyci as npy
+
+        with pytest.raises(ValueError):
+            npy.FirFilter(taps=[])
+
+    def test_process_output_shape(self):
+        """Test that process returns correct shape."""
+        import npyci as npy
+
+        fir = npy.FirFilter.moving_average(5)
+        signal = np.random.randn(100).astype(np.float32)
+        filtered = fir.process(signal)
+
+        assert isinstance(filtered, np.ndarray)
+        assert filtered.dtype == np.float32
+        assert len(filtered) == len(signal)
+
+    def test_moving_average_convergence(self):
+        """Test that moving average converges to DC value."""
+        import npyci as npy
+
+        fir = npy.FirFilter.moving_average(5)
+        signal = np.ones(20, dtype=np.float32)
+        filtered = fir.process(signal)
+
+        # After 5 samples, moving average of ones should be 1.0
+        assert np.allclose(filtered[4:], 1.0, atol=1e-5)
+
+    def test_reset(self):
+        """Test that reset clears filter state."""
+        import npyci as npy
+
+        fir = npy.FirFilter.moving_average(5)
+
+        # Process some data
+        signal = np.ones(10, dtype=np.float32) * 5.0
+        fir.process(signal)
+
+        # Reset and process same signal
+        fir.reset()
+        out1 = fir.process(signal)
+
+        # Create fresh filter
+        fir2 = npy.FirFilter.moving_average(5)
+        out2 = fir2.process(signal)
+
+        assert np.allclose(out1, out2)
+
+    def test_repr(self):
+        """Test string representation."""
+        import npyci as npy
+
+        fir = npy.FirFilter.moving_average(8)
+        assert 'FirFilter' in repr(fir)
+        assert '8' in repr(fir)
+
+    def test_optimized_sizes(self):
+        """Test that optimized sizes (8, 16, 32, 64) work."""
+        import npyci as npy
+
+        for size in [8, 16, 32, 64]:
+            fir = npy.FirFilter.moving_average(size)
+            signal = np.ones(100, dtype=np.float32)
+            filtered = fir.process(signal)
+            # Should converge to 1.0
+            assert np.allclose(filtered[-10:], 1.0, atol=1e-5)
+
+    def test_dynamic_size(self):
+        """Test non-optimized sizes use dynamic implementation."""
+        import npyci as npy
+
+        # Size 10 should use dynamic implementation
+        fir = npy.FirFilter.moving_average(10)
+        assert fir.num_taps == 10
+
+        signal = np.ones(50, dtype=np.float32)
+        filtered = fir.process(signal)
+        assert np.allclose(filtered[-10:], 1.0, atol=1e-5)
+
+
+class TestAcCoupler:
+    """Tests for AcCoupler."""
+
+    def test_import(self):
+        """Test that AcCoupler can be imported."""
+        import npyci as npy
+        assert hasattr(npy, 'AcCoupler')
+
+    def test_create(self):
+        """Test creating AcCoupler."""
+        import npyci as npy
+
+        ac = npy.AcCoupler(1000.0, 0.1)
+        assert ac.sample_rate == 1000.0
+        assert np.isclose(ac.cutoff, 0.1)
+
+    def test_invalid_sample_rate(self):
+        """Test that invalid sample rate raises error."""
+        import npyci as npy
+
+        with pytest.raises(ValueError):
+            npy.AcCoupler(0.0, 0.1)
+        with pytest.raises(ValueError):
+            npy.AcCoupler(-100.0, 0.1)
+
+    def test_invalid_cutoff(self):
+        """Test that invalid cutoff raises error."""
+        import npyci as npy
+
+        # Cutoff above Nyquist
+        with pytest.raises(ValueError):
+            npy.AcCoupler(1000.0, 600.0)
+        # Negative cutoff
+        with pytest.raises(ValueError):
+            npy.AcCoupler(1000.0, -1.0)
+
+    def test_process_output_shape(self):
+        """Test that process returns correct shape."""
+        import npyci as npy
+
+        ac = npy.AcCoupler(1000.0, 0.1)
+        signal = np.random.randn(100).astype(np.float32)
+        filtered = ac.process(signal)
+
+        assert isinstance(filtered, np.ndarray)
+        assert filtered.dtype == np.float32
+        assert len(filtered) == len(signal)
+
+    def test_removes_dc(self):
+        """Test that AC coupler removes DC offset."""
+        import npyci as npy
+
+        ac = npy.AcCoupler(250.0, 0.5)
+
+        # Constant DC signal
+        signal = np.ones(1000, dtype=np.float32) * 5.0
+        filtered = ac.process(signal)
+
+        # DC should be attenuated (last samples should be near zero)
+        assert abs(filtered[-1]) < 0.1
+
+    def test_preserves_ac(self):
+        """Test that AC coupler preserves high-frequency content."""
+        import npyci as npy
+
+        sample_rate = 250.0
+        ac = npy.AcCoupler(sample_rate, 0.1)
+
+        # 10 Hz sine wave (well above 0.1 Hz cutoff)
+        t = np.arange(0, 2, 1/sample_rate, dtype=np.float32)
+        signal = np.sin(2 * np.pi * 10 * t).astype(np.float32)
+        filtered = ac.process(signal)
+
+        # After settling, amplitude should be preserved (>90%)
+        max_filtered = np.max(np.abs(filtered[250:]))
+        assert max_filtered > 0.9
+
+    def test_reset(self):
+        """Test that reset clears filter state."""
+        import npyci as npy
+
+        ac = npy.AcCoupler(1000.0, 0.1)
+
+        # Process some data
+        ac.process(np.ones(100, dtype=np.float32))
+
+        # Reset
+        ac.reset()
+
+        # First sample after reset should pass through (like fresh filter)
+        out = ac.process(np.array([5.0], dtype=np.float32))
+        assert np.allclose(out[0], 5.0, atol=1e-5)
+
+    def test_repr(self):
+        """Test string representation."""
+        import npyci as npy
+
+        ac = npy.AcCoupler(1000.0, 0.1)
+        assert 'AcCoupler' in repr(ac)
+        assert '1000' in repr(ac)
+
+
+class TestMedianFilter:
+    """Tests for MedianFilter."""
+
+    def test_import(self):
+        """Test that MedianFilter can be imported."""
+        import npyci as npy
+        assert hasattr(npy, 'MedianFilter')
+
+    def test_create(self):
+        """Test creating MedianFilter."""
+        import npyci as npy
+
+        for size in [3, 5, 7]:
+            mf = npy.MedianFilter(size)
+            assert mf.window_size == size
+
+    def test_invalid_window_size(self):
+        """Test that invalid window sizes raise error."""
+        import npyci as npy
+
+        for size in [1, 2, 4, 6, 8, 9]:
+            with pytest.raises(ValueError):
+                npy.MedianFilter(size)
+
+    def test_process_output_shape(self):
+        """Test that process returns correct shape."""
+        import npyci as npy
+
+        mf = npy.MedianFilter(5)
+        signal = np.random.randn(100).astype(np.float32)
+        filtered = mf.process(signal)
+
+        assert isinstance(filtered, np.ndarray)
+        assert filtered.dtype == np.float32
+        assert len(filtered) == len(signal)
+
+    def test_spike_rejection(self):
+        """Test that median filter rejects spikes."""
+        import npyci as npy
+
+        mf = npy.MedianFilter(5)
+
+        # Prime filter with baseline
+        baseline = np.ones(5, dtype=np.float32) * 10.0
+        mf.process(baseline)
+
+        # Inject spike
+        spike_signal = np.array([100.0], dtype=np.float32)
+        out = mf.process(spike_signal)
+
+        # Spike should be rejected (median of [10,10,10,10,100] = 10)
+        assert np.allclose(out[0], 10.0, atol=1e-5)
+
+    def test_median_correctness(self):
+        """Test that median is computed correctly."""
+        import npyci as npy
+
+        mf = npy.MedianFilter(5)
+
+        # Process 5 samples to fill window
+        signal = np.array([5.0, 1.0, 3.0, 4.0, 2.0], dtype=np.float32)
+        out = mf.process(signal)
+
+        # After processing [5,1,3,4,2], next sample gives median of that window
+        next_out = mf.process(np.array([6.0], dtype=np.float32))
+        # Window is [1,3,4,2,6], sorted [1,2,3,4,6], median = 3
+        assert np.allclose(next_out[0], 3.0, atol=1e-5)
+
+    def test_reset(self):
+        """Test that reset clears filter state."""
+        import npyci as npy
+
+        mf = npy.MedianFilter(5)
+
+        # Process some data
+        mf.process(np.array([5.0, 5.0, 5.0, 5.0, 5.0], dtype=np.float32))
+
+        # Reset
+        mf.reset()
+
+        # Should be back to zero-padding phase
+        out = mf.process(np.array([10.0], dtype=np.float32))
+        # median([0,0,0,0,10]) = 0
+        assert np.allclose(out[0], 0.0, atol=1e-5)
+
+    def test_repr(self):
+        """Test string representation."""
+        import npyci as npy
+
+        mf = npy.MedianFilter(5)
+        assert 'MedianFilter' in repr(mf)
+        assert '5' in repr(mf)
+
+    def test_constant_signal(self):
+        """Test that constant signal passes through unchanged."""
+        import npyci as npy
+
+        mf = npy.MedianFilter(5)
+        signal = np.ones(20, dtype=np.float32) * 7.0
+        filtered = mf.process(signal)
+
+        # After window fills, should output constant value
+        assert np.allclose(filtered[4:], 7.0, atol=1e-5)
+
+
+if __name__ == '__main__':
+    pytest.main([__file__, '-v'])

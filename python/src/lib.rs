@@ -1,9 +1,15 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
+use pyo3::Bound;
 use ::zerostone::{BiquadCoeffs, IirFilter as ZsIirFilter};
 
+mod filters;
+mod stats;
 mod utils;
+
+use filters::{AcCoupler, FirFilter, MedianFilter};
+use stats::OnlineStats;
 
 /// IIR (Infinite Impulse Response) filter with cascaded biquad sections.
 ///
@@ -138,7 +144,7 @@ impl IirFilter {
         &mut self,
         py: Python<'py>,
         input: PyReadonlyArray1<f32>,
-    ) -> PyResult<&'py PyArray1<f32>> {
+    ) -> PyResult<Bound<'py, PyArray1<f32>>> {
         let input_slice = input.as_slice()?;
         let mut output = vec![0.0f32; input_slice.len()];
 
@@ -147,7 +153,7 @@ impl IirFilter {
             output[i] = self.filter.process_sample(sample);
         }
 
-        Ok(PyArray1::from_vec_bound(py, output).into_gil_ref())
+        Ok(PyArray1::from_vec(py, output))
     }
 
     /// Reset the filter state (clear delay lines).
@@ -175,6 +181,10 @@ impl IirFilter {
 #[pymodule]
 fn npyci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IirFilter>()?;
+    m.add_class::<FirFilter>()?;
+    m.add_class::<AcCoupler>()?;
+    m.add_class::<MedianFilter>()?;
+    m.add_class::<OnlineStats>()?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
