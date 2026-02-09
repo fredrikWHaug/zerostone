@@ -5,10 +5,12 @@ use pyo3::Bound;
 use ::zerostone::{BiquadCoeffs, IirFilter as ZsIirFilter};
 
 mod filters;
+mod spatial;
 mod stats;
 mod utils;
 
 use filters::{AcCoupler, FirFilter, MedianFilter};
+use spatial::{CAR, SurfaceLaplacian};
 use stats::OnlineStats;
 
 /// IIR (Infinite Impulse Response) filter with cascaded biquad sections.
@@ -184,6 +186,8 @@ fn npyci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FirFilter>()?;
     m.add_class::<AcCoupler>()?;
     m.add_class::<MedianFilter>()?;
+    m.add_class::<CAR>()?;
+    m.add_class::<SurfaceLaplacian>()?;
     m.add_class::<OnlineStats>()?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
