@@ -1,0 +1,20 @@
+# Build artifacts
+target/
+*.so
+*.pyd
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+
+# Output from validation scripts
+output/
+
+# IDE
+.idea/
+.vscode/
+*.swp
