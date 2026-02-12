@@ -3,7 +3,10 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use zerostone::{AcCoupler as ZsAcCoupler, FirFilter as ZsFirFilter, MedianFilter as ZsMedianFilter};
+use zerostone::{
+    AcCoupler as ZsAcCoupler, FirFilter as ZsFirFilter, LmsFilter as ZsLmsFilter,
+    MedianFilter as ZsMedianFilter, NlmsFilter as ZsNlmsFilter,
+};
 
 // ============================================================================
 // FirFilter
@@ -464,5 +467,527 @@ impl MedianFilter {
 
     fn __repr__(&self) -> String {
         format!("MedianFilter(window_size={})", self.window_size)
+    }
+}
+
+// ============================================================================
+// LmsFilter
+// ============================================================================
+
+/// Internal enum for handling different LMS filter tap counts.
+enum LmsFilterInner {
+    Taps8(ZsLmsFilter<8>),
+    Taps16(ZsLmsFilter<16>),
+    Taps32(ZsLmsFilter<32>),
+    Taps64(ZsLmsFilter<64>),
+    /// Dynamic implementation for non-standard tap counts
+    Dynamic {
+        weights: Vec<f32>,
+        delay_line: Vec<f32>,
+        index: usize,
+        mu: f32,
+    },
+}
+
+/// LMS (Least Mean Squares) adaptive filter for noise cancellation.
+///
+/// Adapts filter coefficients in real-time to minimize the mean square error
+/// between the desired signal and filter output. Useful for artifact removal.
+///
+/// # Example
+/// ```python
+/// import npyci as npy
+/// import numpy as np
+///
+/// # Create LMS filter with 32 taps and step size 0.01
+/// lms = npy.LmsFilter(taps=32, mu=0.01)
+///
+/// # Process reference and desired signals
+/// reference = np.random.randn(1000).astype(np.float32)
+/// desired = np.random.randn(1000).astype(np.float32)
+/// output, error = lms.process(reference, desired)
+/// ```
+#[pyclass]
+pub struct LmsFilter {
+    inner: LmsFilterInner,
+    num_taps: usize,
+    mu: f32,
+}
+
+#[pymethods]
+impl LmsFilter {
+    /// Create a new LMS adaptive filter.
+    ///
+    /// Args:
+    ///     taps (int): Number of filter taps (coefficients). Must be >= 1.
+    ///     mu (float): Step size (learning rate). Typically 0.001 - 0.1.
+    ///
+    /// Returns:
+    ///     LmsFilter: A new LMS filter instance.
+    ///
+    /// Example:
+    ///     >>> lms = LmsFilter(taps=32, mu=0.01)
+    #[new]
+    fn new(taps: usize, mu: f32) -> PyResult<Self> {
+        if taps == 0 {
+            return Err(PyValueError::new_err("taps must be at least 1"));
+        }
+        if mu <= 0.0 {
+            return Err(PyValueError::new_err("mu must be positive"));
+        }
+
+        let inner = match taps {
+            8 => LmsFilterInner::Taps8(ZsLmsFilter::new(mu)),
+            16 => LmsFilterInner::Taps16(ZsLmsFilter::new(mu)),
+            32 => LmsFilterInner::Taps32(ZsLmsFilter::new(mu)),
+            64 => LmsFilterInner::Taps64(ZsLmsFilter::new(mu)),
+            _ => LmsFilterInner::Dynamic {
+                weights: vec![0.0; taps],
+                delay_line: vec![0.0; taps],
+                index: 0,
+                mu,
+            },
+        };
+
+        Ok(Self {
+            inner,
+            num_taps: taps,
+            mu,
+        })
+    }
+
+    /// Process reference and desired signals through the adaptive filter.
+    ///
+    /// Args:
+    ///     input (np.ndarray): Reference/input signal as 1D float32 array.
+    ///     desired (np.ndarray): Desired signal as 1D float32 array.
+    ///
+    /// Returns:
+    ///     tuple[np.ndarray, np.ndarray]: (output, error) arrays.
+    ///         - output: Filter output (estimate of the artifact)
+    ///         - error: Error signal (clean signal with artifact removed)
+    ///
+    /// Example:
+    ///     >>> output, error = lms.process(reference, desired)
+    fn process<'py>(
+        &mut self,
+        py: Python<'py>,
+        input: PyReadonlyArray1<f32>,
+        desired: PyReadonlyArray1<f32>,
+    ) -> PyResult<(Bound<'py, PyArray1<f32>>, Bound<'py, PyArray1<f32>>)> {
+        let input_slice = input.as_slice()?;
+        let desired_slice = desired.as_slice()?;
+
+        let len = input_slice.len().min(desired_slice.len());
+        let mut output = vec![0.0f32; len];
+        let mut error = vec![0.0f32; len];
+
+        match &mut self.inner {
+            LmsFilterInner::Taps8(filter) => {
+                for i in 0..len {
+                    let result = filter.process_sample(input_slice[i], desired_slice[i]);
+                    output[i] = result.output;
+                    error[i] = result.error;
+                }
+            }
+            LmsFilterInner::Taps16(filter) => {
+                for i in 0..len {
+                    let result = filter.process_sample(input_slice[i], desired_slice[i]);
+                    output[i] = result.output;
+                    error[i] = result.error;
+                }
+            }
+            LmsFilterInner::Taps32(filter) => {
+                for i in 0..len {
+                    let result = filter.process_sample(input_slice[i], desired_slice[i]);
+                    output[i] = result.output;
+                    error[i] = result.error;
+                }
+            }
+            LmsFilterInner::Taps64(filter) => {
+                for i in 0..len {
+                    let result = filter.process_sample(input_slice[i], desired_slice[i]);
+                    output[i] = result.output;
+                    error[i] = result.error;
+                }
+            }
+            LmsFilterInner::Dynamic {
+                weights,
+                delay_line,
+                index,
+                mu,
+            } => {
+                let num_taps = weights.len();
+                for i in 0..len {
+                    // Store input in circular buffer
+                    delay_line[*index] = input_slice[i];
+
+                    // Compute output: y(n) = w^T * u(n)
+                    let mut y = 0.0;
+                    let mut delay_idx = *index;
+                    for tap in 0..num_taps {
+                        y += weights[tap] * delay_line[delay_idx];
+                        delay_idx = if delay_idx == 0 {
+                            num_taps - 1
+                        } else {
+                            delay_idx - 1
+                        };
+                    }
+
+                    // Compute error: e(n) = d(n) - y(n)
+                    let e = desired_slice[i] - y;
+
+                    // Update weights: w(n) = w(n-1) + mu * e(n) * u(n)
+                    delay_idx = *index;
+                    for tap in 0..num_taps {
+                        weights[tap] += *mu * e * delay_line[delay_idx];
+                        delay_idx = if delay_idx == 0 {
+                            num_taps - 1
+                        } else {
+                            delay_idx - 1
+                        };
+                    }
+
+                    *index = (*index + 1) % num_taps;
+                    output[i] = y;
+                    error[i] = e;
+                }
+            }
+        }
+
+        Ok((PyArray1::from_vec(py, output), PyArray1::from_vec(py, error)))
+    }
+
+    /// Reset the filter state (delay line and weights).
+    fn reset(&mut self) {
+        match &mut self.inner {
+            LmsFilterInner::Taps8(filter) => {
+                filter.reset();
+                filter.reset_weights();
+            }
+            LmsFilterInner::Taps16(filter) => {
+                filter.reset();
+                filter.reset_weights();
+            }
+            LmsFilterInner::Taps32(filter) => {
+                filter.reset();
+                filter.reset_weights();
+            }
+            LmsFilterInner::Taps64(filter) => {
+                filter.reset();
+                filter.reset_weights();
+            }
+            LmsFilterInner::Dynamic {
+                weights,
+                delay_line,
+                index,
+                ..
+            } => {
+                weights.fill(0.0);
+                delay_line.fill(0.0);
+                *index = 0;
+            }
+        }
+    }
+
+    /// Get the current filter weights.
+    #[getter]
+    fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
+        let w: Vec<f32> = match &self.inner {
+            LmsFilterInner::Taps8(filter) => filter.weights().to_vec(),
+            LmsFilterInner::Taps16(filter) => filter.weights().to_vec(),
+            LmsFilterInner::Taps32(filter) => filter.weights().to_vec(),
+            LmsFilterInner::Taps64(filter) => filter.weights().to_vec(),
+            LmsFilterInner::Dynamic { weights, .. } => weights.clone(),
+        };
+        PyArray1::from_vec(py, w)
+    }
+
+    /// Get the number of taps.
+    #[getter]
+    fn num_taps(&self) -> usize {
+        self.num_taps
+    }
+
+    /// Get the step size (mu).
+    #[getter]
+    fn mu(&self) -> f32 {
+        self.mu
+    }
+
+    fn __repr__(&self) -> String {
+        format!("LmsFilter(taps={}, mu={})", self.num_taps, self.mu)
+    }
+}
+
+// ============================================================================
+// NlmsFilter
+// ============================================================================
+
+/// Internal enum for handling different NLMS filter tap counts.
+enum NlmsFilterInner {
+    Taps8(ZsNlmsFilter<8>),
+    Taps16(ZsNlmsFilter<16>),
+    Taps32(ZsNlmsFilter<32>),
+    Taps64(ZsNlmsFilter<64>),
+    /// Dynamic implementation for non-standard tap counts
+    Dynamic {
+        weights: Vec<f32>,
+        delay_line: Vec<f32>,
+        index: usize,
+        mu: f32,
+        epsilon: f32,
+    },
+}
+
+/// NLMS (Normalized Least Mean Squares) adaptive filter.
+///
+/// Improves upon LMS by normalizing the step size by input signal power,
+/// providing better convergence and stability across varying signal amplitudes.
+///
+/// # Example
+/// ```python
+/// import npyci as npy
+/// import numpy as np
+///
+/// # Create NLMS filter with 32 taps, mu=0.5, epsilon=0.01
+/// nlms = npy.NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
+///
+/// # Process reference and desired signals
+/// reference = np.random.randn(1000).astype(np.float32)
+/// desired = np.random.randn(1000).astype(np.float32)
+/// output, error = nlms.process(reference, desired)
+/// ```
+#[pyclass]
+pub struct NlmsFilter {
+    inner: NlmsFilterInner,
+    num_taps: usize,
+    mu: f32,
+    epsilon: f32,
+}
+
+#[pymethods]
+impl NlmsFilter {
+    /// Create a new NLMS adaptive filter.
+    ///
+    /// Args:
+    ///     taps (int): Number of filter taps. Must be >= 1.
+    ///     mu (float): Normalized step size. Typically 0.1 - 1.0.
+    ///     epsilon (float): Regularization constant. Typically 0.01.
+    ///
+    /// Returns:
+    ///     NlmsFilter: A new NLMS filter instance.
+    ///
+    /// Example:
+    ///     >>> nlms = NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
+    #[new]
+    fn new(taps: usize, mu: f32, epsilon: f32) -> PyResult<Self> {
+        if taps == 0 {
+            return Err(PyValueError::new_err("taps must be at least 1"));
+        }
+        if mu <= 0.0 {
+            return Err(PyValueError::new_err("mu must be positive"));
+        }
+        if epsilon <= 0.0 {
+            return Err(PyValueError::new_err("epsilon must be positive"));
+        }
+
+        let inner = match taps {
+            8 => NlmsFilterInner::Taps8(ZsNlmsFilter::new(mu, epsilon)),
+            16 => NlmsFilterInner::Taps16(ZsNlmsFilter::new(mu, epsilon)),
+            32 => NlmsFilterInner::Taps32(ZsNlmsFilter::new(mu, epsilon)),
+            64 => NlmsFilterInner::Taps64(ZsNlmsFilter::new(mu, epsilon)),
+            _ => NlmsFilterInner::Dynamic {
+                weights: vec![0.0; taps],
+                delay_line: vec![0.0; taps],
+                index: 0,
+                mu,
+                epsilon,
+            },
+        };
+
+        Ok(Self {
+            inner,
+            num_taps: taps,
+            mu,
+            epsilon,
+        })
+    }
+
+    /// Process reference and desired signals through the adaptive filter.
+    ///
+    /// Args:
+    ///     input (np.ndarray): Reference/input signal as 1D float32 array.
+    ///     desired (np.ndarray): Desired signal as 1D float32 array.
+    ///
+    /// Returns:
+    ///     tuple[np.ndarray, np.ndarray]: (output, error) arrays.
+    ///
+    /// Example:
+    ///     >>> output, error = nlms.process(reference, desired)
+    fn process<'py>(
+        &mut self,
+        py: Python<'py>,
+        input: PyReadonlyArray1<f32>,
+        desired: PyReadonlyArray1<f32>,
+    ) -> PyResult<(Bound<'py, PyArray1<f32>>, Bound<'py, PyArray1<f32>>)> {
+        let input_slice = input.as_slice()?;
+        let desired_slice = desired.as_slice()?;
+
+        let len = input_slice.len().min(desired_slice.len());
+        let mut output = vec![0.0f32; len];
+        let mut error = vec![0.0f32; len];
+
+        match &mut self.inner {
+            NlmsFilterInner::Taps8(filter) => {
+                for i in 0..len {
+                    let result = filter.process_sample(input_slice[i], desired_slice[i]);
+                    output[i] = result.output;
+                    error[i] = result.error;
+                }
+            }
+            NlmsFilterInner::Taps16(filter) => {
+                for i in 0..len {
+                    let result = filter.process_sample(input_slice[i], desired_slice[i]);
+                    output[i] = result.output;
+                    error[i] = result.error;
+                }
+            }
+            NlmsFilterInner::Taps32(filter) => {
+                for i in 0..len {
+                    let result = filter.process_sample(input_slice[i], desired_slice[i]);
+                    output[i] = result.output;
+                    error[i] = result.error;
+                }
+            }
+            NlmsFilterInner::Taps64(filter) => {
+                for i in 0..len {
+                    let result = filter.process_sample(input_slice[i], desired_slice[i]);
+                    output[i] = result.output;
+                    error[i] = result.error;
+                }
+            }
+            NlmsFilterInner::Dynamic {
+                weights,
+                delay_line,
+                index,
+                mu,
+                epsilon,
+            } => {
+                let num_taps = weights.len();
+                for i in 0..len {
+                    // Store input in circular buffer
+                    delay_line[*index] = input_slice[i];
+
+                    // Compute output and input power in single pass
+                    let mut y = 0.0;
+                    let mut input_power = 0.0;
+                    let mut delay_idx = *index;
+                    for tap in 0..num_taps {
+                        let val = delay_line[delay_idx];
+                        y += weights[tap] * val;
+                        input_power += val * val;
+                        delay_idx = if delay_idx == 0 {
+                            num_taps - 1
+                        } else {
+                            delay_idx - 1
+                        };
+                    }
+
+                    // Compute error
+                    let e = desired_slice[i] - y;
+
+                    // Normalized step size
+                    let norm_mu = *mu / (*epsilon + input_power);
+
+                    // Update weights
+                    delay_idx = *index;
+                    for tap in 0..num_taps {
+                        weights[tap] += norm_mu * e * delay_line[delay_idx];
+                        delay_idx = if delay_idx == 0 {
+                            num_taps - 1
+                        } else {
+                            delay_idx - 1
+                        };
+                    }
+
+                    *index = (*index + 1) % num_taps;
+                    output[i] = y;
+                    error[i] = e;
+                }
+            }
+        }
+
+        Ok((PyArray1::from_vec(py, output), PyArray1::from_vec(py, error)))
+    }
+
+    /// Reset the filter state (delay line and weights).
+    fn reset(&mut self) {
+        match &mut self.inner {
+            NlmsFilterInner::Taps8(filter) => {
+                filter.reset();
+                filter.reset_weights();
+            }
+            NlmsFilterInner::Taps16(filter) => {
+                filter.reset();
+                filter.reset_weights();
+            }
+            NlmsFilterInner::Taps32(filter) => {
+                filter.reset();
+                filter.reset_weights();
+            }
+            NlmsFilterInner::Taps64(filter) => {
+                filter.reset();
+                filter.reset_weights();
+            }
+            NlmsFilterInner::Dynamic {
+                weights,
+                delay_line,
+                index,
+                ..
+            } => {
+                weights.fill(0.0);
+                delay_line.fill(0.0);
+                *index = 0;
+            }
+        }
+    }
+
+    /// Get the current filter weights.
+    #[getter]
+    fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
+        let w: Vec<f32> = match &self.inner {
+            NlmsFilterInner::Taps8(filter) => filter.weights().to_vec(),
+            NlmsFilterInner::Taps16(filter) => filter.weights().to_vec(),
+            NlmsFilterInner::Taps32(filter) => filter.weights().to_vec(),
+            NlmsFilterInner::Taps64(filter) => filter.weights().to_vec(),
+            NlmsFilterInner::Dynamic { weights, .. } => weights.clone(),
+        };
+        PyArray1::from_vec(py, w)
+    }
+
+    /// Get the number of taps.
+    #[getter]
+    fn num_taps(&self) -> usize {
+        self.num_taps
+    }
+
+    /// Get the step size (mu).
+    #[getter]
+    fn mu(&self) -> f32 {
+        self.mu
+    }
+
+    /// Get the regularization constant (epsilon).
+    #[getter]
+    fn epsilon(&self) -> f32 {
+        self.epsilon
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "NlmsFilter(taps={}, mu={}, epsilon={})",
+            self.num_taps, self.mu, self.epsilon
+        )
     }
 }

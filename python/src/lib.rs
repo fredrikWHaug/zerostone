@@ -4,15 +4,21 @@ use pyo3::exceptions::PyValueError;
 use pyo3::Bound;
 use ::zerostone::{BiquadCoeffs, IirFilter as ZsIirFilter};
 
+mod detection;
 mod filters;
 mod pipeline;
+mod resampling;
 mod spatial;
+mod spectral;
 mod stats;
 mod utils;
 
-use filters::{AcCoupler, FirFilter, MedianFilter};
+use detection::{AdaptiveThresholdDetector, ThresholdDetector, ZeroCrossingDetector};
+use filters::{AcCoupler, FirFilter, LmsFilter, MedianFilter, NlmsFilter};
 use pipeline::Pipeline;
+use resampling::{Decimator, Interpolator};
 use spatial::{ChannelRouter, CAR, SurfaceLaplacian};
+use spectral::{Fft, MultiBandPower, Stft};
 use stats::OnlineStats;
 
 /// IIR (Infinite Impulse Response) filter with cascaded biquad sections.
@@ -184,15 +190,39 @@ impl IirFilter {
 /// implemented in Rust for maximum performance.
 #[pymodule]
 fn npyci(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Filters
     m.add_class::<IirFilter>()?;
     m.add_class::<FirFilter>()?;
     m.add_class::<AcCoupler>()?;
     m.add_class::<MedianFilter>()?;
+    m.add_class::<LmsFilter>()?;
+    m.add_class::<NlmsFilter>()?;
+
+    // Spatial filters
     m.add_class::<CAR>()?;
     m.add_class::<SurfaceLaplacian>()?;
     m.add_class::<ChannelRouter>()?;
+
+    // Pipeline
     m.add_class::<Pipeline>()?;
+
+    // Statistics
     m.add_class::<OnlineStats>()?;
+
+    // Detection
+    m.add_class::<ThresholdDetector>()?;
+    m.add_class::<AdaptiveThresholdDetector>()?;
+    m.add_class::<ZeroCrossingDetector>()?;
+
+    // Resampling
+    m.add_class::<Decimator>()?;
+    m.add_class::<Interpolator>()?;
+
+    // Spectral
+    m.add_class::<Fft>()?;
+    m.add_class::<Stft>()?;
+    m.add_class::<MultiBandPower>()?;
+
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
