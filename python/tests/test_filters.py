@@ -323,5 +323,221 @@ class TestMedianFilter:
         assert np.allclose(filtered[4:], 7.0, atol=1e-5)
 
 
+class TestLmsFilter:
+    """Tests for LmsFilter."""
+
+    def test_import(self):
+        """Test that LmsFilter can be imported."""
+        import npyci as npy
+        assert hasattr(npy, 'LmsFilter')
+
+    def test_create(self):
+        """Test creating LmsFilter."""
+        import npyci as npy
+
+        lms = npy.LmsFilter(taps=32, mu=0.01)
+        assert lms.num_taps == 32
+        assert np.isclose(lms.mu, 0.01)
+
+    def test_invalid_params(self):
+        """Test that invalid params raise errors."""
+        import npyci as npy
+
+        with pytest.raises(ValueError):
+            npy.LmsFilter(taps=0, mu=0.01)
+        with pytest.raises(ValueError):
+            npy.LmsFilter(taps=32, mu=0.0)
+        with pytest.raises(ValueError):
+            npy.LmsFilter(taps=32, mu=-0.01)
+
+    def test_process_output_shape(self):
+        """Test that process returns correct shapes."""
+        import npyci as npy
+
+        lms = npy.LmsFilter(taps=32, mu=0.01)
+        reference = np.random.randn(100).astype(np.float32)
+        desired = np.random.randn(100).astype(np.float32)
+
+        output, error = lms.process(reference, desired)
+
+        assert isinstance(output, np.ndarray)
+        assert isinstance(error, np.ndarray)
+        assert output.dtype == np.float32
+        assert error.dtype == np.float32
+        assert len(output) == 100
+        assert len(error) == 100
+
+    def test_adaptation(self):
+        """Test that LMS filter adapts to minimize error."""
+        import npyci as npy
+
+        lms = npy.LmsFilter(taps=16, mu=0.05)
+
+        # Input and desired (scaled input)
+        reference = np.sin(np.arange(500) * 0.1).astype(np.float32)
+        desired = reference * 2.0
+
+        output, error = lms.process(reference, desired)
+
+        # Error should decrease over time
+        initial_error = np.mean(np.abs(error[:50]))
+        final_error = np.mean(np.abs(error[-50:]))
+        assert final_error < initial_error * 0.5
+
+    def test_weights_accessible(self):
+        """Test that weights are accessible."""
+        import npyci as npy
+
+        lms = npy.LmsFilter(taps=16, mu=0.01)
+        weights = lms.weights
+
+        assert isinstance(weights, np.ndarray)
+        assert len(weights) == 16
+        # Initially all zeros
+        assert np.allclose(weights, 0.0)
+
+    def test_reset(self):
+        """Test that reset clears state."""
+        import npyci as npy
+
+        lms = npy.LmsFilter(taps=16, mu=0.01)
+
+        # Process some data
+        reference = np.random.randn(100).astype(np.float32)
+        desired = np.random.randn(100).astype(np.float32)
+        lms.process(reference, desired)
+
+        # Weights should be non-zero
+        assert not np.allclose(lms.weights, 0.0)
+
+        # Reset
+        lms.reset()
+
+        # Weights should be zero again
+        assert np.allclose(lms.weights, 0.0)
+
+    def test_optimized_sizes(self):
+        """Test that optimized sizes work."""
+        import npyci as npy
+
+        for taps in [8, 16, 32, 64]:
+            lms = npy.LmsFilter(taps=taps, mu=0.01)
+            assert lms.num_taps == taps
+
+            reference = np.random.randn(50).astype(np.float32)
+            desired = np.random.randn(50).astype(np.float32)
+            output, error = lms.process(reference, desired)
+            assert len(output) == 50
+
+    def test_dynamic_size(self):
+        """Test non-optimized sizes use dynamic implementation."""
+        import npyci as npy
+
+        lms = npy.LmsFilter(taps=10, mu=0.01)
+        assert lms.num_taps == 10
+
+        reference = np.random.randn(50).astype(np.float32)
+        desired = np.random.randn(50).astype(np.float32)
+        output, error = lms.process(reference, desired)
+        assert len(output) == 50
+
+    def test_repr(self):
+        """Test string representation."""
+        import npyci as npy
+
+        lms = npy.LmsFilter(taps=32, mu=0.01)
+        assert 'LmsFilter' in repr(lms)
+        assert '32' in repr(lms)
+
+
+class TestNlmsFilter:
+    """Tests for NlmsFilter."""
+
+    def test_import(self):
+        """Test that NlmsFilter can be imported."""
+        import npyci as npy
+        assert hasattr(npy, 'NlmsFilter')
+
+    def test_create(self):
+        """Test creating NlmsFilter."""
+        import npyci as npy
+
+        nlms = npy.NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
+        assert nlms.num_taps == 32
+        assert np.isclose(nlms.mu, 0.5)
+        assert np.isclose(nlms.epsilon, 0.01)
+
+    def test_invalid_params(self):
+        """Test that invalid params raise errors."""
+        import npyci as npy
+
+        with pytest.raises(ValueError):
+            npy.NlmsFilter(taps=0, mu=0.5, epsilon=0.01)
+        with pytest.raises(ValueError):
+            npy.NlmsFilter(taps=32, mu=0.0, epsilon=0.01)
+        with pytest.raises(ValueError):
+            npy.NlmsFilter(taps=32, mu=0.5, epsilon=0.0)
+
+    def test_process_output_shape(self):
+        """Test that process returns correct shapes."""
+        import npyci as npy
+
+        nlms = npy.NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
+        reference = np.random.randn(100).astype(np.float32)
+        desired = np.random.randn(100).astype(np.float32)
+
+        output, error = nlms.process(reference, desired)
+
+        assert isinstance(output, np.ndarray)
+        assert isinstance(error, np.ndarray)
+        assert len(output) == 100
+        assert len(error) == 100
+
+    def test_faster_convergence_than_lms(self):
+        """Test that NLMS converges faster than LMS with varying amplitude."""
+        import npyci as npy
+
+        lms = npy.LmsFilter(taps=16, mu=0.01)
+        nlms = npy.NlmsFilter(taps=16, mu=0.5, epsilon=0.01)
+
+        # Varying amplitude signal
+        t = np.arange(300)
+        amplitude = 1.0 + 0.5 * np.sin(t * 0.05)
+        reference = (amplitude * np.sin(t * 0.1)).astype(np.float32)
+        desired = (reference * 2.0).astype(np.float32)
+
+        _, lms_error = lms.process(reference, desired)
+        _, nlms_error = nlms.process(reference, desired)
+
+        # NLMS should have lower error in the latter half
+        lms_final = np.mean(np.abs(lms_error[-50:]))
+        nlms_final = np.mean(np.abs(nlms_error[-50:]))
+        assert nlms_final < lms_final
+
+    def test_reset(self):
+        """Test that reset clears state."""
+        import npyci as npy
+
+        nlms = npy.NlmsFilter(taps=16, mu=0.5, epsilon=0.01)
+
+        reference = np.random.randn(100).astype(np.float32)
+        desired = np.random.randn(100).astype(np.float32)
+        nlms.process(reference, desired)
+
+        assert not np.allclose(nlms.weights, 0.0)
+
+        nlms.reset()
+
+        assert np.allclose(nlms.weights, 0.0)
+
+    def test_repr(self):
+        """Test string representation."""
+        import npyci as npy
+
+        nlms = npy.NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
+        assert 'NlmsFilter' in repr(nlms)
+        assert '32' in repr(nlms)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
