@@ -4,6 +4,9 @@ use pyo3::exceptions::PyValueError;
 use pyo3::Bound;
 use ::zerostone::{BiquadCoeffs, IirFilter as ZsIirFilter};
 
+mod analysis;
+mod artifact;
+mod csp;
 mod detection;
 mod filters;
 mod pipeline;
@@ -13,6 +16,9 @@ mod spectral;
 mod stats;
 mod utils;
 
+use analysis::{EnvelopeFollower, WindowedRms};
+use artifact::{ArtifactDetector, ZscoreArtifact};
+use csp::AdaptiveCsp;
 use detection::{AdaptiveThresholdDetector, ThresholdDetector, ZeroCrossingDetector};
 use filters::{AcCoupler, FirFilter, LmsFilter, MedianFilter, NlmsFilter};
 use pipeline::Pipeline;
@@ -222,6 +228,17 @@ fn npyci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Fft>()?;
     m.add_class::<Stft>()?;
     m.add_class::<MultiBandPower>()?;
+
+    // CSP (Common Spatial Patterns)
+    m.add_class::<AdaptiveCsp>()?;
+
+    // Artifact Detection
+    m.add_class::<ArtifactDetector>()?;
+    m.add_class::<ZscoreArtifact>()?;
+
+    // Analysis
+    m.add_class::<EnvelopeFollower>()?;
+    m.add_class::<WindowedRms>()?;
 
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
