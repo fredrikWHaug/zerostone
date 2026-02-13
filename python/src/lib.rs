@@ -9,23 +9,28 @@ mod artifact;
 mod csp;
 mod detection;
 mod filters;
+mod percentile;
 mod pipeline;
 mod resampling;
 mod spatial;
 mod spectral;
 mod stats;
 mod utils;
+mod wavelet;
+mod xcorr;
 
-use analysis::{EnvelopeFollower, WindowedRms};
+use analysis::{EnvelopeFollower, HilbertTransform, WindowedRms};
 use artifact::{ArtifactDetector, ZscoreArtifact};
 use csp::AdaptiveCsp;
 use detection::{AdaptiveThresholdDetector, ThresholdDetector, ZeroCrossingDetector};
 use filters::{AcCoupler, FirFilter, LmsFilter, MedianFilter, NlmsFilter};
+use percentile::StreamingPercentile;
 use pipeline::Pipeline;
 use resampling::{Decimator, Interpolator};
 use spatial::{ChannelRouter, CAR, SurfaceLaplacian};
 use spectral::{Fft, MultiBandPower, Stft};
 use stats::OnlineStats;
+use wavelet::Cwt;
 
 /// IIR (Infinite Impulse Response) filter with cascaded biquad sections.
 ///
@@ -239,6 +244,16 @@ fn npyci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Analysis
     m.add_class::<EnvelopeFollower>()?;
     m.add_class::<WindowedRms>()?;
+    m.add_class::<HilbertTransform>()?;
+
+    // Wavelet
+    m.add_class::<Cwt>()?;
+
+    // Percentile
+    m.add_class::<StreamingPercentile>()?;
+
+    // Cross-correlation functions
+    xcorr::register(m)?;
 
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())

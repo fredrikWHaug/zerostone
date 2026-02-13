@@ -1,13 +1,13 @@
 //! Python bindings for signal analysis primitives.
 //!
-//! Provides envelope detection and power tracking for BCI signals.
+//! Provides envelope detection, power tracking, and Hilbert transform for BCI signals.
 
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use zerostone::{
-    EnvelopeFollower as ZsEnvelopeFollower, Rectification as ZsRectification,
-    WindowedRms as ZsWindowedRms,
+    hilbert::HilbertTransform as ZsHilbertTransform, EnvelopeFollower as ZsEnvelopeFollower,
+    Rectification as ZsRectification, WindowedRms as ZsWindowedRms,
 };
 
 // ============================================================================
@@ -681,5 +681,264 @@ impl WindowedRms {
             self.window_size,
             self.is_ready()
         )
+    }
+}
+
+// ============================================================================
+// HilbertTransform
+// ============================================================================
+
+/// Internal enum for handling different FFT sizes.
+enum HilbertTransformInner {
+    N64(ZsHilbertTransform<64>),
+    N128(ZsHilbertTransform<128>),
+    N256(ZsHilbertTransform<256>),
+    N512(ZsHilbertTransform<512>),
+    N1024(ZsHilbertTransform<1024>),
+    N2048(ZsHilbertTransform<2048>),
+}
+
+/// Hilbert Transform for computing analytic signals.
+///
+/// Computes the analytic signal from a real signal using FFT, enabling
+/// extraction of instantaneous amplitude, phase, and frequency. Essential
+/// for phase-amplitude coupling analysis and real-time neurofeedback.
+///
+/// # Important
+///
+/// The Hilbert transform assumes **narrowband signals**. Bandpass filter your
+/// signal before applying this transform to get meaningful results.
+///
+/// # Example
+/// ```python
+/// import npyci as npy
+/// import numpy as np
+///
+/// # Create Hilbert transform for 256-sample signals
+/// hilbert = npy.HilbertTransform(size=256)
+///
+/// # Generate a narrowband signal (should bandpass filter real data)
+/// t = np.linspace(0, 1, 256)
+/// signal = np.sin(2 * np.pi * 10 * t).astype(np.float32)
+///
+/// # Extract instantaneous amplitude (envelope)
+/// amplitude = hilbert.instantaneous_amplitude(signal)
+///
+/// # Extract instantaneous phase
+/// phase = hilbert.instantaneous_phase(signal)
+/// ```
+#[pyclass]
+pub struct HilbertTransform {
+    inner: HilbertTransformInner,
+    size: usize,
+}
+
+#[pymethods]
+impl HilbertTransform {
+    /// Create a new Hilbert transform processor.
+    ///
+    /// Args:
+    ///     size (int): Signal length (64, 128, 256, 512, 1024, or 2048).
+    ///
+    /// Returns:
+    ///     HilbertTransform: A new Hilbert transform processor.
+    #[new]
+    fn new(size: usize) -> PyResult<Self> {
+        let inner = match size {
+            64 => HilbertTransformInner::N64(ZsHilbertTransform::new()),
+            128 => HilbertTransformInner::N128(ZsHilbertTransform::new()),
+            256 => HilbertTransformInner::N256(ZsHilbertTransform::new()),
+            512 => HilbertTransformInner::N512(ZsHilbertTransform::new()),
+            1024 => HilbertTransformInner::N1024(ZsHilbertTransform::new()),
+            2048 => HilbertTransformInner::N2048(ZsHilbertTransform::new()),
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "size must be 64, 128, 256, 512, 1024, or 2048, got {}",
+                    size
+                )))
+            }
+        };
+
+        Ok(Self { inner, size })
+    }
+
+    /// Compute the Hilbert transform (imaginary part of analytic signal).
+    ///
+    /// Args:
+    ///     signal (np.ndarray): Input signal as 1D float32 array.
+    ///
+    /// Returns:
+    ///     np.ndarray: Hilbert-transformed signal (90° phase shifted).
+    fn transform<'py>(
+        &self,
+        py: Python<'py>,
+        signal: PyReadonlyArray1<f32>,
+    ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        let signal_slice = signal.as_slice()?;
+        if signal_slice.len() != self.size {
+            return Err(PyValueError::new_err(format!(
+                "Signal has {} elements, expected {}",
+                signal_slice.len(),
+                self.size
+            )));
+        }
+
+        macro_rules! do_transform {
+            ($hilbert:expr, $n:expr) => {{
+                let input: [f32; $n] = signal_slice.try_into().unwrap();
+                let mut output = [0.0f32; $n];
+                $hilbert.transform(&input, &mut output);
+                output.to_vec()
+            }};
+        }
+
+        let result = match &self.inner {
+            HilbertTransformInner::N64(h) => do_transform!(h, 64),
+            HilbertTransformInner::N128(h) => do_transform!(h, 128),
+            HilbertTransformInner::N256(h) => do_transform!(h, 256),
+            HilbertTransformInner::N512(h) => do_transform!(h, 512),
+            HilbertTransformInner::N1024(h) => do_transform!(h, 1024),
+            HilbertTransformInner::N2048(h) => do_transform!(h, 2048),
+        };
+
+        Ok(PyArray1::from_vec(py, result))
+    }
+
+    /// Compute the instantaneous amplitude (envelope).
+    ///
+    /// Args:
+    ///     signal (np.ndarray): Input signal as 1D float32 array.
+    ///
+    /// Returns:
+    ///     np.ndarray: Instantaneous amplitude envelope.
+    fn instantaneous_amplitude<'py>(
+        &self,
+        py: Python<'py>,
+        signal: PyReadonlyArray1<f32>,
+    ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        let signal_slice = signal.as_slice()?;
+        if signal_slice.len() != self.size {
+            return Err(PyValueError::new_err(format!(
+                "Signal has {} elements, expected {}",
+                signal_slice.len(),
+                self.size
+            )));
+        }
+
+        macro_rules! do_amplitude {
+            ($hilbert:expr, $n:expr) => {{
+                let input: [f32; $n] = signal_slice.try_into().unwrap();
+                let mut output = [0.0f32; $n];
+                $hilbert.instantaneous_amplitude(&input, &mut output);
+                output.to_vec()
+            }};
+        }
+
+        let result = match &self.inner {
+            HilbertTransformInner::N64(h) => do_amplitude!(h, 64),
+            HilbertTransformInner::N128(h) => do_amplitude!(h, 128),
+            HilbertTransformInner::N256(h) => do_amplitude!(h, 256),
+            HilbertTransformInner::N512(h) => do_amplitude!(h, 512),
+            HilbertTransformInner::N1024(h) => do_amplitude!(h, 1024),
+            HilbertTransformInner::N2048(h) => do_amplitude!(h, 2048),
+        };
+
+        Ok(PyArray1::from_vec(py, result))
+    }
+
+    /// Compute the instantaneous phase.
+    ///
+    /// Args:
+    ///     signal (np.ndarray): Input signal as 1D float32 array.
+    ///
+    /// Returns:
+    ///     np.ndarray: Instantaneous phase in radians [-π, π].
+    fn instantaneous_phase<'py>(
+        &self,
+        py: Python<'py>,
+        signal: PyReadonlyArray1<f32>,
+    ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        let signal_slice = signal.as_slice()?;
+        if signal_slice.len() != self.size {
+            return Err(PyValueError::new_err(format!(
+                "Signal has {} elements, expected {}",
+                signal_slice.len(),
+                self.size
+            )));
+        }
+
+        macro_rules! do_phase {
+            ($hilbert:expr, $n:expr) => {{
+                let input: [f32; $n] = signal_slice.try_into().unwrap();
+                let mut output = [0.0f32; $n];
+                $hilbert.instantaneous_phase(&input, &mut output);
+                output.to_vec()
+            }};
+        }
+
+        let result = match &self.inner {
+            HilbertTransformInner::N64(h) => do_phase!(h, 64),
+            HilbertTransformInner::N128(h) => do_phase!(h, 128),
+            HilbertTransformInner::N256(h) => do_phase!(h, 256),
+            HilbertTransformInner::N512(h) => do_phase!(h, 512),
+            HilbertTransformInner::N1024(h) => do_phase!(h, 1024),
+            HilbertTransformInner::N2048(h) => do_phase!(h, 2048),
+        };
+
+        Ok(PyArray1::from_vec(py, result))
+    }
+
+    /// Compute the instantaneous frequency.
+    ///
+    /// Args:
+    ///     signal (np.ndarray): Input signal as 1D float32 array.
+    ///     sample_rate (float): Sample rate in Hz.
+    ///
+    /// Returns:
+    ///     np.ndarray: Instantaneous frequency in Hz (length N-1).
+    fn instantaneous_frequency<'py>(
+        &self,
+        py: Python<'py>,
+        signal: PyReadonlyArray1<f32>,
+        sample_rate: f32,
+    ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        let signal_slice = signal.as_slice()?;
+        if signal_slice.len() != self.size {
+            return Err(PyValueError::new_err(format!(
+                "Signal has {} elements, expected {}",
+                signal_slice.len(),
+                self.size
+            )));
+        }
+
+        macro_rules! do_frequency {
+            ($hilbert:expr, $n:expr) => {{
+                let input: [f32; $n] = signal_slice.try_into().unwrap();
+                let mut output = vec![0.0f32; $n - 1];
+                $hilbert.instantaneous_frequency(&input, &mut output, sample_rate);
+                output
+            }};
+        }
+
+        let result = match &self.inner {
+            HilbertTransformInner::N64(h) => do_frequency!(h, 64),
+            HilbertTransformInner::N128(h) => do_frequency!(h, 128),
+            HilbertTransformInner::N256(h) => do_frequency!(h, 256),
+            HilbertTransformInner::N512(h) => do_frequency!(h, 512),
+            HilbertTransformInner::N1024(h) => do_frequency!(h, 1024),
+            HilbertTransformInner::N2048(h) => do_frequency!(h, 2048),
+        };
+
+        Ok(PyArray1::from_vec(py, result))
+    }
+
+    /// Get the signal size.
+    #[getter]
+    fn size(&self) -> usize {
+        self.size
+    }
+
+    fn __repr__(&self) -> String {
+        format!("HilbertTransform(size={})", self.size)
     }
 }
