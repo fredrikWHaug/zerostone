@@ -1,7 +1,10 @@
 //! Python bindings for statistics primitives.
 
-use numpy::PyReadonlyArray1;
+use numpy::ndarray::Array2;
+use numpy::{PyArray1, PyArray2, PyReadonlyArray1};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::OnlineCov as ZsOnlineCov;
 use zerostone::OnlineStats as ZsOnlineStats;
 
 /// Online statistics calculator using Welford's algorithm.
@@ -124,6 +127,208 @@ impl OnlineStats {
             self.count(),
             self.mean(),
             self.std()
+        )
+    }
+}
+
+// --- OnlineCov enum dispatch ---
+
+enum OnlineCovInner {
+    C4(ZsOnlineCov<4, 16>),
+    C8(ZsOnlineCov<8, 64>),
+    C16(ZsOnlineCov<16, 256>),
+    C32(ZsOnlineCov<32, 1024>),
+    C64(ZsOnlineCov<64, 4096>),
+}
+
+/// Online covariance matrix estimator.
+///
+/// Computes running mean, covariance, and correlation matrices
+/// using Welford's online algorithm. Memory usage is O(C^2).
+///
+/// # Example
+/// ```python
+/// import npyci as npy
+/// import numpy as np
+///
+/// cov = npy.OnlineCov(channels=4)
+/// for _ in range(100):
+///     sample = np.random.randn(4)
+///     cov.update(sample)
+/// print(cov.mean)        # shape (4,)
+/// print(cov.covariance)  # shape (4, 4)
+/// ```
+#[pyclass]
+pub struct OnlineCov {
+    inner: OnlineCovInner,
+    channels: usize,
+}
+
+#[pymethods]
+impl OnlineCov {
+    /// Create a new online covariance estimator.
+    ///
+    /// Args:
+    ///     channels (int): Number of channels. Must be 4, 8, 16, 32, or 64.
+    #[new]
+    fn new(channels: usize) -> PyResult<Self> {
+        let inner = match channels {
+            4 => OnlineCovInner::C4(ZsOnlineCov::new()),
+            8 => OnlineCovInner::C8(ZsOnlineCov::new()),
+            16 => OnlineCovInner::C16(ZsOnlineCov::new()),
+            32 => OnlineCovInner::C32(ZsOnlineCov::new()),
+            64 => OnlineCovInner::C64(ZsOnlineCov::new()),
+            _ => {
+                return Err(PyValueError::new_err(
+                    "channels must be 4, 8, 16, 32, or 64",
+                ))
+            }
+        };
+        Ok(Self { inner, channels })
+    }
+
+    /// Update with a new sample vector.
+    ///
+    /// Args:
+    ///     sample (np.ndarray): 1D float64 array of length `channels`.
+    fn update(&mut self, sample: PyReadonlyArray1<f64>) -> PyResult<()> {
+        let slice = sample.as_slice()?;
+        if slice.len() != self.channels {
+            return Err(PyValueError::new_err(format!(
+                "Expected {} channels, got {}",
+                self.channels,
+                slice.len()
+            )));
+        }
+
+        macro_rules! update {
+            ($cov:expr, $c:expr) => {{
+                let mut arr = [0.0f64; $c];
+                arr.copy_from_slice(slice);
+                $cov.update(&arr);
+            }};
+        }
+        match &mut self.inner {
+            OnlineCovInner::C4(c) => update!(c, 4),
+            OnlineCovInner::C8(c) => update!(c, 8),
+            OnlineCovInner::C16(c) => update!(c, 16),
+            OnlineCovInner::C32(c) => update!(c, 32),
+            OnlineCovInner::C64(c) => update!(c, 64),
+        }
+        Ok(())
+    }
+
+    /// Get the current mean vector.
+    ///
+    /// Returns:
+    ///     np.ndarray: 1D float64 array of shape (channels,).
+    #[getter]
+    fn mean<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        match &self.inner {
+            OnlineCovInner::C4(c) => PyArray1::from_slice(py, c.mean()),
+            OnlineCovInner::C8(c) => PyArray1::from_slice(py, c.mean()),
+            OnlineCovInner::C16(c) => PyArray1::from_slice(py, c.mean()),
+            OnlineCovInner::C32(c) => PyArray1::from_slice(py, c.mean()),
+            OnlineCovInner::C64(c) => PyArray1::from_slice(py, c.mean()),
+        }
+    }
+
+    /// Get the covariance matrix.
+    ///
+    /// Returns:
+    ///     np.ndarray: 2D float64 array of shape (channels, channels).
+    #[getter]
+    fn covariance<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
+        macro_rules! cov_matrix {
+            ($cov:expr, $c:expr) => {{
+                let flat = $cov.covariance();
+                let arr = Array2::from_shape_vec(($c, $c), flat.to_vec()).unwrap();
+                PyArray2::from_owned_array(py, arr)
+            }};
+        }
+        match &self.inner {
+            OnlineCovInner::C4(c) => cov_matrix!(c, 4),
+            OnlineCovInner::C8(c) => cov_matrix!(c, 8),
+            OnlineCovInner::C16(c) => cov_matrix!(c, 16),
+            OnlineCovInner::C32(c) => cov_matrix!(c, 32),
+            OnlineCovInner::C64(c) => cov_matrix!(c, 64),
+        }
+    }
+
+    /// Get the correlation matrix.
+    ///
+    /// Returns:
+    ///     np.ndarray: 2D float64 array of shape (channels, channels).
+    #[getter]
+    fn correlation<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
+        macro_rules! corr_matrix {
+            ($cov:expr, $c:expr) => {{
+                let flat = $cov.correlation();
+                let arr = Array2::from_shape_vec(($c, $c), flat.to_vec()).unwrap();
+                PyArray2::from_owned_array(py, arr)
+            }};
+        }
+        match &self.inner {
+            OnlineCovInner::C4(c) => corr_matrix!(c, 4),
+            OnlineCovInner::C8(c) => corr_matrix!(c, 8),
+            OnlineCovInner::C16(c) => corr_matrix!(c, 16),
+            OnlineCovInner::C32(c) => corr_matrix!(c, 32),
+            OnlineCovInner::C64(c) => corr_matrix!(c, 64),
+        }
+    }
+
+    /// Get a single covariance matrix element.
+    ///
+    /// Args:
+    ///     i (int): Row index.
+    ///     j (int): Column index.
+    ///
+    /// Returns:
+    ///     float: Covariance between channels i and j.
+    fn get(&self, i: usize, j: usize) -> f64 {
+        match &self.inner {
+            OnlineCovInner::C4(c) => c.get(i, j),
+            OnlineCovInner::C8(c) => c.get(i, j),
+            OnlineCovInner::C16(c) => c.get(i, j),
+            OnlineCovInner::C32(c) => c.get(i, j),
+            OnlineCovInner::C64(c) => c.get(i, j),
+        }
+    }
+
+    /// Number of samples processed.
+    #[getter]
+    fn count(&self) -> u64 {
+        match &self.inner {
+            OnlineCovInner::C4(c) => c.count(),
+            OnlineCovInner::C8(c) => c.count(),
+            OnlineCovInner::C16(c) => c.count(),
+            OnlineCovInner::C32(c) => c.count(),
+            OnlineCovInner::C64(c) => c.count(),
+        }
+    }
+
+    /// Number of channels.
+    #[getter]
+    fn channels(&self) -> usize {
+        self.channels
+    }
+
+    /// Reset the estimator state.
+    fn reset(&mut self) {
+        match &mut self.inner {
+            OnlineCovInner::C4(c) => c.reset(),
+            OnlineCovInner::C8(c) => c.reset(),
+            OnlineCovInner::C16(c) => c.reset(),
+            OnlineCovInner::C32(c) => c.reset(),
+            OnlineCovInner::C64(c) => c.reset(),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "OnlineCov(channels={}, count={})",
+            self.channels,
+            self.count()
         )
     }
 }

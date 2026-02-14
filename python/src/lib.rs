@@ -7,29 +7,36 @@ use ::zerostone::{BiquadCoeffs, IirFilter as ZsIirFilter};
 mod analysis;
 mod artifact;
 mod csp;
+mod deconvolution;
 mod detection;
 mod filters;
 mod percentile;
 mod pipeline;
 mod resampling;
+mod riemannian;
 mod spatial;
 mod spectral;
 mod stats;
+mod sync;
 mod utils;
 mod wavelet;
+mod window;
 mod xcorr;
 
 use analysis::{EnvelopeFollower, HilbertTransform, WindowedRms};
 use artifact::{ArtifactDetector, ZscoreArtifact};
 use csp::AdaptiveCsp;
+use deconvolution::OasisDeconvolution;
 use detection::{AdaptiveThresholdDetector, ThresholdDetector, ZeroCrossingDetector};
 use filters::{AcCoupler, FirFilter, LmsFilter, MedianFilter, NlmsFilter};
 use percentile::StreamingPercentile;
 use pipeline::Pipeline;
 use resampling::{Decimator, Interpolator};
+use riemannian::TangentSpace;
 use spatial::{ChannelRouter, CAR, SurfaceLaplacian};
 use spectral::{Fft, MultiBandPower, Stft};
-use stats::OnlineStats;
+use stats::{OnlineCov, OnlineStats};
+use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
 use wavelet::Cwt;
 
 /// IIR (Infinite Impulse Response) filter with cascaded biquad sections.
@@ -252,8 +259,26 @@ fn npyci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Percentile
     m.add_class::<StreamingPercentile>()?;
 
+    // Deconvolution
+    m.add_class::<OasisDeconvolution>()?;
+
+    // Riemannian geometry
+    m.add_class::<TangentSpace>()?;
+
+    // Online covariance
+    m.add_class::<OnlineCov>()?;
+
+    // Clock synchronization
+    m.add_class::<ClockOffset>()?;
+    m.add_class::<SampleClock>()?;
+    m.add_class::<LinearDrift>()?;
+    m.add_class::<OffsetBuffer>()?;
+
     // Cross-correlation functions
     xcorr::register(m)?;
+
+    // Window functions
+    window::register(m)?;
 
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
