@@ -39,7 +39,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --manifest-path python/Cargo.toml
+          args: --release --out dist --manifest-path python/Cargo.toml --interpreter python3.12
           sccache: 'true'
           manylinux: auto
 
