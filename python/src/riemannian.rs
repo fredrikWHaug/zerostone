@@ -49,11 +49,7 @@ impl TangentSpace {
             8 => TangentSpaceInner::C8(ZsTangentSpace::new()),
             16 => TangentSpaceInner::C16(ZsTangentSpace::new()),
             32 => TangentSpaceInner::C32(ZsTangentSpace::new()),
-            _ => {
-                return Err(PyValueError::new_err(
-                    "channels must be 4, 8, 16, or 32",
-                ))
-            }
+            _ => return Err(PyValueError::new_err("channels must be 4, 8, 16, or 32")),
         };
         Ok(Self { inner, channels })
     }

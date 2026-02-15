@@ -113,10 +113,7 @@ impl Pipeline {
             let result = processor
                 .call_method1(py, "process", (py_array,))
                 .map_err(|e| {
-                    PyValueError::new_err(format!(
-                        "Pipeline stage {} failed: {}",
-                        stage_idx, e
-                    ))
+                    PyValueError::new_err(format!("Pipeline stage {} failed: {}", stage_idx, e))
                 })?;
 
             // Extract the result as a numpy array

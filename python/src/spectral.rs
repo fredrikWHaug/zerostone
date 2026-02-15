@@ -1,12 +1,12 @@
 //! Python bindings for spectral analysis primitives.
 
-use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use numpy::ndarray::Array2;
+use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use zerostone::{
-    Complex, Fft as ZsFft, FrequencyBand as ZsFrequencyBand,
-    MultiBandPower as ZsMultiBandPower, Stft as ZsStft, WindowType as ZsWindowType,
+    Complex, Fft as ZsFft, FrequencyBand as ZsFrequencyBand, MultiBandPower as ZsMultiBandPower,
+    Stft as ZsStft, WindowType as ZsWindowType,
 };
 
 // ============================================================================
@@ -106,9 +106,8 @@ impl Fft {
 
         macro_rules! compute_fft {
             ($fft:expr, $N:expr) => {{
-                let mut data: [Complex; $N] = core::array::from_fn(|i| {
-                    Complex::from_real(input_slice[i])
-                });
+                let mut data: [Complex; $N] =
+                    core::array::from_fn(|i| Complex::from_real(input_slice[i]));
                 $fft.forward(&mut data);
                 for (i, c) in data.iter().enumerate() {
                     real[i] = c.re;
@@ -333,7 +332,8 @@ impl Stft {
 
                     // Apply window and convert to complex
                     for (i, &sample) in input_slice[start..start + $N].iter().enumerate() {
-                        let window_coeff = zerostone::window_coefficient($stft.window_type(), i, $N);
+                        let window_coeff =
+                            zerostone::window_coefficient($stft.window_type(), i, $N);
                         temp_buffer[i] = Complex::from_real(sample * window_coeff);
                     }
 
@@ -409,7 +409,8 @@ impl Stft {
                     let mut temp_buffer = [Complex::new(0.0, 0.0); $N];
 
                     for (i, &sample) in input_slice[start..start + $N].iter().enumerate() {
-                        let window_coeff = zerostone::window_coefficient($stft.window_type(), i, $N);
+                        let window_coeff =
+                            zerostone::window_coefficient($stft.window_type(), i, $N);
                         temp_buffer[i] = Complex::from_real(sample * window_coeff);
                     }
 
@@ -575,11 +576,9 @@ impl MultiBandPower {
             (1024, 16) => MultiBandPowerInner::N1024C16(ZsMultiBandPower::new(sample_rate)),
             (1024, 32) => MultiBandPowerInner::N1024C32(ZsMultiBandPower::new(sample_rate)),
             (1024, 64) => MultiBandPowerInner::N1024C64(ZsMultiBandPower::new(sample_rate)),
-            _ => {
-                return Err(PyValueError::new_err(
-                    "fft_size must be 256, 512, or 1024 and channels must be 1, 4, 8, 16, 32, or 64",
-                ))
-            }
+            _ => return Err(PyValueError::new_err(
+                "fft_size must be 256, 512, or 1024 and channels must be 1, 4, 8, 16, 32, or 64",
+            )),
         };
 
         Ok(Self {
@@ -671,9 +670,7 @@ impl MultiBandPower {
         high_hz: f32,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
         if low_hz >= high_hz {
-            return Err(PyValueError::new_err(
-                "low_hz must be less than high_hz",
-            ));
+            return Err(PyValueError::new_err("low_hz must be less than high_hz"));
         }
 
         let band = ZsFrequencyBand::new(low_hz, high_hz);
