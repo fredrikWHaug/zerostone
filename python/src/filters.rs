@@ -655,7 +655,10 @@ impl LmsFilter {
             }
         }
 
-        Ok((PyArray1::from_vec(py, output), PyArray1::from_vec(py, error)))
+        Ok((
+            PyArray1::from_vec(py, output),
+            PyArray1::from_vec(py, error),
+        ))
     }
 
     /// Reset the filter state (delay line and weights).
@@ -918,7 +921,10 @@ impl NlmsFilter {
             }
         }
 
-        Ok((PyArray1::from_vec(py, output), PyArray1::from_vec(py, error)))
+        Ok((
+            PyArray1::from_vec(py, output),
+            PyArray1::from_vec(py, error),
+        ))
     }
 
     /// Reset the filter state (delay line and weights).

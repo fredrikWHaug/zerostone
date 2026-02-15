@@ -1,8 +1,8 @@
-use numpy::{PyArray1, PyReadonlyArray1};
-use pyo3::prelude::*;
-use pyo3::exceptions::PyValueError;
-use pyo3::Bound;
 use ::zerostone::{BiquadCoeffs, IirFilter as ZsIirFilter};
+use numpy::{PyArray1, PyReadonlyArray1};
+use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
+use pyo3::Bound;
 
 mod analysis;
 mod artifact;
@@ -10,6 +10,7 @@ mod csp;
 mod deconvolution;
 mod detection;
 mod filters;
+mod notch;
 mod percentile;
 mod pipeline;
 mod resampling;
@@ -29,11 +30,12 @@ use csp::AdaptiveCsp;
 use deconvolution::OasisDeconvolution;
 use detection::{AdaptiveThresholdDetector, ThresholdDetector, ZeroCrossingDetector};
 use filters::{AcCoupler, FirFilter, LmsFilter, MedianFilter, NlmsFilter};
+use notch::NotchFilter as PyNotchFilter;
 use percentile::StreamingPercentile;
 use pipeline::Pipeline;
 use resampling::{Decimator, Interpolator};
 use riemannian::TangentSpace;
-use spatial::{ChannelRouter, CAR, SurfaceLaplacian};
+use spatial::{ChannelRouter, SurfaceLaplacian, CAR};
 use spectral::{Fft, MultiBandPower, Stft};
 use stats::{OnlineCov, OnlineStats};
 use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
@@ -144,11 +146,7 @@ impl IirFilter {
             )));
         }
 
-        let biquad = BiquadCoeffs::butterworth_bandpass(
-            sample_rate,
-            low_cutoff,
-            high_cutoff,
-        );
+        let biquad = BiquadCoeffs::butterworth_bandpass(sample_rate, low_cutoff, high_cutoff);
         let filter = ZsIirFilter::new([biquad, biquad]);
 
         Ok(Self {
@@ -215,6 +213,7 @@ fn npyci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<MedianFilter>()?;
     m.add_class::<LmsFilter>()?;
     m.add_class::<NlmsFilter>()?;
+    m.add_class::<PyNotchFilter>()?;
 
     // Spatial filters
     m.add_class::<CAR>()?;

@@ -5,8 +5,7 @@ use numpy::{PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use zerostone::{
-    ChannelRouter as ZsChannelRouter,
-    CommonAverageReference as ZsCommonAverageReference,
+    ChannelRouter as ZsChannelRouter, CommonAverageReference as ZsCommonAverageReference,
     SurfaceLaplacian as ZsSurfaceLaplacian,
 };
 
@@ -22,7 +21,9 @@ enum CarInner {
     Ch32(ZsCommonAverageReference<32>),
     Ch64(ZsCommonAverageReference<64>),
     /// Dynamic implementation for non-standard channel counts
-    Dynamic { channels: usize },
+    Dynamic {
+        channels: usize,
+    },
 }
 
 /// Common Average Reference (CAR) spatial filter.
@@ -464,11 +465,9 @@ impl SurfaceLaplacian {
                             output[i * n_channels + ch] = row[ch];
                         } else {
                             // Compute weighted average of neighbors
-                            let neighbor_mean: f32 = ch_neighbors
-                                .iter()
-                                .map(|&n| row[n])
-                                .sum::<f32>()
-                                / ch_neighbors.len() as f32;
+                            let neighbor_mean: f32 =
+                                ch_neighbors.iter().map(|&n| row[n]).sum::<f32>()
+                                    / ch_neighbors.len() as f32;
                             output[i * n_channels + ch] = row[ch] - neighbor_mean;
                         }
                     }
@@ -508,23 +507,23 @@ const INVALID: u16 = u16::MAX;
 
 fn build_linear_neighbors_4() -> [[u16; 2]; 4] {
     [
-        [1, INVALID],     // Channel 0: only right neighbor
-        [0, 2],           // Channel 1: neighbors 0, 2
-        [1, 3],           // Channel 2: neighbors 1, 3
-        [2, INVALID],     // Channel 3: only left neighbor
+        [1, INVALID], // Channel 0: only right neighbor
+        [0, 2],       // Channel 1: neighbors 0, 2
+        [1, 3],       // Channel 2: neighbors 1, 3
+        [2, INVALID], // Channel 3: only left neighbor
     ]
 }
 
 fn build_linear_neighbors_8() -> [[u16; 2]; 8] {
     [
-        [1, INVALID],     // Channel 0
-        [0, 2],           // Channel 1
-        [1, 3],           // Channel 2
-        [2, 4],           // Channel 3
-        [3, 5],           // Channel 4
-        [4, 6],           // Channel 5
-        [5, 7],           // Channel 6
-        [6, INVALID],     // Channel 7
+        [1, INVALID], // Channel 0
+        [0, 2],       // Channel 1
+        [1, 3],       // Channel 2
+        [2, 4],       // Channel 3
+        [3, 5],       // Channel 4
+        [4, 6],       // Channel 5
+        [5, 7],       // Channel 6
+        [6, INVALID], // Channel 7
     ]
 }
 

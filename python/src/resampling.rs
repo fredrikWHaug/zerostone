@@ -22,7 +22,10 @@ enum DecimatorInner {
     Ch32(ZsDecimator<32>),
     Ch64(ZsDecimator<64>),
     /// Dynamic implementation for non-standard channel counts
-    Dynamic { factor: usize, counter: usize },
+    Dynamic {
+        factor: usize,
+        counter: usize,
+    },
 }
 
 /// Decimator for reducing sample rate.
@@ -393,7 +396,8 @@ impl Interpolator {
                                 for k in 0..*factor {
                                     let t = k as f32 / *factor as f32;
                                     for (j, &val) in current.iter().enumerate() {
-                                        let interp_val = prev_sample[j] + t * (val - prev_sample[j]);
+                                        let interp_val =
+                                            prev_sample[j] + t * (val - prev_sample[j]);
                                         output[out_idx * n_channels + j] = interp_val;
                                     }
                                     out_idx += 1;

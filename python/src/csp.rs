@@ -318,9 +318,9 @@ impl AdaptiveCsp {
                 for (i, &v) in sample_slice.iter().enumerate() {
                     input[i] = v;
                 }
-                let output: [f64; $k] = $csp.apply(&input).map_err(|e| {
-                    PyValueError::new_err(format!("CSP apply failed: {:?}", e))
-                })?;
+                let output: [f64; $k] = $csp
+                    .apply(&input)
+                    .map_err(|e| PyValueError::new_err(format!("CSP apply failed: {:?}", e)))?;
                 Ok(PyArray1::from_vec(py, output.to_vec()))
             }};
         }
@@ -374,9 +374,9 @@ impl AdaptiveCsp {
                     for col in 0..$c {
                         input[col] = data[row * $c + col];
                     }
-                    let features: [f64; $k] = $csp.apply(&input).map_err(|e| {
-                        PyValueError::new_err(format!("CSP apply failed: {:?}", e))
-                    })?;
+                    let features: [f64; $k] = $csp
+                        .apply(&input)
+                        .map_err(|e| PyValueError::new_err(format!("CSP apply failed: {:?}", e)))?;
                     for (k, &f) in features.iter().enumerate() {
                         output[row * $k + k] = f;
                     }

@@ -8,6 +8,7 @@
 //! # Features
 //!
 //! - **[`CircularBuffer`]** - Lock-free SPSC ring buffer for streaming data
+//! - **[`NotchFilter`]** - Multi-channel powerline notch filter (50/60 Hz + harmonics)
 //! - **[`IirFilter`]** - Cascaded biquad IIR filters (Butterworth lowpass/highpass/bandpass)
 //! - **[`FirFilter`]** - Direct-form FIR filter with linear phase
 //! - **[`AcCoupler`]** - AC coupling filter for DC offset removal
@@ -80,6 +81,7 @@ mod filter;
 pub mod hilbert;
 mod interpolate;
 pub mod linalg;
+mod notch;
 mod percentile;
 mod pipeline;
 pub mod riemannian;
@@ -111,6 +113,7 @@ pub use filter::{
 };
 pub use hilbert::HilbertTransform;
 pub use interpolate::{InterpolationMethod, Interpolator};
+pub use notch::NotchFilter;
 pub use percentile::StreamingPercentile;
 pub use pipeline::{BlockProcessor, CloneableProcessor, Pipeline, RateChangingProcessor, Terminal};
 pub use riemannian::{matrix_exp, matrix_inv_sqrt, matrix_log, matrix_sqrt, TangentSpace};
