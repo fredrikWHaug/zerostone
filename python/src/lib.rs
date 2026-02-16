@@ -21,6 +21,7 @@ mod stats;
 mod sync;
 mod utils;
 mod wavelet;
+mod welch;
 mod window;
 mod xcorr;
 
@@ -37,6 +38,7 @@ use resampling::{Decimator, Interpolator};
 use riemannian::TangentSpace;
 use spatial::{ChannelRouter, SurfaceLaplacian, CAR};
 use spectral::{Fft, MultiBandPower, Stft};
+use welch::WelchPsd as PyWelchPsd;
 use stats::{OnlineCov, OnlineStats};
 use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
 use wavelet::Cwt;
@@ -239,6 +241,7 @@ fn npyci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Fft>()?;
     m.add_class::<Stft>()?;
     m.add_class::<MultiBandPower>()?;
+    m.add_class::<PyWelchPsd>()?;
 
     // CSP (Common Spatial Patterns)
     m.add_class::<AdaptiveCsp>()?;

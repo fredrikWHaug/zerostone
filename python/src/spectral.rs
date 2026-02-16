@@ -231,7 +231,7 @@ pub struct Stft {
     hop_size: usize,
 }
 
-fn parse_window_type(window: &str) -> PyResult<ZsWindowType> {
+pub fn parse_window_type(window: &str) -> PyResult<ZsWindowType> {
     match window.to_lowercase().as_str() {
         "rectangular" | "rect" => Ok(ZsWindowType::Rectangular),
         "hann" | "hanning" => Ok(ZsWindowType::Hann),
