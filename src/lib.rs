@@ -29,6 +29,7 @@
 //! - **[`StreamingPercentile`]** - P² algorithm for streaming percentile estimation
 //! - **[`WindowedRms`]** - Windowed RMS and power computation for amplitude tracking
 //! - **[`OasisDeconvolution`]** - OASIS calcium imaging deconvolution
+//! - **[`WelchPsd`]** - Welch's method PSD estimation with segment averaging
 //! - **[`WindowType`]** - Window functions for spectral analysis (Hann, Hamming, Blackman, etc.)
 //! - **[`Cwt`]** - Continuous Wavelet Transform for time-frequency analysis
 //! - **[`Stft`]** - Short-Time Fourier Transform for spectrograms
@@ -91,6 +92,7 @@ mod stats;
 mod stft;
 mod sync;
 pub mod wavelet;
+mod welch;
 mod window;
 pub mod xcorr;
 
@@ -123,6 +125,7 @@ pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;
 pub use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
 pub use wavelet::{morlet_coefficient, wavelet_half_width, Cwt, MultiChannelCwt, WaveletType};
+pub use welch::WelchPsd;
 pub use window::{
     apply_window, apply_window_f64, coherent_gain, equivalent_noise_bandwidth, window_coefficient,
     WindowType,
