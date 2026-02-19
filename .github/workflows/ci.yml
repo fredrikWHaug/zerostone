@@ -79,7 +79,7 @@ jobs:
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
       - name: Install wheel
-        run: pip install python/target/wheels/npyci-*.whl --force-reinstall
+        run: pip install python/target/wheels/zpybci-*.whl --force-reinstall
       - name: Run Python tests
         run: pytest python/tests/ -v
 

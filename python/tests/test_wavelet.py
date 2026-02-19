@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-import npyci as npy
+import zpybci as zbci
 
 
 class TestCwt:
@@ -10,7 +10,7 @@ class TestCwt:
 
     def test_create_cwt(self):
         """Test creating a CWT processor."""
-        cwt = npy.Cwt(
+        cwt = zbci.Cwt(
             size=256,
             num_scales=8,
             sample_rate=250.0,
@@ -26,7 +26,7 @@ class TestCwt:
 
     def test_create_with_custom_omega0(self):
         """Test creating CWT with custom omega0."""
-        cwt = npy.Cwt(
+        cwt = zbci.Cwt(
             size=256,
             num_scales=8,
             sample_rate=250.0,
@@ -40,23 +40,23 @@ class TestCwt:
         """Test that invalid parameters raise errors."""
         # Invalid size
         with pytest.raises(ValueError):
-            npy.Cwt(size=100, num_scales=8, sample_rate=250.0, min_freq=5.0, max_freq=50.0)
+            zbci.Cwt(size=100, num_scales=8, sample_rate=250.0, min_freq=5.0, max_freq=50.0)
 
         # Invalid num_scales
         with pytest.raises(ValueError):
-            npy.Cwt(size=256, num_scales=5, sample_rate=250.0, min_freq=5.0, max_freq=50.0)
+            zbci.Cwt(size=256, num_scales=5, sample_rate=250.0, min_freq=5.0, max_freq=50.0)
 
         # min_freq >= max_freq
         with pytest.raises(ValueError):
-            npy.Cwt(size=256, num_scales=8, sample_rate=250.0, min_freq=50.0, max_freq=10.0)
+            zbci.Cwt(size=256, num_scales=8, sample_rate=250.0, min_freq=50.0, max_freq=10.0)
 
         # max_freq > Nyquist
         with pytest.raises(ValueError):
-            npy.Cwt(size=256, num_scales=8, sample_rate=250.0, min_freq=5.0, max_freq=200.0)
+            zbci.Cwt(size=256, num_scales=8, sample_rate=250.0, min_freq=5.0, max_freq=200.0)
 
         # min_freq <= 0
         with pytest.raises(ValueError):
-            npy.Cwt(size=256, num_scales=8, sample_rate=250.0, min_freq=0.0, max_freq=50.0)
+            zbci.Cwt(size=256, num_scales=8, sample_rate=250.0, min_freq=0.0, max_freq=50.0)
 
     def test_supported_configurations(self):
         """Test all supported size/scale combinations."""
@@ -65,7 +65,7 @@ class TestCwt:
 
         for size in sizes:
             for num_scales in scales:
-                cwt = npy.Cwt(
+                cwt = zbci.Cwt(
                     size=size,
                     num_scales=num_scales,
                     sample_rate=250.0,
@@ -77,7 +77,7 @@ class TestCwt:
 
     def test_power_shape(self):
         """Test power output shape."""
-        cwt = npy.Cwt(
+        cwt = zbci.Cwt(
             size=256,
             num_scales=8,
             sample_rate=250.0,
@@ -92,7 +92,7 @@ class TestCwt:
 
     def test_magnitude_shape(self):
         """Test magnitude output shape."""
-        cwt = npy.Cwt(
+        cwt = zbci.Cwt(
             size=128,
             num_scales=4,
             sample_rate=250.0,
@@ -107,7 +107,7 @@ class TestCwt:
 
     def test_frequencies_shape(self):
         """Test frequencies output."""
-        cwt = npy.Cwt(
+        cwt = zbci.Cwt(
             size=256,
             num_scales=16,
             sample_rate=250.0,
@@ -123,7 +123,7 @@ class TestCwt:
 
     def test_scales_shape(self):
         """Test scales output."""
-        cwt = npy.Cwt(
+        cwt = zbci.Cwt(
             size=256,
             num_scales=8,
             sample_rate=250.0,
@@ -136,7 +136,7 @@ class TestCwt:
 
     def test_signal_size_mismatch(self):
         """Test that size mismatch raises error."""
-        cwt = npy.Cwt(
+        cwt = zbci.Cwt(
             size=256,
             num_scales=8,
             sample_rate=250.0,
@@ -150,7 +150,7 @@ class TestCwt:
 
     def test_repr(self):
         """Test string representation."""
-        cwt = npy.Cwt(
+        cwt = zbci.Cwt(
             size=256,
             num_scales=8,
             sample_rate=250.0,
@@ -167,7 +167,7 @@ class TestCwtTimeFrequency:
 
     def test_detect_pure_tone(self):
         """Test that CWT detects pure tone at correct frequency."""
-        cwt = npy.Cwt(
+        cwt = zbci.Cwt(
             size=256,
             num_scales=16,
             sample_rate=250.0,
@@ -192,7 +192,7 @@ class TestCwtTimeFrequency:
 
     def test_impulse_response(self):
         """Test CWT response to impulse."""
-        cwt = npy.Cwt(
+        cwt = zbci.Cwt(
             size=64,
             num_scales=4,
             sample_rate=250.0,
@@ -216,7 +216,7 @@ class TestCwtTimeFrequency:
 
     def test_multi_frequency_signal(self):
         """Test CWT with multiple frequency components."""
-        cwt = npy.Cwt(
+        cwt = zbci.Cwt(
             size=512,
             num_scales=32,
             sample_rate=250.0,
@@ -244,7 +244,7 @@ class TestCwtTimeFrequency:
 
     def test_power_vs_magnitude(self):
         """Test that power = magnitude^2."""
-        cwt = npy.Cwt(
+        cwt = zbci.Cwt(
             size=128,
             num_scales=4,
             sample_rate=250.0,

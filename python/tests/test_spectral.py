@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-import npyci as npy
+import zpybci as zbci
 
 
 class TestFft:
@@ -10,19 +10,19 @@ class TestFft:
 
     def test_create_fft(self):
         """Test creating an FFT processor."""
-        fft = npy.Fft(256)
+        fft = zbci.Fft(256)
         assert fft.size == 256
 
     def test_invalid_size(self):
         """Test that non-power-of-2 sizes raise errors."""
         with pytest.raises(ValueError):
-            npy.Fft(100)  # Not a power of 2
+            zbci.Fft(100)  # Not a power of 2
         with pytest.raises(ValueError):
-            npy.Fft(0)  # Zero
+            zbci.Fft(0)  # Zero
 
     def test_forward_transform(self):
         """Test forward FFT transform."""
-        fft = npy.Fft(256)
+        fft = zbci.Fft(256)
 
         # Real signal
         signal = np.random.randn(256).astype(np.float32)
@@ -36,7 +36,7 @@ class TestFft:
 
     def test_power_spectrum(self):
         """Test power spectrum computation."""
-        fft = npy.Fft(256)
+        fft = zbci.Fft(256)
 
         # DC signal
         signal = np.ones(256, dtype=np.float32)
@@ -52,7 +52,7 @@ class TestFft:
 
     def test_power_spectrum_sine(self):
         """Test power spectrum of sine wave."""
-        fft = npy.Fft(256)
+        fft = zbci.Fft(256)
         sample_rate = 256.0
         freq = 32.0  # 32 Hz - should appear at bin 32
 
@@ -70,7 +70,7 @@ class TestFft:
 
     def test_wrong_input_size(self):
         """Test that wrong input size raises error."""
-        fft = npy.Fft(256)
+        fft = zbci.Fft(256)
         signal = np.random.randn(128).astype(np.float32)  # Wrong size
 
         with pytest.raises(ValueError, match="[Ll]ength"):
@@ -79,14 +79,14 @@ class TestFft:
     def test_supported_sizes(self):
         """Test all supported FFT sizes."""
         for size in [64, 128, 256, 512, 1024, 2048]:
-            fft = npy.Fft(size)
+            fft = zbci.Fft(size)
             signal = np.random.randn(size).astype(np.float32)
             power = fft.power_spectrum(signal)
             assert power.shape == (size // 2 + 1,)
 
     def test_repr(self):
         """Test string representation."""
-        fft = npy.Fft(512)
+        fft = zbci.Fft(512)
         assert "512" in repr(fft)
 
 
@@ -95,20 +95,20 @@ class TestStft:
 
     def test_create_stft(self):
         """Test creating an STFT processor."""
-        stft = npy.Stft(256, 64)
+        stft = zbci.Stft(256, 64)
         assert stft.size == 256
         assert stft.hop_size == 64
 
     def test_invalid_params(self):
         """Test that invalid parameters raise errors."""
         with pytest.raises(ValueError):
-            npy.Stft(100, 64)  # FFT size not power of 2
+            zbci.Stft(100, 64)  # FFT size not power of 2
         with pytest.raises(ValueError):
-            npy.Stft(256, 0)  # hop_size must be > 0
+            zbci.Stft(256, 0)  # hop_size must be > 0
 
     def test_transform(self):
         """Test STFT transform."""
-        stft = npy.Stft(256, 64)
+        stft = zbci.Stft(256, 64)
 
         # Signal with multiple frames
         signal = np.random.randn(1024).astype(np.float32)
@@ -124,7 +124,7 @@ class TestStft:
 
     def test_power_spectrogram(self):
         """Test power spectrogram computation."""
-        stft = npy.Stft(256, 64)
+        stft = zbci.Stft(256, 64)
 
         signal = np.random.randn(1024).astype(np.float32)
         power = stft.power(signal)
@@ -139,7 +139,7 @@ class TestStft:
 
     def test_power_spectrogram_sine(self):
         """Test power spectrogram of frequency sweep."""
-        stft = npy.Stft(256, 64)
+        stft = zbci.Stft(256, 64)
         sample_rate = 1024.0
 
         # Two different frequencies in sequence
@@ -165,7 +165,7 @@ class TestStft:
 
     def test_num_frames(self):
         """Test num_frames calculation."""
-        stft = npy.Stft(256, 64)
+        stft = zbci.Stft(256, 64)
         num_frames = stft.num_frames(1024)
         expected = (1024 - 256) // 64 + 1
         assert num_frames == expected
@@ -173,14 +173,14 @@ class TestStft:
     def test_supported_sizes(self):
         """Test all supported FFT sizes."""
         for size in [64, 128, 256, 512, 1024, 2048]:
-            stft = npy.Stft(size, size // 4)
+            stft = zbci.Stft(size, size // 4)
             signal = np.random.randn(size * 4).astype(np.float32)
             power = stft.power(signal)
             assert power.shape[0] > 0
 
     def test_repr(self):
         """Test string representation."""
-        stft = npy.Stft(256, 64)
+        stft = zbci.Stft(256, 64)
         assert "256" in repr(stft)
         assert "64" in repr(stft)
 
@@ -190,7 +190,7 @@ class TestMultiBandPower:
 
     def test_create_multiband(self):
         """Test creating a multi-band power extractor."""
-        mbp = npy.MultiBandPower(512, 8, 250.0)
+        mbp = zbci.MultiBandPower(512, 8, 250.0)
         assert mbp.fft_size == 512
         assert mbp.channels == 8
         assert mbp.sample_rate == 250.0
@@ -198,15 +198,15 @@ class TestMultiBandPower:
     def test_invalid_params(self):
         """Test that invalid parameters raise errors."""
         with pytest.raises(ValueError):
-            npy.MultiBandPower(100, 8, 250.0)  # FFT size not power of 2
+            zbci.MultiBandPower(100, 8, 250.0)  # FFT size not power of 2
         with pytest.raises(ValueError):
-            npy.MultiBandPower(512, 0, 250.0)  # channels must be >= 1
+            zbci.MultiBandPower(512, 0, 250.0)  # channels must be >= 1
         with pytest.raises(ValueError):
-            npy.MultiBandPower(512, 8, 0.0)  # sample_rate must be > 0
+            zbci.MultiBandPower(512, 8, 0.0)  # sample_rate must be > 0
 
     def test_compute_stores_internally(self):
         """Test that compute stores power spectrum internally."""
-        mbp = npy.MultiBandPower(256, 4, 250.0)
+        mbp = zbci.MultiBandPower(256, 4, 250.0)
 
         # Multi-channel signal: (channels, samples)
         signal = np.random.randn(4, 256).astype(np.float32)
@@ -218,7 +218,7 @@ class TestMultiBandPower:
     def test_band_power_extraction(self):
         """Test extracting power in specific frequency bands."""
         sample_rate = 250.0
-        mbp = npy.MultiBandPower(256, 4, sample_rate)
+        mbp = zbci.MultiBandPower(256, 4, sample_rate)
 
         # Generate signal with known frequency content: (channels, samples)
         t = np.arange(256) / sample_rate
@@ -252,7 +252,7 @@ class TestMultiBandPower:
     def test_standard_eeg_bands(self):
         """Test extracting standard EEG frequency bands."""
         sample_rate = 250.0
-        mbp = npy.MultiBandPower(512, 8, sample_rate)
+        mbp = zbci.MultiBandPower(512, 8, sample_rate)
 
         signal = np.random.randn(8, 512).astype(np.float32)
 
@@ -282,7 +282,7 @@ class TestMultiBandPower:
 
     def test_channel_count_mismatch(self):
         """Test that channel count mismatch raises error."""
-        mbp = npy.MultiBandPower(256, 8, 250.0)
+        mbp = zbci.MultiBandPower(256, 8, 250.0)
         signal = np.random.randn(4, 256).astype(np.float32)  # Wrong channel count
 
         with pytest.raises(ValueError, match="[Cc]hannel"):
@@ -290,7 +290,7 @@ class TestMultiBandPower:
 
     def test_wrong_signal_length(self):
         """Test that wrong signal length raises error."""
-        mbp = npy.MultiBandPower(256, 8, 250.0)
+        mbp = zbci.MultiBandPower(256, 8, 250.0)
         signal = np.random.randn(8, 128).astype(np.float32)  # Wrong length
 
         with pytest.raises(ValueError, match="[Ss]ample"):
@@ -298,7 +298,7 @@ class TestMultiBandPower:
 
     def test_invalid_frequency_range(self):
         """Test that invalid frequency range raises error."""
-        mbp = npy.MultiBandPower(256, 4, 250.0)
+        mbp = zbci.MultiBandPower(256, 4, 250.0)
         signal = np.random.randn(4, 256).astype(np.float32)
         mbp.compute(signal)
 
@@ -309,7 +309,7 @@ class TestMultiBandPower:
         """Test optimized FFT size and channel count combinations."""
         for fft_size in [256, 512, 1024]:
             for channels in [1, 4, 8, 16, 32, 64]:
-                mbp = npy.MultiBandPower(fft_size, channels, 250.0)
+                mbp = zbci.MultiBandPower(fft_size, channels, 250.0)
                 signal = np.random.randn(channels, fft_size).astype(np.float32)
                 mbp.compute(signal)
                 band = mbp.band_power(8.0, 12.0)
@@ -317,7 +317,7 @@ class TestMultiBandPower:
 
     def test_reset(self):
         """Test resetting MultiBandPower state."""
-        mbp = npy.MultiBandPower(256, 4, 250.0)
+        mbp = zbci.MultiBandPower(256, 4, 250.0)
 
         # Process some data
         signal1 = np.random.randn(4, 256).astype(np.float32)
@@ -335,7 +335,7 @@ class TestMultiBandPower:
 
     def test_repr(self):
         """Test string representation."""
-        mbp = npy.MultiBandPower(512, 8, 250.0)
+        mbp = zbci.MultiBandPower(512, 8, 250.0)
         assert "512" in repr(mbp)
         assert "8" in repr(mbp)
         assert "250" in repr(mbp)
@@ -350,7 +350,7 @@ class TestSpectralIntegration:
         sample_rate = 256.0
         freq = 32.0
 
-        fft = npy.Fft(fft_size)
+        fft = zbci.Fft(fft_size)
 
         t = np.arange(fft_size) / sample_rate
         signal = np.sin(2 * np.pi * freq * t).astype(np.float32)
@@ -366,7 +366,7 @@ class TestSpectralIntegration:
         fft_size = 256
         hop_size = 64
 
-        stft = npy.Stft(fft_size, hop_size)
+        stft = zbci.Stft(fft_size, hop_size)
 
         # Create chirp-like signal
         signal = np.random.randn(1024).astype(np.float32)
@@ -380,8 +380,8 @@ class TestSpectralIntegration:
         fft_size = 256
         sample_rate = 250.0
 
-        fft = npy.Fft(fft_size)
-        mbp = npy.MultiBandPower(fft_size, 1, sample_rate)
+        fft = zbci.Fft(fft_size)
+        mbp = zbci.MultiBandPower(fft_size, 1, sample_rate)
 
         # Single channel signal
         signal = np.random.randn(fft_size).astype(np.float32)

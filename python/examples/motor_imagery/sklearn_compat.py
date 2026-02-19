@@ -1,16 +1,16 @@
-"""Sklearn-compatible wrappers for npyci signal processing classes.
+"""Sklearn-compatible wrappers for zpybci signal processing classes.
 
 Thin wrappers that implement the sklearn BaseEstimator + TransformerMixin
-interface, enabling npyci to plug into sklearn pipelines, cross-validation,
+interface, enabling zpybci to plug into sklearn pipelines, cross-validation,
 and grid search.
 
 Supported transformers:
-    CSPTransformer         -- wraps npy.AdaptiveCsp
-    TangentSpaceTransformer -- wraps npy.TangentSpace
-    BandPowerTransformer   -- wraps npy.MultiBandPower
-    CovarianceEstimator    -- wraps npy.OnlineCov
+    CSPTransformer         -- wraps zbci.AdaptiveCsp
+    TangentSpaceTransformer -- wraps zbci.TangentSpace
+    BandPowerTransformer   -- wraps zbci.MultiBandPower
+    CovarianceEstimator    -- wraps zbci.OnlineCov
 
-Channel constraints (inherited from npyci enum dispatch):
+Channel constraints (inherited from zpybci enum dispatch):
     AdaptiveCsp    : channels in {4, 8, 16, 32, 64}, filters in {2, 4, 6}
     TangentSpace   : channels in {4, 8, 16, 32}
     MultiBandPower : channels in {1, 4, 8, 16, 32, 64}, fft_size in {256, 512, 1024}
@@ -20,7 +20,7 @@ Channel constraints (inherited from npyci enum dispatch):
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 
-import npyci as npy
+import zpybci as zbci
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ import npyci as npy
 class CSPTransformer(BaseEstimator, TransformerMixin):
     """Common Spatial Patterns as a sklearn transformer.
 
-    Wraps npy.AdaptiveCsp. Expects binary class labels (0 and 1).
+    Wraps zbci.AdaptiveCsp. Expects binary class labels (0 and 1).
 
     Input:
         X : (n_trials, n_samples, n_channels) float64 array
@@ -69,7 +69,7 @@ class CSPTransformer(BaseEstimator, TransformerMixin):
         -------
         self
         """
-        self.csp_ = npy.AdaptiveCsp(
+        self.csp_ = zbci.AdaptiveCsp(
             channels=self.channels,
             filters=self.filters,
             min_samples=self.min_samples,
@@ -119,7 +119,7 @@ class CSPTransformer(BaseEstimator, TransformerMixin):
 class TangentSpaceTransformer(BaseEstimator, TransformerMixin):
     """Riemannian tangent space projection as a sklearn transformer.
 
-    Wraps npy.TangentSpace. Fits the reference point as the arithmetic mean
+    Wraps zbci.TangentSpace. Fits the reference point as the arithmetic mean
     of the training covariance matrices.
 
     Input:
@@ -148,7 +148,7 @@ class TangentSpaceTransformer(BaseEstimator, TransformerMixin):
         -------
         self
         """
-        self.ts_ = npy.TangentSpace(channels=self.channels)
+        self.ts_ = zbci.TangentSpace(channels=self.channels)
         X = np.asarray(X, dtype=np.float64)
         ref = np.mean(X, axis=0)
         self.ts_.fit(ref)
@@ -187,7 +187,7 @@ DEFAULT_BANDS = [(4.0, 8.0), (8.0, 13.0), (13.0, 30.0), (30.0, 50.0)]
 class BandPowerTransformer(BaseEstimator, TransformerMixin):
     """Per-channel frequency band power as a sklearn transformer.
 
-    Wraps npy.MultiBandPower. The last `fft_size` samples of each trial
+    Wraps zbci.MultiBandPower. The last `fft_size` samples of each trial
     are used for the PSD estimate.
 
     Input:
@@ -236,7 +236,7 @@ class BandPowerTransformer(BaseEstimator, TransformerMixin):
         n_features = self.channels * n_bands
         features = np.empty((n_trials, n_features), dtype=np.float32)
 
-        bp = npy.MultiBandPower(
+        bp = zbci.MultiBandPower(
             fft_size=self.fft_size,
             channels=self.channels,
             sample_rate=float(self.sample_rate),
@@ -264,7 +264,7 @@ class BandPowerTransformer(BaseEstimator, TransformerMixin):
 class CovarianceEstimator(BaseEstimator, TransformerMixin):
     """Per-trial covariance matrix estimation as a sklearn transformer.
 
-    Wraps npy.OnlineCov.
+    Wraps zbci.OnlineCov.
 
     Input:
         X : (n_trials, n_samples, n_channels) float64 array
@@ -299,7 +299,7 @@ class CovarianceEstimator(BaseEstimator, TransformerMixin):
         n_trials = X.shape[0]
         covariances = np.empty((n_trials, self.channels, self.channels), dtype=np.float64)
 
-        cov = npy.OnlineCov(channels=self.channels)
+        cov = zbci.OnlineCov(channels=self.channels)
 
         for i, trial in enumerate(X):
             cov.reset()

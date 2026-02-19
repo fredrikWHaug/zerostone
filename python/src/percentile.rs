@@ -34,11 +34,11 @@ enum StreamingPercentileInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create 8th percentile estimator for baseline (common in calcium imaging)
-/// est = npy.StreamingPercentile(channels=4, percentile=0.08)
+/// est = zbci.StreamingPercentile(channels=4, percentile=0.08)
 ///
 /// # Feed streaming data
 /// for _ in range(1000):

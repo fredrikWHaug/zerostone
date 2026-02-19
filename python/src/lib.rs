@@ -50,11 +50,11 @@ use wavelet::Cwt;
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create a lowpass filter at 30 Hz (1000 Hz sample rate)
-/// lpf = npy.IirFilter.butterworth_lowpass(1000.0, 30.0)
+/// lpf = zbci.IirFilter.butterworth_lowpass(1000.0, 30.0)
 ///
 /// # Process a signal
 /// signal = np.random.randn(1000).astype(np.float32)
@@ -202,12 +202,12 @@ impl IirFilter {
     }
 }
 
-/// npyci: High-performance signal processing for BCI research.
+/// zpybci: High-performance signal processing for BCI research.
 ///
 /// This module provides zero-allocation, real-time signal processing primitives
 /// implemented in Rust for maximum performance.
 #[pymodule]
-fn npyci(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Filters
     m.add_class::<IirFilter>()?;
     m.add_class::<FirFilter>()?;

@@ -22,10 +22,10 @@ enum TangentSpaceInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
-/// ts = npy.TangentSpace(channels=4)
+/// ts = zbci.TangentSpace(channels=4)
 /// ref_matrix = np.eye(4, dtype=np.float64)
 /// ts.fit(ref_matrix)
 /// vec = ts.transform(ref_matrix)  # shape (10,) for 4 channels

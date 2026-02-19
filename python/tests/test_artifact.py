@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-import npyci as npy
+import zpybci as zbci
 
 
 class TestArtifactDetector:
@@ -10,7 +10,7 @@ class TestArtifactDetector:
 
     def test_create_detector(self):
         """Test creating an artifact detector."""
-        det = npy.ArtifactDetector(channels=8, amplitude_threshold=100.0, gradient_threshold=50.0)
+        det = zbci.ArtifactDetector(channels=8, amplitude_threshold=100.0, gradient_threshold=50.0)
         assert det.channels == 8
         assert det.amplitude_threshold == 100.0
         assert det.gradient_threshold == 50.0
@@ -18,11 +18,11 @@ class TestArtifactDetector:
     def test_invalid_channels(self):
         """Test that zero channels raises error."""
         with pytest.raises(ValueError):
-            npy.ArtifactDetector(channels=0, amplitude_threshold=100.0, gradient_threshold=50.0)
+            zbci.ArtifactDetector(channels=0, amplitude_threshold=100.0, gradient_threshold=50.0)
 
     def test_amplitude_only(self):
         """Test amplitude-only detection."""
-        det = npy.ArtifactDetector.amplitude_only(channels=4, threshold=100.0)
+        det = zbci.ArtifactDetector.amplitude_only(channels=4, threshold=100.0)
 
         # Below threshold
         sample = np.array([50.0, 50.0, 50.0, 50.0], dtype=np.float32)
@@ -39,7 +39,7 @@ class TestArtifactDetector:
 
     def test_gradient_only(self):
         """Test gradient-only detection."""
-        det = npy.ArtifactDetector.gradient_only(channels=2, threshold=50.0)
+        det = zbci.ArtifactDetector.gradient_only(channels=2, threshold=50.0)
 
         # First sample - no gradient check
         sample1 = np.array([100.0, 100.0], dtype=np.float32)
@@ -54,7 +54,7 @@ class TestArtifactDetector:
 
     def test_combined_detection(self):
         """Test combined amplitude and gradient detection."""
-        det = npy.ArtifactDetector(channels=2, amplitude_threshold=100.0, gradient_threshold=50.0)
+        det = zbci.ArtifactDetector(channels=2, amplitude_threshold=100.0, gradient_threshold=50.0)
 
         # Initialize with low values
         det.detect(np.array([10.0, 10.0], dtype=np.float32))
@@ -67,7 +67,7 @@ class TestArtifactDetector:
 
     def test_detect_any(self):
         """Test detect_any method."""
-        det = npy.ArtifactDetector(channels=4, amplitude_threshold=100.0, gradient_threshold=50.0)
+        det = zbci.ArtifactDetector(channels=4, amplitude_threshold=100.0, gradient_threshold=50.0)
 
         # No artifacts
         sample = np.array([50.0, 50.0, 50.0, 50.0], dtype=np.float32)
@@ -79,7 +79,7 @@ class TestArtifactDetector:
 
     def test_detect_count(self):
         """Test detect_count method."""
-        det = npy.ArtifactDetector(channels=4, amplitude_threshold=100.0, gradient_threshold=50.0)
+        det = zbci.ArtifactDetector(channels=4, amplitude_threshold=100.0, gradient_threshold=50.0)
 
         sample = np.array([50.0, 50.0, 50.0, 50.0], dtype=np.float32)
         assert det.detect_count(sample) == 0
@@ -89,7 +89,7 @@ class TestArtifactDetector:
 
     def test_reset(self):
         """Test resetting detector state."""
-        det = npy.ArtifactDetector.gradient_only(channels=2, threshold=50.0)
+        det = zbci.ArtifactDetector.gradient_only(channels=2, threshold=50.0)
 
         # Initialize and create gradient state
         det.detect(np.array([50.0, 50.0], dtype=np.float32))
@@ -105,7 +105,7 @@ class TestArtifactDetector:
     def test_optimized_channel_counts(self):
         """Test all optimized channel counts."""
         for channels in [1, 4, 8, 16, 32, 64]:
-            det = npy.ArtifactDetector(channels=channels, amplitude_threshold=100.0, gradient_threshold=50.0)
+            det = zbci.ArtifactDetector(channels=channels, amplitude_threshold=100.0, gradient_threshold=50.0)
             sample = np.zeros(channels, dtype=np.float32)
             sample[0] = 150.0
             artifacts = det.detect(sample)
@@ -113,7 +113,7 @@ class TestArtifactDetector:
 
     def test_dynamic_channel_count(self):
         """Test non-standard channel count uses dynamic implementation."""
-        det = npy.ArtifactDetector(channels=7, amplitude_threshold=100.0, gradient_threshold=50.0)
+        det = zbci.ArtifactDetector(channels=7, amplitude_threshold=100.0, gradient_threshold=50.0)
         sample = np.array([150.0] + [50.0] * 6, dtype=np.float32)
         artifacts = det.detect(sample)
         assert artifacts[0]
@@ -121,7 +121,7 @@ class TestArtifactDetector:
 
     def test_repr(self):
         """Test string representation."""
-        det = npy.ArtifactDetector(channels=8, amplitude_threshold=100.0, gradient_threshold=50.0)
+        det = zbci.ArtifactDetector(channels=8, amplitude_threshold=100.0, gradient_threshold=50.0)
         assert "100" in repr(det)
         assert "50" in repr(det)
 
@@ -131,7 +131,7 @@ class TestZscoreArtifact:
 
     def test_create_detector(self):
         """Test creating a z-score artifact detector."""
-        det = npy.ZscoreArtifact(channels=8, threshold=3.0, min_samples=100)
+        det = zbci.ZscoreArtifact(channels=8, threshold=3.0, min_samples=100)
         assert det.channels == 8
         assert det.threshold == 3.0
         assert det.is_calibrating
@@ -139,11 +139,11 @@ class TestZscoreArtifact:
     def test_invalid_channels(self):
         """Test that unsupported channel count raises error."""
         with pytest.raises(ValueError):
-            npy.ZscoreArtifact(channels=3, threshold=3.0, min_samples=100)
+            zbci.ZscoreArtifact(channels=3, threshold=3.0, min_samples=100)
 
     def test_calibration_period(self):
         """Test calibration period behavior."""
-        det = npy.ZscoreArtifact(channels=4, threshold=3.0, min_samples=100)
+        det = zbci.ZscoreArtifact(channels=4, threshold=3.0, min_samples=100)
 
         assert det.is_calibrating
 
@@ -160,7 +160,7 @@ class TestZscoreArtifact:
 
     def test_detection_during_calibration(self):
         """Test that detection returns all False during calibration."""
-        det = npy.ZscoreArtifact(channels=4, threshold=3.0, min_samples=100)
+        det = zbci.ZscoreArtifact(channels=4, threshold=3.0, min_samples=100)
 
         # Even with extreme values, should return False during calibration
         sample = np.array([1000.0] * 4, dtype=np.float32)
@@ -169,7 +169,7 @@ class TestZscoreArtifact:
 
     def test_detection_after_calibration(self):
         """Test artifact detection after calibration."""
-        det = npy.ZscoreArtifact(channels=4, threshold=3.0, min_samples=50)
+        det = zbci.ZscoreArtifact(channels=4, threshold=3.0, min_samples=50)
 
         # Calibrate with alternating values (mean ~0, std ~1)
         for i in range(50):
@@ -187,7 +187,7 @@ class TestZscoreArtifact:
 
     def test_update_and_detect(self):
         """Test combined update and detect."""
-        det = npy.ZscoreArtifact(channels=4, threshold=3.0, min_samples=50)
+        det = zbci.ZscoreArtifact(channels=4, threshold=3.0, min_samples=50)
 
         # First 50 samples: calibrating
         for i in range(50):
@@ -201,7 +201,7 @@ class TestZscoreArtifact:
 
     def test_zscore_computation(self):
         """Test z-score computation."""
-        det = npy.ZscoreArtifact(channels=1, threshold=3.0, min_samples=50)
+        det = zbci.ZscoreArtifact(channels=1, threshold=3.0, min_samples=50)
 
         # During calibration
         assert det.zscore(np.array([1.0], dtype=np.float32)) is None
@@ -218,7 +218,7 @@ class TestZscoreArtifact:
 
     def test_freeze_unfreeze(self):
         """Test freezing and unfreezing statistics."""
-        det = npy.ZscoreArtifact(channels=4, threshold=3.0, min_samples=50)
+        det = zbci.ZscoreArtifact(channels=4, threshold=3.0, min_samples=50)
 
         # Calibrate
         for i in range(50):
@@ -244,7 +244,7 @@ class TestZscoreArtifact:
 
     def test_reset(self):
         """Test resetting detector state."""
-        det = npy.ZscoreArtifact(channels=4, threshold=3.0, min_samples=50)
+        det = zbci.ZscoreArtifact(channels=4, threshold=3.0, min_samples=50)
 
         # Calibrate and freeze
         for i in range(50):
@@ -263,7 +263,7 @@ class TestZscoreArtifact:
 
     def test_mean_and_std(self):
         """Test mean and std_dev methods."""
-        det = npy.ZscoreArtifact(channels=4, threshold=3.0, min_samples=50)
+        det = zbci.ZscoreArtifact(channels=4, threshold=3.0, min_samples=50)
 
         # Feed constant values
         for _ in range(50):
@@ -281,7 +281,7 @@ class TestZscoreArtifact:
     def test_supported_channel_counts(self):
         """Test all supported channel counts."""
         for channels in [1, 4, 8, 16, 32, 64]:
-            det = npy.ZscoreArtifact(channels=channels, threshold=3.0, min_samples=10)
+            det = zbci.ZscoreArtifact(channels=channels, threshold=3.0, min_samples=10)
 
             for _ in range(10):
                 det.update(np.random.randn(channels).astype(np.float32))
@@ -293,7 +293,7 @@ class TestZscoreArtifact:
 
     def test_repr(self):
         """Test string representation."""
-        det = npy.ZscoreArtifact(channels=8, threshold=3.0, min_samples=100)
+        det = zbci.ZscoreArtifact(channels=8, threshold=3.0, min_samples=100)
         assert "8" in repr(det)
         assert "3" in repr(det)  # May be "3" or "3.0" depending on format
 
@@ -303,8 +303,8 @@ class TestArtifactIntegration:
 
     def test_combined_detection_pipeline(self):
         """Test using both detectors in a pipeline."""
-        amp_det = npy.ArtifactDetector(channels=8, amplitude_threshold=100.0, gradient_threshold=50.0)
-        zscore_det = npy.ZscoreArtifact(channels=8, threshold=3.0, min_samples=50)
+        amp_det = zbci.ArtifactDetector(channels=8, amplitude_threshold=100.0, gradient_threshold=50.0)
+        zscore_det = zbci.ZscoreArtifact(channels=8, threshold=3.0, min_samples=50)
 
         # Calibration phase
         for i in range(50):

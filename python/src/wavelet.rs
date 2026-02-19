@@ -50,11 +50,11 @@ enum CwtInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create CWT for motor imagery analysis (8-30 Hz)
-/// cwt = npy.Cwt(
+/// cwt = zbci.Cwt(
 ///     size=256,
 ///     num_scales=8,
 ///     sample_rate=250.0,

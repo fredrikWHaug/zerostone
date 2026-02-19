@@ -1,5 +1,5 @@
 """
-Validation tests comparing zerostone (npyci) against scipy.signal.
+Validation tests comparing zerostone (zpybci) against scipy.signal.
 
 These tests verify that zerostone's signal processing primitives produce
 correct results. Key considerations:
@@ -27,12 +27,12 @@ class TestIirLowpassValidation:
 
     def test_lowpass_dc_passthrough(self):
         """Verify DC signal passes through lowpass filter."""
-        import npyci as npy
+        import zpybci as zbci
 
         sample_rate = 1000.0
         cutoff = 40.0
 
-        zs_filter = npy.IirFilter.butterworth_lowpass(sample_rate, cutoff)
+        zs_filter = zbci.IirFilter.butterworth_lowpass(sample_rate, cutoff)
 
         # DC signal
         dc_signal = np.ones(1000, dtype=np.float32)
@@ -43,13 +43,13 @@ class TestIirLowpassValidation:
 
     def test_lowpass_passband_preserves_signal(self):
         """Verify passband frequencies are preserved."""
-        import npyci as npy
+        import zpybci as zbci
 
         sample_rate = 1000.0
         cutoff = 100.0
         test_freq = 20.0  # Well within passband
 
-        zs_filter = npy.IirFilter.butterworth_lowpass(sample_rate, cutoff)
+        zs_filter = zbci.IirFilter.butterworth_lowpass(sample_rate, cutoff)
 
         # Create test signal
         t = np.arange(0, 2, 1/sample_rate, dtype=np.float32)
@@ -67,14 +67,14 @@ class TestIirLowpassValidation:
 
     def test_lowpass_attenuation_stopband(self):
         """Verify stopband attenuation matches scipy."""
-        import npyci as npy
+        import zpybci as zbci
 
         sample_rate = 1000.0
         cutoff = 50.0
         stopband_freq = 200.0  # Well into stopband
 
         # Create filters
-        zs_filter = npy.IirFilter.butterworth_lowpass(sample_rate, cutoff)
+        zs_filter = zbci.IirFilter.butterworth_lowpass(sample_rate, cutoff)
         sos = signal.butter(4, cutoff, btype='low', fs=sample_rate, output='sos')
 
         # Create test signal in stopband
@@ -105,13 +105,13 @@ class TestIirHighpassValidation:
 
     def test_highpass_dc_rejection(self):
         """Verify both filters reject DC equally."""
-        import npyci as npy
+        import zpybci as zbci
 
         sample_rate = 1000.0
         cutoff = 10.0
 
         # Create filters
-        zs_filter = npy.IirFilter.butterworth_highpass(sample_rate, cutoff)
+        zs_filter = zbci.IirFilter.butterworth_highpass(sample_rate, cutoff)
         sos = signal.butter(4, cutoff, btype='high', fs=sample_rate, output='sos')
 
         # DC signal
@@ -127,14 +127,14 @@ class TestIirHighpassValidation:
 
     def test_highpass_passband(self):
         """Verify passband signal passes through both filters."""
-        import npyci as npy
+        import zpybci as zbci
 
         sample_rate = 1000.0
         cutoff = 10.0
         passband_freq = 100.0  # Well into passband
 
         # Create filters
-        zs_filter = npy.IirFilter.butterworth_highpass(sample_rate, cutoff)
+        zs_filter = zbci.IirFilter.butterworth_highpass(sample_rate, cutoff)
         sos = signal.butter(4, cutoff, btype='high', fs=sample_rate, output='sos')
 
         # Create test signal
@@ -160,7 +160,7 @@ class TestIirBandpassValidation:
 
     def test_bandpass_center_frequency(self):
         """Verify center frequency passes through."""
-        import npyci as npy
+        import zpybci as zbci
 
         sample_rate = 1000.0
         low_cutoff = 8.0
@@ -168,7 +168,7 @@ class TestIirBandpassValidation:
         center_freq = np.sqrt(low_cutoff * high_cutoff)  # ~9.8 Hz
 
         # Create zerostone filter
-        zs_filter = npy.IirFilter.butterworth_bandpass(sample_rate, low_cutoff, high_cutoff)
+        zs_filter = zbci.IirFilter.butterworth_bandpass(sample_rate, low_cutoff, high_cutoff)
 
         # Create test signal at center frequency
         t = np.arange(0, 3, 1/sample_rate, dtype=np.float32)
@@ -186,14 +186,14 @@ class TestIirBandpassValidation:
 
     def test_bandpass_stopband_rejection(self):
         """Verify out-of-band frequencies are rejected."""
-        import npyci as npy
+        import zpybci as zbci
 
         sample_rate = 1000.0
         low_cutoff = 20.0
         high_cutoff = 40.0
 
         # Create filters
-        zs_filter = npy.IirFilter.butterworth_bandpass(sample_rate, low_cutoff, high_cutoff)
+        zs_filter = zbci.IirFilter.butterworth_bandpass(sample_rate, low_cutoff, high_cutoff)
         sos = signal.butter(4, [low_cutoff, high_cutoff], btype='band', fs=sample_rate, output='sos')
 
         # Test signal well outside passband (5 Hz)
@@ -219,12 +219,12 @@ class TestFirFilterValidation:
 
     def test_moving_average(self):
         """Compare moving average filter outputs."""
-        import npyci as npy
+        import zpybci as zbci
 
         window_size = 5
 
         # Create zerostone moving average
-        zs_filter = npy.FirFilter.moving_average(window_size)
+        zs_filter = zbci.FirFilter.moving_average(window_size)
 
         # Create scipy equivalent (equal-weight FIR)
         scipy_coeffs = np.ones(window_size) / window_size
@@ -242,13 +242,13 @@ class TestFirFilterValidation:
 
     def test_custom_fir_taps(self):
         """Compare custom FIR coefficients."""
-        import npyci as npy
+        import zpybci as zbci
 
         # Custom FIR coefficients (simple lowpass-ish)
         taps = np.array([0.1, 0.15, 0.25, 0.25, 0.15, 0.1], dtype=np.float32)
 
         # Create filters
-        zs_filter = npy.FirFilter(taps=taps.tolist())
+        zs_filter = zbci.FirFilter(taps=taps.tolist())
 
         # Test signal
         test_signal = np.random.randn(1000).astype(np.float32)
@@ -263,11 +263,11 @@ class TestFirFilterValidation:
 
     def test_fir_impulse_response(self):
         """Verify FIR impulse response matches coefficients."""
-        import npyci as npy
+        import zpybci as zbci
 
         taps = np.array([0.5, 0.3, 0.2], dtype=np.float32)
 
-        zs_filter = npy.FirFilter(taps=taps.tolist())
+        zs_filter = zbci.FirFilter(taps=taps.tolist())
 
         # Impulse
         impulse = np.zeros(10, dtype=np.float32)
@@ -285,13 +285,13 @@ class TestAcCouplerValidation:
 
     def test_ac_coupler_dc_removal(self):
         """Verify DC removal."""
-        import npyci as npy
+        import zpybci as zbci
 
         sample_rate = 1000.0
         cutoff = 0.5  # Very low cutoff for DC removal
 
         # Create zerostone AC coupler
-        ac = npy.AcCoupler(sample_rate, cutoff)
+        ac = zbci.AcCoupler(sample_rate, cutoff)
 
         # Create scipy single-pole high-pass
         # AC coupler is typically a simple RC high-pass
@@ -324,12 +324,12 @@ class TestMedianFilterValidation:
 
     def test_median_spike_removal(self):
         """Compare spike removal capability."""
-        import npyci as npy
+        import zpybci as zbci
 
         window_size = 5
 
         # Create filters
-        zs_filter = npy.MedianFilter(window_size)
+        zs_filter = zbci.MedianFilter(window_size)
 
         # Signal with spike
         test_signal = np.ones(100, dtype=np.float32)
@@ -350,11 +350,11 @@ class TestMedianFilterValidation:
 
     def test_median_preserves_edges(self):
         """Verify edge preservation."""
-        import npyci as npy
+        import zpybci as zbci
 
         window_size = 3
 
-        zs_filter = npy.MedianFilter(window_size)
+        zs_filter = zbci.MedianFilter(window_size)
 
         # Step signal
         test_signal = np.zeros(100, dtype=np.float32)
@@ -382,12 +382,12 @@ class TestFrequencyResponse:
 
     def test_lowpass_frequency_response_shape(self):
         """Verify lowpass effectively separates passband from stopband."""
-        import npyci as npy
+        import zpybci as zbci
 
         sample_rate = 1000.0
         cutoff = 100.0
 
-        zs_filter = npy.IirFilter.butterworth_lowpass(sample_rate, cutoff)
+        zs_filter = zbci.IirFilter.butterworth_lowpass(sample_rate, cutoff)
 
         # Measure response at several frequencies
         test_freqs = [10, 50, 150, 200, 300]  # Avoid exact cutoff due to resonance
@@ -425,12 +425,12 @@ class TestFrequencyResponse:
 
     def test_resonance_documented(self):
         """Document the resonance behavior near cutoff frequency."""
-        import npyci as npy
+        import zpybci as zbci
 
         sample_rate = 1000.0
         cutoff = 100.0
 
-        zs_filter = npy.IirFilter.butterworth_lowpass(sample_rate, cutoff)
+        zs_filter = zbci.IirFilter.butterworth_lowpass(sample_rate, cutoff)
 
         # Measure response at cutoff
         zs_filter.reset()
@@ -458,13 +458,13 @@ class TestNumericalPrecision:
 
     def test_f32_precision_sufficient(self):
         """Verify f32 precision is sufficient for typical BCI signals."""
-        import npyci as npy
+        import zpybci as zbci
 
         sample_rate = 1000.0
         cutoff = 40.0
 
         # Create filter
-        zs_filter = npy.IirFilter.butterworth_lowpass(sample_rate, cutoff)
+        zs_filter = zbci.IirFilter.butterworth_lowpass(sample_rate, cutoff)
 
         # Typical EEG amplitude range: ~10-100 microvolts
         # Simulate with normalized range
@@ -483,12 +483,12 @@ class TestNumericalPrecision:
 
     def test_long_signal_stability(self):
         """Verify filter is stable for long signals."""
-        import npyci as npy
+        import zpybci as zbci
 
         sample_rate = 1000.0
         cutoff = 40.0
 
-        zs_filter = npy.IirFilter.butterworth_lowpass(sample_rate, cutoff)
+        zs_filter = zbci.IirFilter.butterworth_lowpass(sample_rate, cutoff)
 
         # 10 minutes of data at 1 kHz
         duration_seconds = 600

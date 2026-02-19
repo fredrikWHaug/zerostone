@@ -83,11 +83,11 @@ impl NotchFilterInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # 8-channel filter for 60 Hz US powerline at 250 Hz sample rate
-/// f = npy.NotchFilter.powerline_60hz(250.0, channels=8)
+/// f = zbci.NotchFilter.powerline_60hz(250.0, channels=8)
 ///
 /// data = np.random.randn(500, 8).astype(np.float32)
 /// filtered = f.process(data)

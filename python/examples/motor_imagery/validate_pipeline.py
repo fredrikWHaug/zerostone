@@ -1,4 +1,4 @@
-"""Validate npyci pipeline on real Physionet EEG data.
+"""Validate zpybci pipeline on real Physionet EEG data.
 
 Streams EEGMMIDB for all 109 subjects, runs each trial through:
   bandpass (8-30 Hz) -> notch (60 Hz) -> CAR
@@ -19,7 +19,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-import npyci as npy
+import zpybci as zbci
 from load_data import stream_subject, CHANNELS, SAMPLES_PER_TRIAL
 
 FS = 160.0
@@ -33,10 +33,10 @@ PLOT_CHANNEL = 0
 
 def build_pipeline():
     bandpass_filters = [
-        npy.IirFilter.butterworth_bandpass(FS, 8.0, 30.0) for _ in range(CHANNELS)
+        zbci.IirFilter.butterworth_bandpass(FS, 8.0, 30.0) for _ in range(CHANNELS)
     ]
-    notch = npy.NotchFilter.powerline_60hz(FS, channels=CHANNELS)
-    car = npy.CAR(channels=CHANNELS)
+    notch = zbci.NotchFilter.powerline_60hz(FS, channels=CHANNELS)
+    car = zbci.CAR(channels=CHANNELS)
     return bandpass_filters, notch, car
 
 

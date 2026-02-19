@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-import npyci as npy
+import zpybci as zbci
 
 
 class TestHilbertTransform:
@@ -11,24 +11,24 @@ class TestHilbertTransform:
     def test_create_hilbert(self):
         """Test creating a Hilbert transform."""
         for size in [64, 128, 256, 512, 1024, 2048]:
-            h = npy.HilbertTransform(size=size)
+            h = zbci.HilbertTransform(size=size)
             assert h.size == size
 
     def test_invalid_size(self):
         """Test that invalid size raises error."""
         with pytest.raises(ValueError):
-            npy.HilbertTransform(size=100)  # Not a supported size
+            zbci.HilbertTransform(size=100)  # Not a supported size
 
     def test_transform_shape(self):
         """Test transform output shape."""
-        h = npy.HilbertTransform(size=128)
+        h = zbci.HilbertTransform(size=128)
         signal = np.random.randn(128).astype(np.float32)
         result = h.transform(signal)
         assert result.shape == (128,)
 
     def test_instantaneous_amplitude_shape(self):
         """Test amplitude output shape."""
-        h = npy.HilbertTransform(size=256)
+        h = zbci.HilbertTransform(size=256)
         signal = np.random.randn(256).astype(np.float32)
         amplitude = h.instantaneous_amplitude(signal)
         assert amplitude.shape == (256,)
@@ -36,7 +36,7 @@ class TestHilbertTransform:
 
     def test_instantaneous_phase_shape(self):
         """Test phase output shape."""
-        h = npy.HilbertTransform(size=256)
+        h = zbci.HilbertTransform(size=256)
         signal = np.random.randn(256).astype(np.float32)
         phase = h.instantaneous_phase(signal)
         assert phase.shape == (256,)
@@ -46,28 +46,28 @@ class TestHilbertTransform:
 
     def test_instantaneous_frequency_shape(self):
         """Test frequency output shape."""
-        h = npy.HilbertTransform(size=128)
+        h = zbci.HilbertTransform(size=128)
         signal = np.random.randn(128).astype(np.float32)
         freq = h.instantaneous_frequency(signal, sample_rate=250.0)
         assert freq.shape == (127,)  # N-1 elements
 
     def test_signal_size_mismatch(self):
         """Test that size mismatch raises error."""
-        h = npy.HilbertTransform(size=128)
+        h = zbci.HilbertTransform(size=128)
         signal = np.random.randn(64).astype(np.float32)
         with pytest.raises(ValueError, match="expected 128"):
             h.transform(signal)
 
     def test_hilbert_of_dc_is_zero(self):
         """Test that Hilbert transform of DC signal is ~zero."""
-        h = npy.HilbertTransform(size=64)
+        h = zbci.HilbertTransform(size=64)
         signal = np.ones(64, dtype=np.float32) * 5.0
         result = h.transform(signal)
         assert np.max(np.abs(result)) < 0.1
 
     def test_hilbert_cosine_gives_sine(self):
         """Test that H[cos] = sin."""
-        h = npy.HilbertTransform(size=128)
+        h = zbci.HilbertTransform(size=128)
         sample_rate = 256.0
         freq = 4.0  # Exactly periodic in window
 
@@ -81,7 +81,7 @@ class TestHilbertTransform:
 
     def test_amplitude_constant_for_pure_tone(self):
         """Test that amplitude envelope is constant for pure tone."""
-        h = npy.HilbertTransform(size=256)
+        h = zbci.HilbertTransform(size=256)
         sample_rate = 256.0
         freq = 10.0
 
@@ -94,7 +94,7 @@ class TestHilbertTransform:
 
     def test_frequency_estimation(self):
         """Test that instantaneous frequency matches signal frequency."""
-        h = npy.HilbertTransform(size=256)
+        h = zbci.HilbertTransform(size=256)
         sample_rate = 256.0
         freq = 15.0
 
@@ -108,7 +108,7 @@ class TestHilbertTransform:
 
     def test_repr(self):
         """Test string representation."""
-        h = npy.HilbertTransform(size=256)
+        h = zbci.HilbertTransform(size=256)
         assert "256" in repr(h)
 
 
@@ -117,7 +117,7 @@ class TestHilbertApplications:
 
     def test_amplitude_modulation_detection(self):
         """Test detecting amplitude modulation."""
-        h = npy.HilbertTransform(size=256)
+        h = zbci.HilbertTransform(size=256)
         sample_rate = 256.0
 
         # AM signal: carrier with amplitude modulation
@@ -136,7 +136,7 @@ class TestHilbertApplications:
 
     def test_phase_extraction(self):
         """Test phase extraction for phase-locking analysis."""
-        h = npy.HilbertTransform(size=256)
+        h = zbci.HilbertTransform(size=256)
         sample_rate = 256.0
         freq = 10.0
 
