@@ -70,7 +70,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install maturin and pytest
-        run: pip install maturin pytest numpy
+        run: pip install maturin pytest numpy scikit-learn
       - name: Clean old wheels
         run: rm -rf python/target/wheels/
       - name: Build Python wheel
