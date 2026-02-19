@@ -54,8 +54,9 @@ else
         echo "Warning: pytest not found for $PYTHON_CMD, skipping Python tests"
         echo "Install with: $PYTHON_CMD -m pip install pytest"
     else
-        # Install the wheel and run tests
+        # Install the wheel and test dependencies, then run tests
         $PYTHON_CMD -m pip install "$WHEEL" --force-reinstall --break-system-packages --quiet
+        $PYTHON_CMD -m pip install scikit-learn --break-system-packages --quiet
         $PYTHON_CMD -m pytest python/tests/ -v
         echo "Python tests passed!"
     fi
