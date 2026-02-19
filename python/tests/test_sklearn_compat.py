@@ -10,9 +10,15 @@ import os
 
 import numpy as np
 import pytest
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import cross_val_score
+
+# Skip entire module if scikit-learn is not installed.
+# sklearn is an optional dependency (not required by npyci itself).
+# Install with: pip install scikit-learn
+pytest.importorskip("sklearn")
+
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis  # noqa: E402
+from sklearn.pipeline import Pipeline                                  # noqa: E402
+from sklearn.model_selection import cross_val_score                    # noqa: E402
 
 # Resolve the module from the examples directory without installing it
 _COMPAT_DIR = os.path.join(
