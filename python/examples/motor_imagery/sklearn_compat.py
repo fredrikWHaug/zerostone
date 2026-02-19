@@ -295,7 +295,7 @@ class CovarianceEstimator(BaseEstimator, TransformerMixin):
         -------
         covariances : ndarray, shape (n_trials, n_channels, n_channels), float64
         """
-        X = np.asarray(X, dtype=np.float64)
+        X = np.ascontiguousarray(X, dtype=np.float64)
         n_trials = X.shape[0]
         covariances = np.empty((n_trials, self.channels, self.channels), dtype=np.float64)
 
