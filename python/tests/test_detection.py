@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-import npyci as npy
+import zpybci as zbci
 
 
 class TestThresholdDetector:
@@ -10,7 +10,7 @@ class TestThresholdDetector:
 
     def test_create_detector(self):
         """Test creating a threshold detector."""
-        det = npy.ThresholdDetector(4, 3.0, 100)
+        det = zbci.ThresholdDetector(4, 3.0, 100)
         assert det.channels == 4
         assert det.threshold == 3.0
         assert det.refractory == 100
@@ -18,11 +18,11 @@ class TestThresholdDetector:
     def test_invalid_params(self):
         """Test that invalid parameters raise errors."""
         with pytest.raises(ValueError):
-            npy.ThresholdDetector(0, 3.0, 100)  # channels must be >= 1
+            zbci.ThresholdDetector(0, 3.0, 100)  # channels must be >= 1
 
     def test_detect_spikes(self):
         """Test detecting threshold crossings."""
-        det = npy.ThresholdDetector(4, 3.0, 10)
+        det = zbci.ThresholdDetector(4, 3.0, 10)
 
         # Create signal with known spikes
         signal = np.zeros((100, 4), dtype=np.float32)
@@ -42,7 +42,7 @@ class TestThresholdDetector:
 
     def test_refractory_period(self):
         """Test that refractory period prevents double detection."""
-        det = npy.ThresholdDetector(1, 3.0, 20)
+        det = zbci.ThresholdDetector(1, 3.0, 20)
 
         # Create signal with two spikes close together
         signal = np.zeros((100, 1), dtype=np.float32)
@@ -59,7 +59,7 @@ class TestThresholdDetector:
 
     def test_reset(self):
         """Test resetting detector state."""
-        det = npy.ThresholdDetector(4, 3.0, 100)
+        det = zbci.ThresholdDetector(4, 3.0, 100)
 
         # Process some data
         signal = np.zeros((50, 4), dtype=np.float32)
@@ -78,7 +78,7 @@ class TestThresholdDetector:
 
     def test_no_spikes(self):
         """Test with signal below threshold."""
-        det = npy.ThresholdDetector(4, 3.0, 10)
+        det = zbci.ThresholdDetector(4, 3.0, 10)
         signal = np.random.randn(100, 4).astype(np.float32) * 0.5
 
         events = det.process(signal)
@@ -87,7 +87,7 @@ class TestThresholdDetector:
     def test_optimized_channel_counts(self):
         """Test that optimized channel counts work correctly."""
         for channels in [1, 4, 8, 16, 32, 64]:
-            det = npy.ThresholdDetector(channels, 3.0, 10)
+            det = zbci.ThresholdDetector(channels, 3.0, 10)
             signal = np.zeros((50, channels), dtype=np.float32)
             signal[25, 0] = 5.0
             events = det.process(signal)
@@ -99,18 +99,18 @@ class TestAdaptiveThresholdDetector:
 
     def test_create_detector(self):
         """Test creating an adaptive threshold detector."""
-        det = npy.AdaptiveThresholdDetector(4, 4.0, 100, 500)
+        det = zbci.AdaptiveThresholdDetector(4, 4.0, 100, 500)
         assert det.channels == 4
         assert det.multiplier == 4.0
 
     def test_invalid_params(self):
         """Test that invalid parameters raise errors."""
         with pytest.raises(ValueError):
-            npy.AdaptiveThresholdDetector(0, 4.0, 100, 500)  # channels must be >= 1
+            zbci.AdaptiveThresholdDetector(0, 4.0, 100, 500)  # channels must be >= 1
 
     def test_warmup_period(self):
         """Test that warmup period is required before detection."""
-        det = npy.AdaptiveThresholdDetector(1, 4.0, 10, 100)
+        det = zbci.AdaptiveThresholdDetector(1, 4.0, 10, 100)
 
         # Signal during warmup
         warmup_signal = np.random.randn(50, 1).astype(np.float32)
@@ -133,7 +133,7 @@ class TestAdaptiveThresholdDetector:
 
     def test_thresholds_property(self):
         """Test accessing computed thresholds."""
-        det = npy.AdaptiveThresholdDetector(4, 4.0, 10, 100)
+        det = zbci.AdaptiveThresholdDetector(4, 4.0, 10, 100)
 
         # Initially thresholds are zeros
         thresholds = det.thresholds
@@ -149,7 +149,7 @@ class TestAdaptiveThresholdDetector:
 
     def test_freeze_unfreeze(self):
         """Test freezing and unfreezing threshold adaptation."""
-        det = npy.AdaptiveThresholdDetector(4, 4.0, 10, 100)
+        det = zbci.AdaptiveThresholdDetector(4, 4.0, 10, 100)
 
         # Warmup and compute thresholds
         signal = np.random.randn(200, 4).astype(np.float32)
@@ -177,7 +177,7 @@ class TestAdaptiveThresholdDetector:
 
     def test_reset(self):
         """Test resetting detector state."""
-        det = npy.AdaptiveThresholdDetector(4, 4.0, 10, 100)
+        det = zbci.AdaptiveThresholdDetector(4, 4.0, 10, 100)
 
         # Process data
         signal = np.random.randn(200, 4).astype(np.float32)
@@ -196,24 +196,24 @@ class TestZeroCrossingDetector:
 
     def test_create_detector(self):
         """Test creating a zero crossing detector."""
-        det = npy.ZeroCrossingDetector(4, 0.1)
+        det = zbci.ZeroCrossingDetector(4, 0.1)
         assert det.channels == 4
         assert abs(det.threshold - 0.1) < 1e-6
 
     def test_create_default_threshold(self):
         """Test creating with default threshold."""
-        det = npy.ZeroCrossingDetector(4)
+        det = zbci.ZeroCrossingDetector(4)
         assert det.channels == 4
         assert det.threshold == 0.0
 
     def test_invalid_params(self):
         """Test that invalid parameters raise errors."""
         with pytest.raises(ValueError):
-            npy.ZeroCrossingDetector(0, 0.1)  # channels must be >= 1
+            zbci.ZeroCrossingDetector(0, 0.1)  # channels must be >= 1
 
     def test_detect_zero_crossings(self):
         """Test detecting zero crossings."""
-        det = npy.ZeroCrossingDetector(1, 0.0)
+        det = zbci.ZeroCrossingDetector(1, 0.0)
 
         # Simple alternating signal (single channel, 2D array)
         signal = np.array([[1.0], [-1.0], [1.0], [-1.0], [1.0]], dtype=np.float32)
@@ -231,8 +231,8 @@ class TestZeroCrossingDetector:
 
     def test_threshold_effect(self):
         """Test that threshold affects detection."""
-        det_low = npy.ZeroCrossingDetector(1, 0.0)
-        det_high = npy.ZeroCrossingDetector(1, 0.5)
+        det_low = zbci.ZeroCrossingDetector(1, 0.0)
+        det_high = zbci.ZeroCrossingDetector(1, 0.5)
 
         # Signal with small oscillation around zero (2D single channel)
         signal = np.array([[0.2], [-0.2], [0.2], [-0.2], [0.2]], dtype=np.float32)
@@ -248,7 +248,7 @@ class TestZeroCrossingDetector:
 
     def test_zero_crossing_rate(self):
         """Test computing zero crossing rate."""
-        det = npy.ZeroCrossingDetector(4, 0.0)
+        det = zbci.ZeroCrossingDetector(4, 0.0)
 
         # Multi-channel signal
         channels = 4
@@ -280,5 +280,5 @@ class TestZeroCrossingDetector:
 
     def test_repr(self):
         """Test string representation."""
-        det = npy.ZeroCrossingDetector(4, 0.5)
+        det = zbci.ZeroCrossingDetector(4, 0.5)
         assert "0.5" in repr(det)

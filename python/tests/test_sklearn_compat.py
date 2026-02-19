@@ -1,4 +1,4 @@
-"""Tests for sklearn-compatible npyci wrappers.
+"""Tests for sklearn-compatible zpybci wrappers.
 
 Verifies that CSPTransformer, TangentSpaceTransformer, BandPowerTransformer,
 and CovarianceEstimator implement the sklearn interface correctly and compose
@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 # Skip entire module if scikit-learn is not installed.
-# sklearn is an optional dependency (not required by npyci itself).
+# sklearn is an optional dependency (not required by zpybci itself).
 # Install with: pip install scikit-learn
 pytest.importorskip("sklearn")
 

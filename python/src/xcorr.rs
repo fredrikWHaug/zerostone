@@ -42,14 +42,14 @@ fn parse_normalization(norm: &str) -> PyResult<ZsNormalization> {
 ///         The lag at index k is k - (M - 1), ranging from -(M-1) to N-1.
 ///
 /// Example:
-///     >>> import npyci as npy
+///     >>> import zpybci as zbci
 ///     >>> import numpy as np
 ///     >>>
 ///     >>> # Detect time delay between signals
 ///     >>> x = np.array([0, 0, 1, 2, 1, 0, 0, 0], dtype=np.float32)
 ///     >>> y = np.array([0, 0, 0, 0, 1, 2, 1, 0], dtype=np.float32)  # x delayed by 2
-///     >>> corr = npy.xcorr(x, y)
-///     >>> peak_idx, peak_val = npy.find_peak(corr)
+///     >>> corr = zbci.xcorr(x, y)
+///     >>> peak_idx, peak_val = zbci.find_peak(corr)
 ///     >>> lag = peak_idx - (len(y) - 1)  # Should be 2
 #[pyfunction]
 #[pyo3(signature = (x, y, normalization="none"))]
@@ -144,11 +144,11 @@ fn xcorr<'py>(
 ///         Auto-correlation is symmetric: output[k] == output[2*N - 2 - k]
 ///
 /// Example:
-///     >>> import npyci as npy
+///     >>> import zpybci as zbci
 ///     >>> import numpy as np
 ///     >>>
 ///     >>> signal = np.sin(np.linspace(0, 4*np.pi, 64)).astype(np.float32)
-///     >>> acorr = npy.autocorr(signal, normalization='coeff')
+///     >>> acorr = zbci.autocorr(signal, normalization='coeff')
 ///     >>> # Peak at center (lag 0) should be 1.0
 ///     >>> assert abs(acorr[len(signal) - 1] - 1.0) < 1e-6
 #[pyfunction]
@@ -228,8 +228,8 @@ fn autocorr<'py>(
 ///     tuple: (peak_index, peak_value)
 ///
 /// Example:
-///     >>> corr = npy.xcorr(x, y)
-///     >>> peak_idx, peak_val = npy.find_peak(corr)
+///     >>> corr = zbci.xcorr(x, y)
+///     >>> peak_idx, peak_val = zbci.find_peak(corr)
 ///     >>> lag = peak_idx - (len(y) - 1)  # Convert to lag
 #[pyfunction]
 fn find_peak(correlation: PyReadonlyArray1<f32>) -> PyResult<(usize, f32)> {
@@ -255,7 +255,7 @@ fn find_peak(correlation: PyReadonlyArray1<f32>) -> PyResult<(usize, f32)> {
 ///     int: Lag value at that index.
 ///
 /// Example:
-///     >>> lag = npy.index_to_lag(peak_idx, len(y))
+///     >>> lag = zbci.index_to_lag(peak_idx, len(y))
 #[pyfunction]
 fn index_to_lag(index: usize, m: usize) -> i32 {
     index as i32 - (m as i32 - 1)

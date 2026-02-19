@@ -14,9 +14,9 @@ use zerostone::OnlineStats as ZsOnlineStats;
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 ///
-/// stats = npy.OnlineStats()
+/// stats = zbci.OnlineStats()
 ///
 /// # Update with individual values
 /// for x in [1.0, 2.0, 3.0, 4.0, 5.0]:
@@ -148,10 +148,10 @@ enum OnlineCovInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
-/// cov = npy.OnlineCov(channels=4)
+/// cov = zbci.OnlineCov(channels=4)
 /// for _ in range(100):
 ///     sample = np.random.randn(4)
 ///     cov.update(sample)

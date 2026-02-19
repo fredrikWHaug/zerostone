@@ -7,39 +7,39 @@ class TestOasisDeconvolution:
     """Tests for OasisDeconvolution."""
 
     def test_import(self):
-        import npyci as npy
-        assert hasattr(npy, 'OasisDeconvolution')
+        import zpybci as zbci
+        assert hasattr(zbci, 'OasisDeconvolution')
 
     def test_create(self):
-        import npyci as npy
-        deconv = npy.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
+        import zpybci as zbci
+        deconv = zbci.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
         assert np.isclose(deconv.gamma, 0.95)
         assert np.isclose(deconv.lambda_, 0.01)
         assert deconv.channels == 1
         assert deconv.sample_count == 0
 
     def test_create_all_sizes(self):
-        import npyci as npy
+        import zpybci as zbci
         for ch in [1, 4, 8, 16, 32, 64]:
-            deconv = npy.OasisDeconvolution(channels=ch, gamma=0.95, lambda_=0.01)
+            deconv = zbci.OasisDeconvolution(channels=ch, gamma=0.95, lambda_=0.01)
             assert deconv.channels == ch
 
     def test_invalid_channels(self):
-        import npyci as npy
+        import zpybci as zbci
         with pytest.raises(ValueError):
-            npy.OasisDeconvolution(channels=3, gamma=0.95, lambda_=0.01)
+            zbci.OasisDeconvolution(channels=3, gamma=0.95, lambda_=0.01)
 
     def test_from_tau(self):
-        import npyci as npy
-        deconv = npy.OasisDeconvolution.from_tau(
+        import zpybci as zbci
+        deconv = zbci.OasisDeconvolution.from_tau(
             channels=1, sample_rate=30.0, tau=1.0, lambda_=0.01
         )
         assert deconv.channels == 1
         assert deconv.gamma > 0.0
 
     def test_update_single_channel(self):
-        import npyci as npy
-        deconv = npy.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
+        import zpybci as zbci
+        deconv = zbci.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
         fluor = np.array([1.0], dtype=np.float32)
         baseline = np.array([0.0], dtype=np.float32)
         calcium, spike = deconv.update(fluor, baseline)
@@ -50,8 +50,8 @@ class TestOasisDeconvolution:
         assert deconv.sample_count == 1
 
     def test_update_multi_channel(self):
-        import npyci as npy
-        deconv = npy.OasisDeconvolution(channels=4, gamma=0.95, lambda_=0.01)
+        import zpybci as zbci
+        deconv = zbci.OasisDeconvolution(channels=4, gamma=0.95, lambda_=0.01)
         fluor = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
         baseline = np.zeros(4, dtype=np.float32)
         calcium, spike = deconv.update(fluor, baseline)
@@ -59,8 +59,8 @@ class TestOasisDeconvolution:
         assert spike.shape == (4,)
 
     def test_update_wrong_size(self):
-        import npyci as npy
-        deconv = npy.OasisDeconvolution(channels=4, gamma=0.95, lambda_=0.01)
+        import zpybci as zbci
+        deconv = zbci.OasisDeconvolution(channels=4, gamma=0.95, lambda_=0.01)
         with pytest.raises(ValueError):
             deconv.update(
                 np.array([1.0], dtype=np.float32),
@@ -68,14 +68,14 @@ class TestOasisDeconvolution:
             )
 
     def test_set_lambda(self):
-        import npyci as npy
-        deconv = npy.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
+        import zpybci as zbci
+        deconv = zbci.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
         deconv.set_lambda(0.05)
         assert np.isclose(deconv.lambda_, 0.05)
 
     def test_reset(self):
-        import npyci as npy
-        deconv = npy.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
+        import zpybci as zbci
+        deconv = zbci.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
         fluor = np.array([1.0], dtype=np.float32)
         baseline = np.array([0.0], dtype=np.float32)
         deconv.update(fluor, baseline)
@@ -85,8 +85,8 @@ class TestOasisDeconvolution:
 
     def test_sequence(self):
         """Test processing a sequence of fluorescence data."""
-        import npyci as npy
-        deconv = npy.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
+        import zpybci as zbci
+        deconv = zbci.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
         for i in range(100):
             fluor = np.array([float(i % 10) * 0.1], dtype=np.float32)
             baseline = np.array([0.0], dtype=np.float32)
@@ -95,8 +95,8 @@ class TestOasisDeconvolution:
         assert deconv.sample_count == 100
 
     def test_repr(self):
-        import npyci as npy
-        deconv = npy.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
+        import zpybci as zbci
+        deconv = zbci.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
         r = repr(deconv)
         assert 'OasisDeconvolution' in r
         assert 'channels=1' in r

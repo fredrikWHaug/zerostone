@@ -22,7 +22,7 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.pipeline import Pipeline as SklearnPipeline
 
-import npyci as npy
+import zpybci as zbci
 
 # Resolve sibling modules (load_data, sklearn_compat) relative to this file
 sys.path.insert(0, os.path.dirname(__file__))
@@ -52,10 +52,10 @@ ABOVE_CHANCE_LABEL = "**"
 def _build_filters():
     """Create one bandpass filter per channel plus a shared notch."""
     bandpass_filters = [
-        npy.IirFilter.butterworth_bandpass(FS, 8.0, 30.0) for _ in range(CHANNELS)
+        zbci.IirFilter.butterworth_bandpass(FS, 8.0, 30.0) for _ in range(CHANNELS)
     ]
-    notch = npy.NotchFilter.powerline_60hz(FS, channels=CHANNELS)
-    car = npy.CAR(channels=CHANNELS)
+    notch = zbci.NotchFilter.powerline_60hz(FS, channels=CHANNELS)
+    car = zbci.CAR(channels=CHANNELS)
     return bandpass_filters, notch, car
 
 

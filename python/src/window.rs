@@ -33,10 +33,10 @@ fn parse_window_type(name: &str) -> PyResult<WindowType> {
 ///     np.ndarray: Windowed signal as 1D float32 array.
 ///
 /// Example:
-///     >>> import npyci as npy
+///     >>> import zpybci as zbci
 ///     >>> import numpy as np
 ///     >>> signal = np.ones(256, dtype=np.float32)
-///     >>> windowed = npy.apply_window(signal, "hann")
+///     >>> windowed = zbci.apply_window(signal, "hann")
 #[pyfunction]
 fn apply_window<'py>(
     py: Python<'py>,

@@ -36,11 +36,11 @@ enum ThresholdDetectorInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create detector for 8 channels with threshold 3.0 and 100-sample refractory
-/// det = npy.ThresholdDetector(channels=8, threshold=3.0, refractory=100)
+/// det = zbci.ThresholdDetector(channels=8, threshold=3.0, refractory=100)
 ///
 /// # Process multi-channel data
 /// data = np.random.randn(1000, 8).astype(np.float32)
@@ -232,11 +232,11 @@ enum AdaptiveThresholdDetectorInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create detector: 4×σ threshold, 100-sample refractory, 500-sample warmup
-/// det = npy.AdaptiveThresholdDetector(channels=8, multiplier=4.0, refractory=100, min_samples=500)
+/// det = zbci.AdaptiveThresholdDetector(channels=8, multiplier=4.0, refractory=100, min_samples=500)
 ///
 /// # Process data (first 500 samples are calibration)
 /// data = np.random.randn(2000, 8).astype(np.float32)
@@ -486,11 +486,11 @@ enum ZeroCrossingDetectorInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create detector for 8 channels with 0.1 noise threshold
-/// det = npy.ZeroCrossingDetector(channels=8, threshold=0.1)
+/// det = zbci.ZeroCrossingDetector(channels=8, threshold=0.1)
 ///
 /// # Detect zero crossings
 /// data = np.random.randn(1000, 8).astype(np.float32)

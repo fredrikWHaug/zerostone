@@ -13,15 +13,15 @@ use pyo3::prelude::*;
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create processors
-/// car = npy.CAR(channels=8)
-/// lap = npy.SurfaceLaplacian.linear(channels=8)
+/// car = zbci.CAR(channels=8)
+/// lap = zbci.SurfaceLaplacian.linear(channels=8)
 ///
 /// # Create pipeline
-/// pipeline = npy.Pipeline([car, lap])
+/// pipeline = zbci.Pipeline([car, lap])
 ///
 /// # Process data through all stages
 /// data = np.random.randn(1000, 8).astype(np.float32)
@@ -53,8 +53,8 @@ impl Pipeline {
     ///     ValueError: If the processor list is empty.
     ///
     /// Example:
-    ///     >>> car = npy.CAR(channels=8)
-    ///     >>> lap = npy.SurfaceLaplacian.linear(channels=8)
+    ///     >>> car = zbci.CAR(channels=8)
+    ///     >>> lap = zbci.SurfaceLaplacian.linear(channels=8)
     ///     >>> pipeline = Pipeline([car, lap])
     #[new]
     fn new(processors: Vec<PyObject>) -> PyResult<Self> {

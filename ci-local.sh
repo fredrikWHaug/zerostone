@@ -41,7 +41,7 @@ cd ..
 
 echo "Running Python tests..."
 # Detect Python version that maturin used
-WHEEL=$(ls python/target/wheels/npyci-*.whl 2>/dev/null | head -1)
+WHEEL=$(ls python/target/wheels/zpybci-*.whl 2>/dev/null | head -1)
 if [ -z "$WHEEL" ]; then
     echo "Warning: No Python wheel found, skipping Python tests"
 else
