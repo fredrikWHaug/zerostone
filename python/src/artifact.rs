@@ -37,11 +37,11 @@ enum ArtifactDetectorInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create detector for 8 channels with amplitude=100, gradient=50
-/// detector = npy.ArtifactDetector(channels=8, amplitude_threshold=100.0, gradient_threshold=50.0)
+/// detector = zbci.ArtifactDetector(channels=8, amplitude_threshold=100.0, gradient_threshold=50.0)
 ///
 /// # Process samples
 /// sample = np.array([10.0, 200.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0], dtype=np.float32)
@@ -406,11 +406,11 @@ enum ZscoreArtifactInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create detector with 3-sigma threshold, 100 sample warmup
-/// detector = npy.ZscoreArtifact(channels=8, threshold=3.0, min_samples=100)
+/// detector = zbci.ZscoreArtifact(channels=8, threshold=3.0, min_samples=100)
 ///
 /// # Calibration phase
 /// for _ in range(100):

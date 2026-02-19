@@ -70,7 +70,7 @@ jobs:
     needs: [build-wheels, build-sdist]
     environment:
       name: pypi
-      url: https://pypi.org/project/npyci/
+      url: https://pypi.org/project/zpybci/
     permissions:
       id-token: write  # Required for trusted publishing
     steps:

@@ -31,11 +31,11 @@ enum EnvelopeFollowerInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create envelope follower: 10ms attack, 100ms release at 250 Hz
-/// env = npy.EnvelopeFollower(
+/// env = zbci.EnvelopeFollower(
 ///     channels=8,
 ///     sample_rate=250.0,
 ///     attack_time=0.010,
@@ -373,11 +373,11 @@ enum WindowedRmsInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create RMS tracker: 64-sample window for 8 channels
-/// rms = npy.WindowedRms(channels=8, window_size=64)
+/// rms = zbci.WindowedRms(channels=8, window_size=64)
 ///
 /// # Process samples
 /// for _ in range(100):
@@ -711,11 +711,11 @@ enum HilbertTransformInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create Hilbert transform for 256-sample signals
-/// hilbert = npy.HilbertTransform(size=256)
+/// hilbert = zbci.HilbertTransform(size=256)
 ///
 /// # Generate a narrowband signal (should bandpass filter real data)
 /// t = np.linspace(0, 1, 256)

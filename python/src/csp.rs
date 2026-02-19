@@ -48,11 +48,11 @@ enum AdaptiveCspInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create CSP with 8 channels, extract 4 spatial filters
-/// csp = npy.AdaptiveCsp(channels=8, filters=4)
+/// csp = zbci.AdaptiveCsp(channels=8, filters=4)
 ///
 /// # Training: feed trials from each class
 /// for trial in left_hand_trials:  # shape: (samples, channels)

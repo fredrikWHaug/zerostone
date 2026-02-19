@@ -30,11 +30,11 @@ enum FftInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create FFT processor for 256-point transforms
-/// fft = npy.Fft(size=256)
+/// fft = zbci.Fft(size=256)
 ///
 /// # Compute power spectrum
 /// signal = np.random.randn(256).astype(np.float32)
@@ -214,11 +214,11 @@ enum StftInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create STFT with 256-point window, 64-sample hop
-/// stft = npy.Stft(size=256, hop_size=64)
+/// stft = zbci.Stft(size=256, hop_size=64)
 ///
 /// # Compute power spectrogram
 /// signal = np.random.randn(1024).astype(np.float32)
@@ -515,11 +515,11 @@ enum MultiBandPowerInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create band power extractor: 256-point FFT, 8 channels, 250 Hz sample rate
-/// bp = npy.MultiBandPower(fft_size=256, channels=8, sample_rate=250.0)
+/// bp = zbci.MultiBandPower(fft_size=256, channels=8, sample_rate=250.0)
 ///
 /// # Compute PSD for all channels (shape: channels x fft_size)
 /// signals = np.random.randn(8, 256).astype(np.float32)

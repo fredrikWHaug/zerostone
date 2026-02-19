@@ -34,11 +34,11 @@ enum CarInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create CAR filter for 8 channels
-/// car = npy.CAR(channels=8)
+/// car = zbci.CAR(channels=8)
 ///
 /// # Process multi-channel data (samples x channels)
 /// data = np.random.randn(1000, 8).astype(np.float32)
@@ -235,11 +235,11 @@ enum LaplacianInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create linear Laplacian for 8-channel electrode strip
-/// lap = npy.SurfaceLaplacian.linear(channels=8)
+/// lap = zbci.SurfaceLaplacian.linear(channels=8)
 ///
 /// # Process multi-channel data (samples x channels)
 /// data = np.random.randn(1000, 8).astype(np.float32)
@@ -618,20 +618,20 @@ enum RouterInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Select channels 0, 2, 4 from 8-channel input
-/// router = npy.ChannelRouter.select(in_channels=8, indices=[0, 2, 4])
+/// router = zbci.ChannelRouter.select(in_channels=8, indices=[0, 2, 4])
 /// data = np.random.randn(100, 8).astype(np.float32)
 /// selected = router.process(data)  # Shape: (100, 3)
 ///
 /// # Permute channel order
-/// router = npy.ChannelRouter.permute(channels=4, indices=[3, 2, 1, 0])
+/// router = zbci.ChannelRouter.permute(channels=4, indices=[3, 2, 1, 0])
 /// reversed_data = router.process(data[:, :4])  # Reverse channel order
 ///
 /// # Identity (pass-through)
-/// router = npy.ChannelRouter.identity(channels=8)
+/// router = zbci.ChannelRouter.identity(channels=8)
 /// same_data = router.process(data)  # No change
 /// ```
 #[pyclass]

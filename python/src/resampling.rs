@@ -35,11 +35,11 @@ enum DecimatorInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create decimator: 4x downsampling, 8 channels
-/// dec = npy.Decimator(factor=4, channels=8)
+/// dec = zbci.Decimator(factor=4, channels=8)
 ///
 /// # Process multi-channel data (samples x channels)
 /// data = np.random.randn(1000, 8).astype(np.float32)
@@ -232,11 +232,11 @@ enum InterpolatorInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create interpolator: 4x upsampling, 8 channels, linear interpolation
-/// interp = npy.Interpolator(factor=4, channels=8, method='linear')
+/// interp = zbci.Interpolator(factor=4, channels=8, method='linear')
 ///
 /// # Process multi-channel data (samples x channels)
 /// data = np.random.randn(100, 8).astype(np.float32)

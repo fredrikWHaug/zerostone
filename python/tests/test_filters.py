@@ -8,44 +8,44 @@ class TestFirFilter:
 
     def test_import(self):
         """Test that FirFilter can be imported."""
-        import npyci as npy
-        assert hasattr(npy, 'FirFilter')
+        import zpybci as zbci
+        assert hasattr(zbci, 'FirFilter')
 
     def test_create_with_taps(self):
         """Test creating FirFilter with custom taps."""
-        import npyci as npy
+        import zpybci as zbci
 
-        fir = npy.FirFilter(taps=[0.2, 0.2, 0.2, 0.2, 0.2])
+        fir = zbci.FirFilter(taps=[0.2, 0.2, 0.2, 0.2, 0.2])
         assert fir.num_taps == 5
 
     def test_moving_average(self):
         """Test creating a moving average filter."""
-        import npyci as npy
+        import zpybci as zbci
 
-        fir = npy.FirFilter.moving_average(5)
+        fir = zbci.FirFilter.moving_average(5)
         assert fir.num_taps == 5
 
     def test_moving_average_invalid_size(self):
         """Test that invalid sizes raise errors."""
-        import npyci as npy
+        import zpybci as zbci
 
         with pytest.raises(ValueError):
-            npy.FirFilter.moving_average(0)
+            zbci.FirFilter.moving_average(0)
         with pytest.raises(ValueError):
-            npy.FirFilter.moving_average(65)
+            zbci.FirFilter.moving_average(65)
 
     def test_empty_taps_error(self):
         """Test that empty taps raise error."""
-        import npyci as npy
+        import zpybci as zbci
 
         with pytest.raises(ValueError):
-            npy.FirFilter(taps=[])
+            zbci.FirFilter(taps=[])
 
     def test_process_output_shape(self):
         """Test that process returns correct shape."""
-        import npyci as npy
+        import zpybci as zbci
 
-        fir = npy.FirFilter.moving_average(5)
+        fir = zbci.FirFilter.moving_average(5)
         signal = np.random.randn(100).astype(np.float32)
         filtered = fir.process(signal)
 
@@ -55,9 +55,9 @@ class TestFirFilter:
 
     def test_moving_average_convergence(self):
         """Test that moving average converges to DC value."""
-        import npyci as npy
+        import zpybci as zbci
 
-        fir = npy.FirFilter.moving_average(5)
+        fir = zbci.FirFilter.moving_average(5)
         signal = np.ones(20, dtype=np.float32)
         filtered = fir.process(signal)
 
@@ -66,9 +66,9 @@ class TestFirFilter:
 
     def test_reset(self):
         """Test that reset clears filter state."""
-        import npyci as npy
+        import zpybci as zbci
 
-        fir = npy.FirFilter.moving_average(5)
+        fir = zbci.FirFilter.moving_average(5)
 
         # Process some data
         signal = np.ones(10, dtype=np.float32) * 5.0
@@ -79,25 +79,25 @@ class TestFirFilter:
         out1 = fir.process(signal)
 
         # Create fresh filter
-        fir2 = npy.FirFilter.moving_average(5)
+        fir2 = zbci.FirFilter.moving_average(5)
         out2 = fir2.process(signal)
 
         assert np.allclose(out1, out2)
 
     def test_repr(self):
         """Test string representation."""
-        import npyci as npy
+        import zpybci as zbci
 
-        fir = npy.FirFilter.moving_average(8)
+        fir = zbci.FirFilter.moving_average(8)
         assert 'FirFilter' in repr(fir)
         assert '8' in repr(fir)
 
     def test_optimized_sizes(self):
         """Test that optimized sizes (8, 16, 32, 64) work."""
-        import npyci as npy
+        import zpybci as zbci
 
         for size in [8, 16, 32, 64]:
-            fir = npy.FirFilter.moving_average(size)
+            fir = zbci.FirFilter.moving_average(size)
             signal = np.ones(100, dtype=np.float32)
             filtered = fir.process(signal)
             # Should converge to 1.0
@@ -105,10 +105,10 @@ class TestFirFilter:
 
     def test_dynamic_size(self):
         """Test non-optimized sizes use dynamic implementation."""
-        import npyci as npy
+        import zpybci as zbci
 
         # Size 10 should use dynamic implementation
-        fir = npy.FirFilter.moving_average(10)
+        fir = zbci.FirFilter.moving_average(10)
         assert fir.num_taps == 10
 
         signal = np.ones(50, dtype=np.float32)
@@ -121,42 +121,42 @@ class TestAcCoupler:
 
     def test_import(self):
         """Test that AcCoupler can be imported."""
-        import npyci as npy
-        assert hasattr(npy, 'AcCoupler')
+        import zpybci as zbci
+        assert hasattr(zbci, 'AcCoupler')
 
     def test_create(self):
         """Test creating AcCoupler."""
-        import npyci as npy
+        import zpybci as zbci
 
-        ac = npy.AcCoupler(1000.0, 0.1)
+        ac = zbci.AcCoupler(1000.0, 0.1)
         assert ac.sample_rate == 1000.0
         assert np.isclose(ac.cutoff, 0.1)
 
     def test_invalid_sample_rate(self):
         """Test that invalid sample rate raises error."""
-        import npyci as npy
+        import zpybci as zbci
 
         with pytest.raises(ValueError):
-            npy.AcCoupler(0.0, 0.1)
+            zbci.AcCoupler(0.0, 0.1)
         with pytest.raises(ValueError):
-            npy.AcCoupler(-100.0, 0.1)
+            zbci.AcCoupler(-100.0, 0.1)
 
     def test_invalid_cutoff(self):
         """Test that invalid cutoff raises error."""
-        import npyci as npy
+        import zpybci as zbci
 
         # Cutoff above Nyquist
         with pytest.raises(ValueError):
-            npy.AcCoupler(1000.0, 600.0)
+            zbci.AcCoupler(1000.0, 600.0)
         # Negative cutoff
         with pytest.raises(ValueError):
-            npy.AcCoupler(1000.0, -1.0)
+            zbci.AcCoupler(1000.0, -1.0)
 
     def test_process_output_shape(self):
         """Test that process returns correct shape."""
-        import npyci as npy
+        import zpybci as zbci
 
-        ac = npy.AcCoupler(1000.0, 0.1)
+        ac = zbci.AcCoupler(1000.0, 0.1)
         signal = np.random.randn(100).astype(np.float32)
         filtered = ac.process(signal)
 
@@ -166,9 +166,9 @@ class TestAcCoupler:
 
     def test_removes_dc(self):
         """Test that AC coupler removes DC offset."""
-        import npyci as npy
+        import zpybci as zbci
 
-        ac = npy.AcCoupler(250.0, 0.5)
+        ac = zbci.AcCoupler(250.0, 0.5)
 
         # Constant DC signal
         signal = np.ones(1000, dtype=np.float32) * 5.0
@@ -179,10 +179,10 @@ class TestAcCoupler:
 
     def test_preserves_ac(self):
         """Test that AC coupler preserves high-frequency content."""
-        import npyci as npy
+        import zpybci as zbci
 
         sample_rate = 250.0
-        ac = npy.AcCoupler(sample_rate, 0.1)
+        ac = zbci.AcCoupler(sample_rate, 0.1)
 
         # 10 Hz sine wave (well above 0.1 Hz cutoff)
         t = np.arange(0, 2, 1/sample_rate, dtype=np.float32)
@@ -195,9 +195,9 @@ class TestAcCoupler:
 
     def test_reset(self):
         """Test that reset clears filter state."""
-        import npyci as npy
+        import zpybci as zbci
 
-        ac = npy.AcCoupler(1000.0, 0.1)
+        ac = zbci.AcCoupler(1000.0, 0.1)
 
         # Process some data
         ac.process(np.ones(100, dtype=np.float32))
@@ -211,9 +211,9 @@ class TestAcCoupler:
 
     def test_repr(self):
         """Test string representation."""
-        import npyci as npy
+        import zpybci as zbci
 
-        ac = npy.AcCoupler(1000.0, 0.1)
+        ac = zbci.AcCoupler(1000.0, 0.1)
         assert 'AcCoupler' in repr(ac)
         assert '1000' in repr(ac)
 
@@ -223,30 +223,30 @@ class TestMedianFilter:
 
     def test_import(self):
         """Test that MedianFilter can be imported."""
-        import npyci as npy
-        assert hasattr(npy, 'MedianFilter')
+        import zpybci as zbci
+        assert hasattr(zbci, 'MedianFilter')
 
     def test_create(self):
         """Test creating MedianFilter."""
-        import npyci as npy
+        import zpybci as zbci
 
         for size in [3, 5, 7]:
-            mf = npy.MedianFilter(size)
+            mf = zbci.MedianFilter(size)
             assert mf.window_size == size
 
     def test_invalid_window_size(self):
         """Test that invalid window sizes raise error."""
-        import npyci as npy
+        import zpybci as zbci
 
         for size in [1, 2, 4, 6, 8, 9]:
             with pytest.raises(ValueError):
-                npy.MedianFilter(size)
+                zbci.MedianFilter(size)
 
     def test_process_output_shape(self):
         """Test that process returns correct shape."""
-        import npyci as npy
+        import zpybci as zbci
 
-        mf = npy.MedianFilter(5)
+        mf = zbci.MedianFilter(5)
         signal = np.random.randn(100).astype(np.float32)
         filtered = mf.process(signal)
 
@@ -256,9 +256,9 @@ class TestMedianFilter:
 
     def test_spike_rejection(self):
         """Test that median filter rejects spikes."""
-        import npyci as npy
+        import zpybci as zbci
 
-        mf = npy.MedianFilter(5)
+        mf = zbci.MedianFilter(5)
 
         # Prime filter with baseline
         baseline = np.ones(5, dtype=np.float32) * 10.0
@@ -273,9 +273,9 @@ class TestMedianFilter:
 
     def test_median_correctness(self):
         """Test that median is computed correctly."""
-        import npyci as npy
+        import zpybci as zbci
 
-        mf = npy.MedianFilter(5)
+        mf = zbci.MedianFilter(5)
 
         # Process 5 samples to fill window
         signal = np.array([5.0, 1.0, 3.0, 4.0, 2.0], dtype=np.float32)
@@ -288,9 +288,9 @@ class TestMedianFilter:
 
     def test_reset(self):
         """Test that reset clears filter state."""
-        import npyci as npy
+        import zpybci as zbci
 
-        mf = npy.MedianFilter(5)
+        mf = zbci.MedianFilter(5)
 
         # Process some data
         mf.process(np.array([5.0, 5.0, 5.0, 5.0, 5.0], dtype=np.float32))
@@ -305,17 +305,17 @@ class TestMedianFilter:
 
     def test_repr(self):
         """Test string representation."""
-        import npyci as npy
+        import zpybci as zbci
 
-        mf = npy.MedianFilter(5)
+        mf = zbci.MedianFilter(5)
         assert 'MedianFilter' in repr(mf)
         assert '5' in repr(mf)
 
     def test_constant_signal(self):
         """Test that constant signal passes through unchanged."""
-        import npyci as npy
+        import zpybci as zbci
 
-        mf = npy.MedianFilter(5)
+        mf = zbci.MedianFilter(5)
         signal = np.ones(20, dtype=np.float32) * 7.0
         filtered = mf.process(signal)
 
@@ -328,33 +328,33 @@ class TestLmsFilter:
 
     def test_import(self):
         """Test that LmsFilter can be imported."""
-        import npyci as npy
-        assert hasattr(npy, 'LmsFilter')
+        import zpybci as zbci
+        assert hasattr(zbci, 'LmsFilter')
 
     def test_create(self):
         """Test creating LmsFilter."""
-        import npyci as npy
+        import zpybci as zbci
 
-        lms = npy.LmsFilter(taps=32, mu=0.01)
+        lms = zbci.LmsFilter(taps=32, mu=0.01)
         assert lms.num_taps == 32
         assert np.isclose(lms.mu, 0.01)
 
     def test_invalid_params(self):
         """Test that invalid params raise errors."""
-        import npyci as npy
+        import zpybci as zbci
 
         with pytest.raises(ValueError):
-            npy.LmsFilter(taps=0, mu=0.01)
+            zbci.LmsFilter(taps=0, mu=0.01)
         with pytest.raises(ValueError):
-            npy.LmsFilter(taps=32, mu=0.0)
+            zbci.LmsFilter(taps=32, mu=0.0)
         with pytest.raises(ValueError):
-            npy.LmsFilter(taps=32, mu=-0.01)
+            zbci.LmsFilter(taps=32, mu=-0.01)
 
     def test_process_output_shape(self):
         """Test that process returns correct shapes."""
-        import npyci as npy
+        import zpybci as zbci
 
-        lms = npy.LmsFilter(taps=32, mu=0.01)
+        lms = zbci.LmsFilter(taps=32, mu=0.01)
         reference = np.random.randn(100).astype(np.float32)
         desired = np.random.randn(100).astype(np.float32)
 
@@ -369,9 +369,9 @@ class TestLmsFilter:
 
     def test_adaptation(self):
         """Test that LMS filter adapts to minimize error."""
-        import npyci as npy
+        import zpybci as zbci
 
-        lms = npy.LmsFilter(taps=16, mu=0.05)
+        lms = zbci.LmsFilter(taps=16, mu=0.05)
 
         # Input and desired (scaled input)
         reference = np.sin(np.arange(500) * 0.1).astype(np.float32)
@@ -386,9 +386,9 @@ class TestLmsFilter:
 
     def test_weights_accessible(self):
         """Test that weights are accessible."""
-        import npyci as npy
+        import zpybci as zbci
 
-        lms = npy.LmsFilter(taps=16, mu=0.01)
+        lms = zbci.LmsFilter(taps=16, mu=0.01)
         weights = lms.weights
 
         assert isinstance(weights, np.ndarray)
@@ -398,9 +398,9 @@ class TestLmsFilter:
 
     def test_reset(self):
         """Test that reset clears state."""
-        import npyci as npy
+        import zpybci as zbci
 
-        lms = npy.LmsFilter(taps=16, mu=0.01)
+        lms = zbci.LmsFilter(taps=16, mu=0.01)
 
         # Process some data
         reference = np.random.randn(100).astype(np.float32)
@@ -418,10 +418,10 @@ class TestLmsFilter:
 
     def test_optimized_sizes(self):
         """Test that optimized sizes work."""
-        import npyci as npy
+        import zpybci as zbci
 
         for taps in [8, 16, 32, 64]:
-            lms = npy.LmsFilter(taps=taps, mu=0.01)
+            lms = zbci.LmsFilter(taps=taps, mu=0.01)
             assert lms.num_taps == taps
 
             reference = np.random.randn(50).astype(np.float32)
@@ -431,9 +431,9 @@ class TestLmsFilter:
 
     def test_dynamic_size(self):
         """Test non-optimized sizes use dynamic implementation."""
-        import npyci as npy
+        import zpybci as zbci
 
-        lms = npy.LmsFilter(taps=10, mu=0.01)
+        lms = zbci.LmsFilter(taps=10, mu=0.01)
         assert lms.num_taps == 10
 
         reference = np.random.randn(50).astype(np.float32)
@@ -443,9 +443,9 @@ class TestLmsFilter:
 
     def test_repr(self):
         """Test string representation."""
-        import npyci as npy
+        import zpybci as zbci
 
-        lms = npy.LmsFilter(taps=32, mu=0.01)
+        lms = zbci.LmsFilter(taps=32, mu=0.01)
         assert 'LmsFilter' in repr(lms)
         assert '32' in repr(lms)
 
@@ -455,34 +455,34 @@ class TestNlmsFilter:
 
     def test_import(self):
         """Test that NlmsFilter can be imported."""
-        import npyci as npy
-        assert hasattr(npy, 'NlmsFilter')
+        import zpybci as zbci
+        assert hasattr(zbci, 'NlmsFilter')
 
     def test_create(self):
         """Test creating NlmsFilter."""
-        import npyci as npy
+        import zpybci as zbci
 
-        nlms = npy.NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
+        nlms = zbci.NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
         assert nlms.num_taps == 32
         assert np.isclose(nlms.mu, 0.5)
         assert np.isclose(nlms.epsilon, 0.01)
 
     def test_invalid_params(self):
         """Test that invalid params raise errors."""
-        import npyci as npy
+        import zpybci as zbci
 
         with pytest.raises(ValueError):
-            npy.NlmsFilter(taps=0, mu=0.5, epsilon=0.01)
+            zbci.NlmsFilter(taps=0, mu=0.5, epsilon=0.01)
         with pytest.raises(ValueError):
-            npy.NlmsFilter(taps=32, mu=0.0, epsilon=0.01)
+            zbci.NlmsFilter(taps=32, mu=0.0, epsilon=0.01)
         with pytest.raises(ValueError):
-            npy.NlmsFilter(taps=32, mu=0.5, epsilon=0.0)
+            zbci.NlmsFilter(taps=32, mu=0.5, epsilon=0.0)
 
     def test_process_output_shape(self):
         """Test that process returns correct shapes."""
-        import npyci as npy
+        import zpybci as zbci
 
-        nlms = npy.NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
+        nlms = zbci.NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
         reference = np.random.randn(100).astype(np.float32)
         desired = np.random.randn(100).astype(np.float32)
 
@@ -495,10 +495,10 @@ class TestNlmsFilter:
 
     def test_faster_convergence_than_lms(self):
         """Test that NLMS converges faster than LMS with varying amplitude."""
-        import npyci as npy
+        import zpybci as zbci
 
-        lms = npy.LmsFilter(taps=16, mu=0.01)
-        nlms = npy.NlmsFilter(taps=16, mu=0.5, epsilon=0.01)
+        lms = zbci.LmsFilter(taps=16, mu=0.01)
+        nlms = zbci.NlmsFilter(taps=16, mu=0.5, epsilon=0.01)
 
         # Varying amplitude signal
         t = np.arange(300)
@@ -516,9 +516,9 @@ class TestNlmsFilter:
 
     def test_reset(self):
         """Test that reset clears state."""
-        import npyci as npy
+        import zpybci as zbci
 
-        nlms = npy.NlmsFilter(taps=16, mu=0.5, epsilon=0.01)
+        nlms = zbci.NlmsFilter(taps=16, mu=0.5, epsilon=0.01)
 
         reference = np.random.randn(100).astype(np.float32)
         desired = np.random.randn(100).astype(np.float32)
@@ -532,9 +532,9 @@ class TestNlmsFilter:
 
     def test_repr(self):
         """Test string representation."""
-        import npyci as npy
+        import zpybci as zbci
 
-        nlms = npy.NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
+        nlms = zbci.NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
         assert 'NlmsFilter' in repr(nlms)
         assert '32' in repr(nlms)
 

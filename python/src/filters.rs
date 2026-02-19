@@ -33,14 +33,14 @@ enum FirFilterInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create a 5-tap moving average filter
-/// fir = npy.FirFilter.moving_average(5)
+/// fir = zbci.FirFilter.moving_average(5)
 ///
 /// # Or create with custom coefficients
-/// fir = npy.FirFilter(taps=[0.1, 0.2, 0.4, 0.2, 0.1])
+/// fir = zbci.FirFilter(taps=[0.1, 0.2, 0.4, 0.2, 0.1])
 ///
 /// # Process a signal
 /// signal = np.random.randn(1000).astype(np.float32)
@@ -232,11 +232,11 @@ impl FirFilter {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create AC coupler with 0.1 Hz cutoff at 1000 Hz sample rate
-/// ac = npy.AcCoupler(1000.0, 0.1)
+/// ac = zbci.AcCoupler(1000.0, 0.1)
 ///
 /// # Process a signal with DC offset
 /// signal = np.ones(1000, dtype=np.float32) + np.random.randn(1000).astype(np.float32) * 0.1
@@ -358,11 +358,11 @@ enum MedianFilterInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create median filter with window size 5
-/// mf = npy.MedianFilter(5)
+/// mf = zbci.MedianFilter(5)
 ///
 /// # Remove spike noise from signal
 /// noisy = np.array([1, 1, 100, 1, 1, 1, 1, 1], dtype=np.float32)
@@ -496,11 +496,11 @@ enum LmsFilterInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create LMS filter with 32 taps and step size 0.01
-/// lms = npy.LmsFilter(taps=32, mu=0.01)
+/// lms = zbci.LmsFilter(taps=32, mu=0.01)
 ///
 /// # Process reference and desired signals
 /// reference = np.random.randn(1000).astype(np.float32)
@@ -750,11 +750,11 @@ enum NlmsFilterInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
 /// # Create NLMS filter with 32 taps, mu=0.5, epsilon=0.01
-/// nlms = npy.NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
+/// nlms = zbci.NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
 ///
 /// # Process reference and desired signals
 /// reference = np.random.randn(1000).astype(np.float32)

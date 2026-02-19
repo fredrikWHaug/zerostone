@@ -26,10 +26,10 @@ enum WelchInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
-/// welch = npy.WelchPsd(fft_size=256, window='hann', overlap=0.5)
+/// welch = zbci.WelchPsd(fft_size=256, window='hann', overlap=0.5)
 ///
 /// # 10 Hz sine wave at 250 Hz sample rate
 /// t = np.arange(2048) / 250.0

@@ -8,14 +8,14 @@ class TestOnlineStats:
 
     def test_import(self):
         """Test that OnlineStats can be imported."""
-        import npyci as npy
-        assert hasattr(npy, 'OnlineStats')
+        import zpybci as zbci
+        assert hasattr(zbci, 'OnlineStats')
 
     def test_create(self):
         """Test creating OnlineStats."""
-        import npyci as npy
+        import zpybci as zbci
 
-        stats = npy.OnlineStats()
+        stats = zbci.OnlineStats()
         assert stats.count == 0
         assert stats.mean == 0.0
         assert stats.variance == 0.0
@@ -23,9 +23,9 @@ class TestOnlineStats:
 
     def test_update_single(self):
         """Test updating with single values."""
-        import npyci as npy
+        import zpybci as zbci
 
-        stats = npy.OnlineStats()
+        stats = zbci.OnlineStats()
         stats.update(1.0)
         stats.update(2.0)
         stats.update(3.0)
@@ -35,9 +35,9 @@ class TestOnlineStats:
 
     def test_update_batch(self):
         """Test updating with batch of values."""
-        import npyci as npy
+        import zpybci as zbci
 
-        stats = npy.OnlineStats()
+        stats = zbci.OnlineStats()
         values = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         stats.update_batch(values)
 
@@ -46,9 +46,9 @@ class TestOnlineStats:
 
     def test_mean_correctness(self):
         """Test that mean is computed correctly."""
-        import npyci as npy
+        import zpybci as zbci
 
-        stats = npy.OnlineStats()
+        stats = zbci.OnlineStats()
         values = [1.0, 2.0, 3.0, 4.0, 5.0]
         for v in values:
             stats.update(v)
@@ -57,9 +57,9 @@ class TestOnlineStats:
 
     def test_variance_correctness(self):
         """Test that variance is computed correctly (sample variance, n-1)."""
-        import npyci as npy
+        import zpybci as zbci
 
-        stats = npy.OnlineStats()
+        stats = zbci.OnlineStats()
         values = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         for v in values:
             stats.update(v)
@@ -70,9 +70,9 @@ class TestOnlineStats:
 
     def test_std_correctness(self):
         """Test that std is computed correctly."""
-        import npyci as npy
+        import zpybci as zbci
 
-        stats = npy.OnlineStats()
+        stats = zbci.OnlineStats()
         values = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         for v in values:
             stats.update(v)
@@ -82,9 +82,9 @@ class TestOnlineStats:
 
     def test_variance_needs_two_samples(self):
         """Test that variance is 0 with fewer than 2 samples."""
-        import npyci as npy
+        import zpybci as zbci
 
-        stats = npy.OnlineStats()
+        stats = zbci.OnlineStats()
         assert stats.variance == 0.0
 
         stats.update(5.0)
@@ -95,9 +95,9 @@ class TestOnlineStats:
 
     def test_reset(self):
         """Test that reset clears state."""
-        import npyci as npy
+        import zpybci as zbci
 
-        stats = npy.OnlineStats()
+        stats = zbci.OnlineStats()
         for v in [1.0, 2.0, 3.0, 4.0, 5.0]:
             stats.update(v)
 
@@ -112,9 +112,9 @@ class TestOnlineStats:
 
     def test_large_dataset(self):
         """Test with larger dataset for numerical stability."""
-        import npyci as npy
+        import zpybci as zbci
 
-        stats = npy.OnlineStats()
+        stats = zbci.OnlineStats()
         values = np.random.randn(10000)
         stats.update_batch(values)
 
@@ -124,9 +124,9 @@ class TestOnlineStats:
 
     def test_constant_values(self):
         """Test with constant values (zero variance)."""
-        import npyci as npy
+        import zpybci as zbci
 
-        stats = npy.OnlineStats()
+        stats = zbci.OnlineStats()
         for _ in range(10):
             stats.update(5.0)
 
@@ -136,9 +136,9 @@ class TestOnlineStats:
 
     def test_negative_values(self):
         """Test with negative values."""
-        import npyci as npy
+        import zpybci as zbci
 
-        stats = npy.OnlineStats()
+        stats = zbci.OnlineStats()
         values = np.array([-5.0, -3.0, -1.0, 1.0, 3.0, 5.0])
         for v in values:
             stats.update(v)
@@ -148,9 +148,9 @@ class TestOnlineStats:
 
     def test_repr(self):
         """Test string representation."""
-        import npyci as npy
+        import zpybci as zbci
 
-        stats = npy.OnlineStats()
+        stats = zbci.OnlineStats()
         stats.update(1.0)
         stats.update(2.0)
         stats.update(3.0)
@@ -161,17 +161,17 @@ class TestOnlineStats:
 
     def test_incremental_updates(self):
         """Test that incremental and batch updates give same results."""
-        import npyci as npy
+        import zpybci as zbci
 
         values = np.random.randn(100)
 
         # Incremental
-        stats1 = npy.OnlineStats()
+        stats1 = zbci.OnlineStats()
         for v in values:
             stats1.update(v)
 
         # Batch
-        stats2 = npy.OnlineStats()
+        stats2 = zbci.OnlineStats()
         stats2.update_batch(values)
 
         assert stats1.count == stats2.count

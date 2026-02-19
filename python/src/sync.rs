@@ -14,10 +14,10 @@ use zerostone::{
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 ///
 /// # From NTP-style timestamps
-/// offset = npy.ClockOffset.from_ntp(t1=1.0, t2=1.001, t3=1.002, t4=1.003)
+/// offset = zbci.ClockOffset.from_ntp(t1=1.0, t2=1.001, t3=1.002, t4=1.003)
 /// print(offset.offset, offset.rtt, offset.quality)
 /// ```
 #[pyclass]
@@ -92,9 +92,9 @@ impl ClockOffset {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 ///
-/// clock = npy.SampleClock(start_time=0.0, sample_rate=250.0)
+/// clock = zbci.SampleClock(start_time=0.0, sample_rate=250.0)
 /// t = clock.sample_to_time(1000)  # 4.0 seconds
 /// idx = clock.time_to_sample(4.0)  # 1000
 /// ```
@@ -160,9 +160,9 @@ impl SampleClock {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 ///
-/// drift = npy.LinearDrift()
+/// drift = zbci.LinearDrift()
 /// drift.add_measurement(0.0, 0.001)
 /// drift.add_measurement(10.0, 0.002)
 /// corrected = drift.correct(5.0)
@@ -260,11 +260,11 @@ enum OffsetBufferInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 ///
-/// buf = npy.OffsetBuffer(capacity=32)
+/// buf = zbci.OffsetBuffer(capacity=32)
 /// for i in range(10):
-///     offset = npy.ClockOffset(offset=0.001 * i, local_time=float(i), rtt=0.01)
+///     offset = zbci.ClockOffset(offset=0.001 * i, local_time=float(i), rtt=0.01)
 ///     buf.add(offset)
 /// best = buf.best_offset()
 /// ```

@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-import npyci as npy
+import zpybci as zbci
 
 
 class TestEnvelopeFollower:
@@ -10,7 +10,7 @@ class TestEnvelopeFollower:
 
     def test_create_envelope_follower(self):
         """Test creating an envelope follower."""
-        env = npy.EnvelopeFollower(
+        env = zbci.EnvelopeFollower(
             channels=8,
             sample_rate=250.0,
             attack_time=0.010,
@@ -25,7 +25,7 @@ class TestEnvelopeFollower:
 
     def test_create_symmetric(self):
         """Test creating with symmetric smoothing."""
-        env = npy.EnvelopeFollower.symmetric(
+        env = zbci.EnvelopeFollower.symmetric(
             channels=4,
             sample_rate=250.0,
             smoothing_time=0.050,
@@ -37,16 +37,16 @@ class TestEnvelopeFollower:
     def test_invalid_channels(self):
         """Test that unsupported channel count raises error."""
         with pytest.raises(ValueError):
-            npy.EnvelopeFollower(channels=3, sample_rate=250.0, attack_time=0.01, release_time=0.1)
+            zbci.EnvelopeFollower(channels=3, sample_rate=250.0, attack_time=0.01, release_time=0.1)
 
     def test_invalid_rectification(self):
         """Test that invalid rectification raises error."""
         with pytest.raises(ValueError):
-            npy.EnvelopeFollower(channels=4, sample_rate=250.0, attack_time=0.01, release_time=0.1, rectification='invalid')
+            zbci.EnvelopeFollower(channels=4, sample_rate=250.0, attack_time=0.01, release_time=0.1, rectification='invalid')
 
     def test_process_single_sample(self):
         """Test processing a single sample."""
-        env = npy.EnvelopeFollower(channels=4, sample_rate=250.0, attack_time=0.01, release_time=0.1)
+        env = zbci.EnvelopeFollower(channels=4, sample_rate=250.0, attack_time=0.01, release_time=0.1)
 
         sample = np.array([1.0, -1.0, 0.5, -0.5], dtype=np.float32)
         envelope = env.process(sample)
@@ -56,7 +56,7 @@ class TestEnvelopeFollower:
 
     def test_process_block(self):
         """Test processing a block of samples."""
-        env = npy.EnvelopeFollower(channels=4, sample_rate=250.0, attack_time=0.01, release_time=0.1)
+        env = zbci.EnvelopeFollower(channels=4, sample_rate=250.0, attack_time=0.01, release_time=0.1)
 
         block = np.random.randn(100, 4).astype(np.float32)
         envelope = env.process_block(block)
@@ -66,7 +66,7 @@ class TestEnvelopeFollower:
 
     def test_channel_mismatch(self):
         """Test that channel mismatch raises error."""
-        env = npy.EnvelopeFollower(channels=8, sample_rate=250.0, attack_time=0.01, release_time=0.1)
+        env = zbci.EnvelopeFollower(channels=8, sample_rate=250.0, attack_time=0.01, release_time=0.1)
 
         sample = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)  # Wrong channels
         with pytest.raises(ValueError):
@@ -74,7 +74,7 @@ class TestEnvelopeFollower:
 
     def test_rectification_absolute(self):
         """Test absolute value rectification."""
-        env = npy.EnvelopeFollower(channels=1, sample_rate=1000.0, attack_time=0.001, release_time=0.001, rectification='absolute')
+        env = zbci.EnvelopeFollower(channels=1, sample_rate=1000.0, attack_time=0.001, release_time=0.001, rectification='absolute')
 
         # Negative input should produce positive envelope
         envelope = env.process(np.array([-1.0], dtype=np.float32))
@@ -82,7 +82,7 @@ class TestEnvelopeFollower:
 
     def test_rectification_squared(self):
         """Test squared rectification."""
-        env = npy.EnvelopeFollower(channels=1, sample_rate=1000.0, attack_time=0.001, release_time=0.001, rectification='squared')
+        env = zbci.EnvelopeFollower(channels=1, sample_rate=1000.0, attack_time=0.001, release_time=0.001, rectification='squared')
 
         env.reset()
         # With very fast attack, envelope should be close to input²
@@ -91,7 +91,7 @@ class TestEnvelopeFollower:
 
     def test_envelope_tracks_amplitude(self):
         """Test that envelope follows signal amplitude."""
-        env = npy.EnvelopeFollower.symmetric(channels=1, sample_rate=250.0, smoothing_time=0.020, rectification='absolute')
+        env = zbci.EnvelopeFollower.symmetric(channels=1, sample_rate=250.0, smoothing_time=0.020, rectification='absolute')
 
         # Feed increasing amplitude
         for i in range(1, 11):
@@ -103,7 +103,7 @@ class TestEnvelopeFollower:
 
     def test_attack_release_asymmetry(self):
         """Test asymmetric attack/release behavior."""
-        env = npy.EnvelopeFollower(channels=1, sample_rate=1000.0, attack_time=0.001, release_time=0.100, rectification='absolute')
+        env = zbci.EnvelopeFollower(channels=1, sample_rate=1000.0, attack_time=0.001, release_time=0.100, rectification='absolute')
 
         # Fast attack
         for _ in range(10):
@@ -120,7 +120,7 @@ class TestEnvelopeFollower:
 
     def test_reset(self):
         """Test resetting envelope."""
-        env = npy.EnvelopeFollower(channels=4, sample_rate=250.0, attack_time=0.01, release_time=0.1)
+        env = zbci.EnvelopeFollower(channels=4, sample_rate=250.0, attack_time=0.01, release_time=0.1)
 
         # Build up envelope
         for _ in range(100):
@@ -138,14 +138,14 @@ class TestEnvelopeFollower:
     def test_supported_channel_counts(self):
         """Test all supported channel counts."""
         for channels in [1, 4, 8, 16, 32, 64]:
-            env = npy.EnvelopeFollower(channels=channels, sample_rate=250.0, attack_time=0.01, release_time=0.1)
+            env = zbci.EnvelopeFollower(channels=channels, sample_rate=250.0, attack_time=0.01, release_time=0.1)
             sample = np.random.randn(channels).astype(np.float32)
             envelope = env.process(sample)
             assert envelope.shape == (channels,)
 
     def test_repr(self):
         """Test string representation."""
-        env = npy.EnvelopeFollower(channels=8, sample_rate=250.0, attack_time=0.01, release_time=0.1, rectification='absolute')
+        env = zbci.EnvelopeFollower(channels=8, sample_rate=250.0, attack_time=0.01, release_time=0.1, rectification='absolute')
         assert "8" in repr(env)
         assert "250" in repr(env)
         assert "absolute" in repr(env)
@@ -156,7 +156,7 @@ class TestWindowedRms:
 
     def test_create_windowed_rms(self):
         """Test creating a windowed RMS tracker."""
-        rms = npy.WindowedRms(channels=8, window_size=64)
+        rms = zbci.WindowedRms(channels=8, window_size=64)
         assert rms.channels == 8
         assert rms.window_size == 64
         assert not rms.is_ready
@@ -164,21 +164,21 @@ class TestWindowedRms:
     def test_invalid_params(self):
         """Test that invalid parameters raise error."""
         with pytest.raises(ValueError):
-            npy.WindowedRms(channels=3, window_size=64)  # Invalid channels
+            zbci.WindowedRms(channels=3, window_size=64)  # Invalid channels
         with pytest.raises(ValueError):
-            npy.WindowedRms(channels=8, window_size=50)  # Invalid window
+            zbci.WindowedRms(channels=8, window_size=50)  # Invalid window
 
     def test_supported_configurations(self):
         """Test all supported channel/window combinations."""
         for channels in [1, 4, 8, 16, 32, 64]:
             for window in [16, 32, 64, 128]:
-                rms = npy.WindowedRms(channels=channels, window_size=window)
+                rms = zbci.WindowedRms(channels=channels, window_size=window)
                 assert rms.channels == channels
                 assert rms.window_size == window
 
     def test_process_sample(self):
         """Test processing single samples."""
-        rms = npy.WindowedRms(channels=4, window_size=16)
+        rms = zbci.WindowedRms(channels=4, window_size=16)
 
         for i in range(16):
             sample = np.array([1.0] * 4, dtype=np.float32)
@@ -189,7 +189,7 @@ class TestWindowedRms:
 
     def test_rms_before_ready(self):
         """Test that RMS returns None before window is full."""
-        rms = npy.WindowedRms(channels=4, window_size=16)
+        rms = zbci.WindowedRms(channels=4, window_size=16)
 
         for i in range(15):
             rms.process(np.array([1.0] * 4, dtype=np.float32))
@@ -200,7 +200,7 @@ class TestWindowedRms:
 
     def test_rms_constant_signal(self):
         """Test RMS of constant signal."""
-        rms = npy.WindowedRms(channels=1, window_size=16)
+        rms = zbci.WindowedRms(channels=1, window_size=16)
 
         # Feed constant value
         for _ in range(16):
@@ -212,7 +212,7 @@ class TestWindowedRms:
 
     def test_power_computation(self):
         """Test power computation."""
-        rms = npy.WindowedRms(channels=1, window_size=16)
+        rms = zbci.WindowedRms(channels=1, window_size=16)
 
         # Feed constant value
         for _ in range(16):
@@ -226,7 +226,7 @@ class TestWindowedRms:
 
     def test_multi_channel(self):
         """Test multi-channel RMS."""
-        rms = npy.WindowedRms(channels=4, window_size=16)
+        rms = zbci.WindowedRms(channels=4, window_size=16)
 
         # Feed different values per channel
         for _ in range(16):
@@ -237,7 +237,7 @@ class TestWindowedRms:
 
     def test_sliding_window(self):
         """Test sliding window behavior."""
-        rms = npy.WindowedRms(channels=1, window_size=16)
+        rms = zbci.WindowedRms(channels=1, window_size=16)
 
         # Fill window with known values [1, 1, 1, ..., 1] (16 ones)
         for _ in range(16):
@@ -257,7 +257,7 @@ class TestWindowedRms:
 
     def test_reset(self):
         """Test resetting tracker."""
-        rms = npy.WindowedRms(channels=4, window_size=16)
+        rms = zbci.WindowedRms(channels=4, window_size=16)
 
         # Build up state
         for _ in range(16):
@@ -275,7 +275,7 @@ class TestWindowedRms:
 
     def test_channel_mismatch(self):
         """Test that channel mismatch raises error."""
-        rms = npy.WindowedRms(channels=8, window_size=16)
+        rms = zbci.WindowedRms(channels=8, window_size=16)
 
         sample = np.array([1.0] * 4, dtype=np.float32)  # Wrong channels
         with pytest.raises(ValueError):
@@ -283,7 +283,7 @@ class TestWindowedRms:
 
     def test_repr(self):
         """Test string representation."""
-        rms = npy.WindowedRms(channels=8, window_size=64)
+        rms = zbci.WindowedRms(channels=8, window_size=64)
         assert "8" in repr(rms)
         assert "64" in repr(rms)
 
@@ -293,8 +293,8 @@ class TestAnalysisIntegration:
 
     def test_envelope_to_rms_pipeline(self):
         """Test envelope followed by RMS computation."""
-        env = npy.EnvelopeFollower(channels=4, sample_rate=250.0, attack_time=0.01, release_time=0.1)
-        rms = npy.WindowedRms(channels=4, window_size=32)
+        env = zbci.EnvelopeFollower(channels=4, sample_rate=250.0, attack_time=0.01, release_time=0.1)
+        rms = zbci.WindowedRms(channels=4, window_size=32)
 
         # Process signal through envelope then RMS
         for _ in range(100):
@@ -308,7 +308,7 @@ class TestAnalysisIntegration:
 
     def test_power_tracking(self):
         """Test power tracking over time."""
-        rms = npy.WindowedRms(channels=8, window_size=64)
+        rms = zbci.WindowedRms(channels=8, window_size=64)
 
         # Simulate varying power signal
         powers = []

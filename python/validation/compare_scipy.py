@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Compare zerostone (npyci) filters against scipy.signal.
+Compare zerostone (zpybci) filters against scipy.signal.
 
 This script generates visual comparisons showing:
 1. Time-domain filter outputs (zerostone vs scipy overlay)
@@ -23,9 +23,9 @@ from pathlib import Path
 import numpy as np
 
 try:
-    import npyci as npy
+    import zpybci as zbci
 except ImportError:
-    print("Error: npyci not installed. Run 'maturin develop' in python/ directory first.")
+    print("Error: zpybci not installed. Run 'maturin develop' in python/ directory first.")
     sys.exit(1)
 
 try:
@@ -59,7 +59,7 @@ def compare_lowpass_filter(output_dir: Path):
     test_signal = (passband + stopband + noise).astype(np.float32)
 
     # Create filters
-    zs_filter = npy.IirFilter.butterworth_lowpass(sample_rate, cutoff)
+    zs_filter = zbci.IirFilter.butterworth_lowpass(sample_rate, cutoff)
     sos = signal.butter(4, cutoff, btype='low', fs=sample_rate, output='sos')
 
     # Filter
@@ -153,7 +153,7 @@ def compare_highpass_filter(output_dir: Path):
     test_signal = (dc_offset + ac_signal).astype(np.float32)
 
     # Create filters
-    zs_filter = npy.IirFilter.butterworth_highpass(sample_rate, cutoff)
+    zs_filter = zbci.IirFilter.butterworth_highpass(sample_rate, cutoff)
     sos = signal.butter(4, cutoff, btype='high', fs=sample_rate, output='sos')
 
     # Filter
@@ -221,7 +221,7 @@ def compare_bandpass_filter(output_dir: Path):
     test_signal = (below_band + in_band + above_band).astype(np.float32)
 
     # Create filters
-    zs_filter = npy.IirFilter.butterworth_bandpass(sample_rate, low_cutoff, high_cutoff)
+    zs_filter = zbci.IirFilter.butterworth_bandpass(sample_rate, low_cutoff, high_cutoff)
     sos = signal.butter(4, [low_cutoff, high_cutoff], btype='band', fs=sample_rate, output='sos')
 
     # Filter
@@ -278,7 +278,7 @@ def compare_fir_filter(output_dir: Path):
     window_size = 5
 
     # Create filters
-    zs_filter = npy.FirFilter.moving_average(window_size)
+    zs_filter = zbci.FirFilter.moving_average(window_size)
     scipy_coeffs = np.ones(window_size) / window_size
 
     # Test signal with noise
@@ -345,7 +345,7 @@ def compare_frequency_responses(output_dir: Path):
 
     # Lowpass
     cutoff_lp = 50.0
-    zs_lp = npy.IirFilter.butterworth_lowpass(sample_rate, cutoff_lp)
+    zs_lp = zbci.IirFilter.butterworth_lowpass(sample_rate, cutoff_lp)
     sos_lp = signal.butter(4, cutoff_lp, btype='low', fs=sample_rate, output='sos')
     w, h_scipy_lp = signal.sosfreqz(sos_lp, worN=2048, fs=sample_rate)
 
@@ -364,7 +364,7 @@ def compare_frequency_responses(output_dir: Path):
 
     # Highpass
     cutoff_hp = 20.0
-    zs_hp = npy.IirFilter.butterworth_highpass(sample_rate, cutoff_hp)
+    zs_hp = zbci.IirFilter.butterworth_highpass(sample_rate, cutoff_hp)
     sos_hp = signal.butter(4, cutoff_hp, btype='high', fs=sample_rate, output='sos')
     w, h_scipy_hp = signal.sosfreqz(sos_hp, worN=2048, fs=sample_rate)
 
@@ -383,7 +383,7 @@ def compare_frequency_responses(output_dir: Path):
 
     # Bandpass
     low_bp, high_bp = 20.0, 50.0
-    zs_bp = npy.IirFilter.butterworth_bandpass(sample_rate, low_bp, high_bp)
+    zs_bp = zbci.IirFilter.butterworth_bandpass(sample_rate, low_bp, high_bp)
     sos_bp = signal.butter(4, [low_bp, high_bp], btype='band', fs=sample_rate, output='sos')
     w, h_scipy_bp = signal.sosfreqz(sos_bp, worN=2048, fs=sample_rate)
 

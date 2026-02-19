@@ -21,10 +21,10 @@ enum OasisInner {
 ///
 /// # Example
 /// ```python
-/// import npyci as npy
+/// import zpybci as zbci
 /// import numpy as np
 ///
-/// deconv = npy.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
+/// deconv = zbci.OasisDeconvolution(channels=1, gamma=0.95, lambda_=0.01)
 /// fluor = np.array([1.0], dtype=np.float32)
 /// baseline = np.array([0.0], dtype=np.float32)
 /// calcium, spike = deconv.update(fluor, baseline)

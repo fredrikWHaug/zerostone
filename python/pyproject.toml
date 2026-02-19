@@ -3,8 +3,8 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "npyci"
-version = "0.1.0"
+name = "zpybci"
+version = "0.2.0"
 description = "High-performance signal processing for BCI research"
 requires-python = ">=3.8"
 dependencies = ["numpy>=1.20"]
