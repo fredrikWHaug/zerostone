@@ -6,6 +6,7 @@ use pyo3::Bound;
 
 mod analysis;
 mod artifact;
+mod connectivity;
 mod csp;
 mod deconvolution;
 mod detection;
@@ -278,6 +279,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Cross-correlation functions
     xcorr::register(m)?;
+
+    // Connectivity metrics
+    connectivity::register(m)?;
 
     // Window functions
     window::register(m)?;

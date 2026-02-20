@@ -37,6 +37,7 @@
 //! - **[`ZscoreArtifact`]** - Adaptive z-score based artifact detection
 //! - **[`xcorr`]** - Cross-correlation and auto-correlation functions
 //! - **[`hilbert`]** - Hilbert transform for analytic signal and instantaneous parameters
+//! - **[`connectivity`]** - Coherence and phase locking value for brain connectivity
 //! - **[`ClockOffset`]** - Single timestamp offset measurement (NTP-style)
 //! - **[`SampleClock`]** - Sample index ↔ timestamp conversion
 //! - **[`LinearDrift`]** - Online linear regression for clock drift estimation
@@ -72,6 +73,7 @@
 mod artifact;
 mod bandpower;
 mod buffer;
+pub mod connectivity;
 mod csp;
 mod decimate;
 mod deconvolution;
