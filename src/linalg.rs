@@ -287,14 +287,18 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
         Ok(l.backward_substitute(&y))
     }
 
-    /// Eigenvalue decomposition using Jacobi iteration for symmetric matrices.
+    /// Eigenvalue decomposition using cyclic Jacobi iteration for symmetric matrices.
     ///
     /// Computes eigenvalues and eigenvectors such that A = V Λ V^T.
     ///
+    /// Uses cyclic-by-row Jacobi: each sweep iterates over all n(n-1)/2 off-diagonal
+    /// pairs, applying Givens rotations to zero them. Typically converges in 5-20 sweeps
+    /// even for 64x64 matrices.
+    ///
     /// # Arguments
     ///
-    /// * `max_iters` - Maximum number of Jacobi sweeps (recommended: 30 for C=32)
-    /// * `tol` - Convergence tolerance for off-diagonal elements (recommended: 1e-10)
+    /// * `max_iters` - Maximum number of Jacobi sweeps (recommended: 30)
+    /// * `tol` - Convergence tolerance (recommended: 1e-10)
     ///
     /// # Returns
     ///
@@ -306,7 +310,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
     ///
     /// # Performance
     ///
-    /// O(C³) per sweep, typically 10-30 sweeps needed.
+    /// O(C³) per sweep, typically 5-20 sweeps needed.
     pub fn eigen_symmetric(
         &self,
         max_iters: usize,
@@ -318,41 +322,102 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
         // Initialize eigenvectors to identity
         let mut v = Self::identity();
 
-        for _sweep in 0..max_iters {
-            // Find maximum off-diagonal element
-            let (max_i, max_j, max_val) = find_max_off_diagonal(&a);
+        // Compute matrix Frobenius norm for relative convergence
+        let mut matrix_norm = 0.0;
+        for i in 0..C {
+            for j in 0..C {
+                let val = a.get(i, j);
+                matrix_norm += val * val;
+            }
+        }
+        matrix_norm = libm::sqrt(matrix_norm);
+        if matrix_norm < 1e-300 {
+            matrix_norm = 1.0; // avoid division by zero for zero matrix
+        }
+
+        let abs_tol = tol * matrix_norm;
+
+        for sweep in 0..max_iters {
+            // Compute off-diagonal Frobenius norm
+            let mut off_diag_norm_sq = 0.0;
+            for i in 0..C {
+                for j in (i + 1)..C {
+                    let val = a.get(i, j);
+                    off_diag_norm_sq += val * val;
+                }
+            }
+            let off_diag_norm = libm::sqrt(2.0 * off_diag_norm_sq);
 
             // Check convergence
-            if max_val < tol {
-                // Extract eigenvalues and eigenvectors
+            if off_diag_norm < abs_tol {
                 let mut eigenvalues = [0.0; C];
                 #[allow(clippy::needless_range_loop)]
                 for i in 0..C {
                     eigenvalues[i] = a.get(i, i);
                 }
-
-                // Sort eigenvalues and eigenvectors in descending order
                 sort_eigen(&mut eigenvalues, &mut v);
 
                 return Ok(EigenDecomposition {
                     eigenvalues,
                     eigenvectors: v,
+                    diagnostics: EigenDiagnostics {
+                        sweeps_used: sweep,
+                        final_off_diag_norm: off_diag_norm,
+                    },
                 });
             }
 
-            // Compute Jacobi rotation to annihilate A[max_i, max_j]
-            let (cos_theta, sin_theta) = compute_jacobi_rotation(&a, max_i, max_j);
+            // Threshold for early sweeps: skip small elements
+            let threshold = if sweep < 3 {
+                0.2 * off_diag_norm_sq / ((C * C) as f64)
+            } else {
+                0.0
+            };
 
-            // Apply rotation to A: A' = R^T A R
-            apply_jacobi_rotation(&mut a, max_i, max_j, cos_theta, sin_theta);
+            // Cyclic sweep over all upper-triangular pairs
+            for i in 0..C {
+                for j in (i + 1)..C {
+                    let a_ij = a.get(i, j);
+                    let abs_a_ij = libm::fabs(a_ij);
 
-            // Update eigenvectors: V' = V R
-            apply_rotation_to_vectors(&mut v, max_i, max_j, cos_theta, sin_theta);
+                    // Early sweep threshold: skip small off-diagonal elements
+                    if sweep < 3 && abs_a_ij * abs_a_ij < threshold {
+                        continue;
+                    }
+
+                    // Late sweep: skip if negligible relative to diagonal
+                    if sweep >= 3 {
+                        let a_ii = libm::fabs(a.get(i, i));
+                        let a_jj = libm::fabs(a.get(j, j));
+                        if abs_a_ij < 1e-15 * (a_ii + a_jj) {
+                            continue;
+                        }
+                    }
+
+                    // Skip truly zero elements
+                    if abs_a_ij < 1e-300 {
+                        continue;
+                    }
+
+                    let (cos_theta, sin_theta) = compute_jacobi_rotation(&a, i, j);
+                    apply_jacobi_rotation(&mut a, i, j, cos_theta, sin_theta);
+                    apply_rotation_to_vectors(&mut v, i, j, cos_theta, sin_theta);
+                }
+            }
         }
 
         // Did not converge
         Err(LinalgError::ConvergenceFailed)
     }
+}
+
+/// Convergence diagnostics for the Jacobi eigensolver.
+#[derive(Debug, Clone, Copy)]
+pub struct EigenDiagnostics {
+    /// Number of sweeps used before convergence
+    pub sweeps_used: usize,
+    /// Final off-diagonal Frobenius norm
+    pub final_off_diag_norm: f64,
 }
 
 /// Result of eigenvalue decomposition.
@@ -363,26 +428,9 @@ pub struct EigenDecomposition<const C: usize, const M: usize> {
 
     /// Eigenvectors as columns (eigenvectors.get(row, col) = col-th eigenvector, row-th element)
     pub eigenvectors: Matrix<C, M>,
-}
 
-/// Find the maximum off-diagonal element in a symmetric matrix.
-fn find_max_off_diagonal<const C: usize, const M: usize>(a: &Matrix<C, M>) -> (usize, usize, f64) {
-    let mut max_i = 0;
-    let mut max_j = 1;
-    let mut max_val = libm::fabs(a.get(0, 1));
-
-    for i in 0..C {
-        for j in (i + 1)..C {
-            let val = libm::fabs(a.get(i, j));
-            if val > max_val {
-                max_val = val;
-                max_i = i;
-                max_j = j;
-            }
-        }
-    }
-
-    (max_i, max_j, max_val)
+    /// Convergence diagnostics
+    pub diagnostics: EigenDiagnostics,
 }
 
 /// Compute Jacobi rotation parameters to annihilate A[i,j].
@@ -1025,5 +1073,186 @@ mod tests {
             let norm_sq = vi[0] * vi[0] + vi[1] * vi[1] + vi[2] * vi[2];
             assert!((norm_sq - 1.0).abs() < 1e-6, "Eigenvector not normalized");
         }
+    }
+
+    /// Build an NxN SPD matrix: A = diag(1..N) + 0.1 * v * v^T
+    /// where v[i] = sin(i+1). This creates a well-conditioned SPD matrix
+    /// with distinct eigenvalues and nontrivial off-diagonal structure.
+    fn build_spd_matrix<const C: usize, const M: usize>() -> Matrix<C, M> {
+        let mut a = Matrix::<C, M>::zeros();
+        // Diagonal: eigenvalues from 1 to C
+        for i in 0..C {
+            a.set(i, i, (i + 1) as f64);
+        }
+        // Rank-1 perturbation: 0.1 * v * v^T
+        for i in 0..C {
+            let vi = libm::sin((i + 1) as f64);
+            for j in 0..C {
+                let vj = libm::sin((j + 1) as f64);
+                let cur = a.get(i, j);
+                a.set(i, j, cur + 0.1 * vi * vj);
+            }
+        }
+        a
+    }
+
+    /// Verify eigen decomposition: eigenvalues positive, eigenvectors orthonormal,
+    /// and reconstruction A = V * diag(lambda) * V^T.
+    fn verify_eigen<const C: usize, const M: usize>(
+        a: &Matrix<C, M>,
+        eigen: &EigenDecomposition<C, M>,
+        tol: f64,
+    ) {
+        // Eigenvalues should be positive (SPD matrix)
+        for i in 0..C {
+            assert!(
+                eigen.eigenvalues[i] > 0.0,
+                "Eigenvalue {} is not positive: {}",
+                i,
+                eigen.eigenvalues[i]
+            );
+        }
+
+        // Eigenvalues should be in descending order
+        for i in 1..C {
+            assert!(
+                eigen.eigenvalues[i - 1] >= eigen.eigenvalues[i] - tol,
+                "Eigenvalues not sorted: {} < {}",
+                eigen.eigenvalues[i - 1],
+                eigen.eigenvalues[i]
+            );
+        }
+
+        // Eigenvectors orthonormal: V^T * V = I
+        for i in 0..C {
+            for j in i..C {
+                let mut dot = 0.0;
+                for k in 0..C {
+                    dot += eigen.eigenvectors.get(k, i) * eigen.eigenvectors.get(k, j);
+                }
+                if i == j {
+                    assert!(
+                        (dot - 1.0).abs() < tol,
+                        "Eigenvector {} not normalized: norm^2 = {}",
+                        i,
+                        dot
+                    );
+                } else {
+                    assert!(
+                        dot.abs() < tol,
+                        "Eigenvectors {} and {} not orthogonal: dot = {}",
+                        i,
+                        j,
+                        dot
+                    );
+                }
+            }
+        }
+
+        // Reconstruction: A = V * diag(lambda) * V^T
+        for i in 0..C {
+            for j in 0..C {
+                let mut reconstructed = 0.0;
+                for k in 0..C {
+                    reconstructed += eigen.eigenvalues[k]
+                        * eigen.eigenvectors.get(i, k)
+                        * eigen.eigenvectors.get(j, k);
+                }
+                let original = a.get(i, j);
+                assert!(
+                    (reconstructed - original).abs() < tol,
+                    "Reconstruction failed at ({},{}): {} vs {}",
+                    i,
+                    j,
+                    reconstructed,
+                    original
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_eigen_8x8_spd() {
+        let a: Matrix<8, 64> = build_spd_matrix();
+        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
+        verify_eigen(&a, &eigen, 1e-8);
+    }
+
+    #[test]
+    fn test_eigen_16x16_spd() {
+        let a: Matrix<16, 256> = build_spd_matrix();
+        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
+        verify_eigen(&a, &eigen, 1e-8);
+    }
+
+    #[test]
+    fn test_eigen_32x32_spd() {
+        let a: Matrix<32, 1024> = build_spd_matrix();
+        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
+        verify_eigen(&a, &eigen, 1e-7);
+    }
+
+    #[test]
+    fn test_eigen_64x64_spd() {
+        let a: Matrix<64, 4096> = build_spd_matrix();
+        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
+        verify_eigen(&a, &eigen, 1e-6);
+    }
+
+    #[test]
+    fn test_eigen_ill_conditioned() {
+        // Condition number ~10^6: eigenvalues from 1e-3 to 1e3
+        let mut a: Matrix<8, 64> = Matrix::zeros();
+        for i in 0..8 {
+            // Logarithmically spaced: 1e-3, ~1e-2.14, ..., 1e3
+            let log_val = -3.0 + 6.0 * (i as f64) / 7.0;
+            a.set(i, i, libm::pow(10.0, log_val));
+        }
+        // Add small off-diagonal structure
+        for i in 0..8 {
+            let vi = libm::sin((i + 1) as f64);
+            for j in 0..8 {
+                let vj = libm::sin((j + 1) as f64);
+                let cur = a.get(i, j);
+                a.set(i, j, cur + 0.001 * vi * vj);
+            }
+        }
+
+        let eigen = a.eigen_symmetric(30, 1e-12).unwrap();
+
+        // All eigenvalues should be positive
+        for i in 0..8 {
+            assert!(eigen.eigenvalues[i] > 0.0);
+        }
+
+        // Descending order
+        for i in 1..8 {
+            assert!(eigen.eigenvalues[i - 1] >= eigen.eigenvalues[i] - 1e-10);
+        }
+
+        // Condition number should be approximately 10^6
+        let cond = eigen.eigenvalues[0] / eigen.eigenvalues[7];
+        assert!(cond > 1e5, "Condition number too small: {}", cond);
+        assert!(cond < 1e7, "Condition number too large: {}", cond);
+    }
+
+    #[test]
+    fn test_eigen_convergence_diagnostics() {
+        let a: Matrix<64, 4096> = build_spd_matrix();
+        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
+
+        // Should converge in < 20 sweeps for a 64x64 matrix
+        assert!(
+            eigen.diagnostics.sweeps_used < 20,
+            "Too many sweeps for 64x64: {}",
+            eigen.diagnostics.sweeps_used
+        );
+
+        // Final off-diagonal norm should be very small
+        assert!(
+            eigen.diagnostics.final_off_diag_norm < 1e-6,
+            "Off-diagonal norm too large: {}",
+            eigen.diagnostics.final_off_diag_norm
+        );
     }
 }
