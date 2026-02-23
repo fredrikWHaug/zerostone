@@ -6,6 +6,7 @@ use pyo3::Bound;
 
 mod analysis;
 mod artifact;
+mod cca;
 mod connectivity;
 mod csp;
 mod deconvolution;
@@ -39,10 +40,10 @@ use resampling::{Decimator, Interpolator};
 use riemannian::TangentSpace;
 use spatial::{ChannelRouter, SurfaceLaplacian, CAR};
 use spectral::{Fft, MultiBandPower, Stft};
-use welch::WelchPsd as PyWelchPsd;
 use stats::{OnlineCov, OnlineStats};
 use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
 use wavelet::Cwt;
+use welch::WelchPsd as PyWelchPsd;
 
 /// IIR (Infinite Impulse Response) filter with cascaded biquad sections.
 ///
@@ -282,6 +283,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Connectivity metrics
     connectivity::register(m)?;
+
+    // CCA / SSVEP detection
+    cca::register(m)?;
 
     // Window functions
     window::register(m)?;

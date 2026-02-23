@@ -64,9 +64,7 @@ impl WelchPsd {
     #[pyo3(signature = (fft_size, window = "hann", overlap = 0.5))]
     fn new(fft_size: usize, window: &str, overlap: f32) -> PyResult<Self> {
         if overlap < 0.0 || overlap >= 1.0 {
-            return Err(PyValueError::new_err(
-                "overlap must be in [0.0, 1.0)",
-            ));
+            return Err(PyValueError::new_err("overlap must be in [0.0, 1.0)"));
         }
 
         let window_type = parse_window_type(window)?;
@@ -146,10 +144,7 @@ impl WelchPsd {
             WelchInner::Size4096(w) => run_welch!(w, 4096),
         }
 
-        Ok((
-            PyArray1::from_vec(py, freqs),
-            PyArray1::from_vec(py, psd),
-        ))
+        Ok((PyArray1::from_vec(py, freqs), PyArray1::from_vec(py, psd)))
     }
 
     /// Get the FFT/segment size.

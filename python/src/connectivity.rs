@@ -173,13 +173,7 @@ fn spectral_coherence<'py>(
 
     macro_rules! run_spectral_coherence {
         ($N:expr) => {{
-            zs_conn::spectral_coherence::<$N>(
-                a_slice,
-                b_slice,
-                overlap,
-                window_type,
-                &mut coh,
-            );
+            zs_conn::spectral_coherence::<$N>(a_slice, b_slice, overlap, window_type, &mut coh);
             zs_conn::coherence_frequencies::<$N>(sample_rate, &mut freqs);
         }};
     }

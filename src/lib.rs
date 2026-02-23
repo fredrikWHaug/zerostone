@@ -73,6 +73,7 @@
 mod artifact;
 mod bandpower;
 mod buffer;
+pub mod cca;
 pub mod connectivity;
 mod csp;
 mod decimate;
