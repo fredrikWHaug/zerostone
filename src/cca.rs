@@ -121,11 +121,11 @@ pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
         }
     }
     let t_f64 = t as f64;
-    for c in 0..C {
-        mean_x[c] /= t_f64;
+    for val in mean_x.iter_mut() {
+        *val /= t_f64;
     }
-    for h in 0..H {
-        mean_y[h] /= t_f64;
+    for val in mean_y.iter_mut() {
+        *val /= t_f64;
     }
 
     // 2. Compute covariance matrices and cross-covariance
@@ -183,9 +183,9 @@ pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
             cyy.set(r, c, cur * scale);
         }
     }
-    for h in 0..H {
-        for c in 0..C {
-            cxy_cols[h][c] *= scale;
+    for col in cxy_cols.iter_mut() {
+        for val in col.iter_mut() {
+            *val *= scale;
         }
     }
 
@@ -200,8 +200,8 @@ pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
     // 5. Compute W = Lx^{-1} * Cxy (H columns of C-vectors)
     // w_cols[h] = Lx.forward_substitute(cxy_cols[h])
     let mut w_cols = [[0.0; C]; H];
-    for h in 0..H {
-        w_cols[h] = lx.forward_substitute(&cxy_cols[h]);
+    for (w_col, cxy_col) in w_cols.iter_mut().zip(cxy_cols.iter()) {
+        *w_col = lx.forward_substitute(cxy_col);
     }
 
     // 6. Compute M = K^T K where K = W * Ly^{-T}
@@ -211,6 +211,7 @@ pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
     //   k_row = Ly.forward_substitute(w_row)  (gives Ly^{-1} * w_row)
     //   M += k_row * k_row^T (outer product)
     let mut m = Matrix::<H, MH>::zeros();
+    #[allow(clippy::needless_range_loop)]
     for c in 0..C {
         let mut w_row = [0.0; H];
         for h in 0..H {
@@ -232,13 +233,16 @@ pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
     let eigen = m.eigen_symmetric(30, 1e-10)?;
 
     // 8. Canonical correlations = sqrt(eigenvalues), clamped to [0, 1]
-    for i in 0..n_corr.min(correlations.len()) {
-        let ev = eigen.eigenvalues[i];
+    for (corr, &ev) in correlations
+        .iter_mut()
+        .zip(eigen.eigenvalues.iter())
+        .take(n_corr)
+    {
         if ev > 0.0 {
             let rho = libm::sqrt(ev);
-            correlations[i] = if rho > 1.0 { 1.0 } else { rho };
+            *corr = if rho > 1.0 { 1.0 } else { rho };
         } else {
-            correlations[i] = 0.0;
+            *corr = 0.0;
         }
     }
 
@@ -277,7 +281,7 @@ pub fn fill_ssvep_references<const H: usize>(
     output: &mut [[f64; H]],
 ) {
     assert!(H >= 2, "Need at least 2 reference components (1 harmonic)");
-    assert!(H % 2 == 0, "H must be even (sin/cos pairs)");
+    assert!(H.is_multiple_of(2), "H must be even (sin/cos pairs)");
 
     let n_harmonics = H / 2;
 
@@ -384,9 +388,9 @@ mod tests {
         // Simple LCG for deterministic pseudo-random noise
         let mut rng_state: u64 = 12345;
 
-        for t in 0..n_samples {
+        for (t, sample) in signals.iter_mut().enumerate() {
             let time = t as f64 / sample_rate;
-            for c in 0..C {
+            for (c, val) in sample.iter_mut().enumerate() {
                 // LCG pseudo-random
                 rng_state = rng_state
                     .wrapping_mul(6364136223846793005)
@@ -395,7 +399,7 @@ mod tests {
                 // Scale noise and different phase per channel
                 let phase = c as f64 * 0.3;
                 let signal = libm::sin(2.0 * PI * frequency * time + phase);
-                signals[t][c] = signal * snr_linear + noise;
+                *val = signal * snr_linear + noise;
             }
         }
         signals
@@ -658,11 +662,11 @@ mod tests {
         let mut correlations = [0.0; 4];
         let n_corr = cca::<4, 16, 4, 16>(&signals, &refs, &mut correlations, 1e-6).unwrap();
 
-        for i in 0..n_corr {
+        for &corr in correlations.iter().take(n_corr) {
             assert!(
-                correlations[i] >= 0.0 && correlations[i] <= 1.0,
+                (0.0..=1.0).contains(&corr),
                 "Correlation out of bounds: {}",
-                correlations[i]
+                corr
             );
         }
     }
