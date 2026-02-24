@@ -1,7 +1,7 @@
-//! Python bindings for Riemannian geometry (tangent space projection).
+//! Python bindings for Riemannian geometry (tangent space projection, MDM classifier).
 
-use numpy::ndarray::Array2;
-use numpy::{PyArray1, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
+use numpy::ndarray::{Array1, Array2};
+use numpy::{PyArray1, PyArray2, PyReadonlyArray2, PyReadonlyArray3, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use zerostone::linalg::Matrix;
@@ -183,4 +183,430 @@ impl TangentSpace {
             self.vector_length()
         )
     }
+}
+
+// --- Free functions ---
+
+/// Compute the Frechet (geometric) mean of a set of SPD matrices.
+///
+/// Args:
+///     matrices (np.ndarray): 3D float64 array of shape (N, C, C).
+///     max_iters (int): Maximum iterations for Karcher flow. Default: 20.
+///     tol (float): Convergence tolerance. Default: 1e-8.
+///
+/// Returns:
+///     np.ndarray: 2D float64 array of shape (C, C).
+#[pyfunction]
+#[pyo3(signature = (matrices, max_iters=20, tol=1e-8))]
+fn frechet_mean<'py>(
+    py: Python<'py>,
+    matrices: PyReadonlyArray3<f64>,
+    max_iters: usize,
+    tol: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let shape = matrices.shape();
+    let n = shape[0];
+    let c = shape[1];
+    if shape[2] != c {
+        return Err(PyValueError::new_err(format!(
+            "Expected square matrices, got shape ({}, {}, {})",
+            n, c, shape[2]
+        )));
+    }
+    if n == 0 {
+        return Err(PyValueError::new_err("Need at least one matrix"));
+    }
+    let data = matrices.as_slice()?;
+
+    macro_rules! do_frechet {
+        ($c:expr, $m:expr) => {{
+            let mut mats: Vec<Matrix<$c, $m>> = Vec::with_capacity(n);
+            for i in 0..n {
+                let mut arr = [0.0f64; $m];
+                arr.copy_from_slice(&data[i * $m..(i + 1) * $m]);
+                mats.push(Matrix::new(arr));
+            }
+            let refs: Vec<&Matrix<$c, $m>> = mats.iter().collect();
+            let mut output: Matrix<$c, $m> = Matrix::zeros();
+            zerostone::frechet_mean(&refs, &mut output, max_iters, tol)
+                .map_err(|e| PyValueError::new_err(format!("LinalgError: {:?}", e)))?;
+            let flat = output.data().to_vec();
+            let array = Array2::from_shape_vec(($c, $c), flat).unwrap();
+            Ok(PyArray2::from_owned_array(py, array))
+        }};
+    }
+
+    match c {
+        4 => do_frechet!(4, 16),
+        8 => do_frechet!(8, 64),
+        16 => do_frechet!(16, 256),
+        32 => do_frechet!(32, 1024),
+        _ => Err(PyValueError::new_err(
+            "channels must be 4, 8, 16, or 32",
+        )),
+    }
+}
+
+/// Compute the Riemannian (affine-invariant) distance between two SPD matrices.
+///
+/// Args:
+///     a (np.ndarray): 2D float64 array of shape (C, C).
+///     b (np.ndarray): 2D float64 array of shape (C, C).
+///
+/// Returns:
+///     float: The Riemannian distance.
+#[pyfunction]
+fn riemannian_distance(a: PyReadonlyArray2<f64>, b: PyReadonlyArray2<f64>) -> PyResult<f64> {
+    let sa = a.shape();
+    let sb = b.shape();
+    let c = sa[0];
+    if sa[1] != c || sb[0] != c || sb[1] != c {
+        return Err(PyValueError::new_err(format!(
+            "Expected two ({0}, {0}) matrices, got ({1}, {2}) and ({3}, {4})",
+            c, sa[0], sa[1], sb[0], sb[1]
+        )));
+    }
+    let da = a.as_slice()?;
+    let db = b.as_slice()?;
+
+    macro_rules! do_dist {
+        ($c:expr, $m:expr) => {{
+            let mut arr_a = [0.0f64; $m];
+            let mut arr_b = [0.0f64; $m];
+            arr_a.copy_from_slice(da);
+            arr_b.copy_from_slice(db);
+            let ma = Matrix::<$c, $m>::new(arr_a);
+            let mb = Matrix::<$c, $m>::new(arr_b);
+            zerostone::riemannian_distance(&ma, &mb)
+                .map_err(|e| PyValueError::new_err(format!("LinalgError: {:?}", e)))
+        }};
+    }
+
+    match c {
+        4 => do_dist!(4, 16),
+        8 => do_dist!(8, 64),
+        16 => do_dist!(16, 256),
+        32 => do_dist!(32, 1024),
+        _ => Err(PyValueError::new_err(
+            "channels must be 4, 8, 16, or 32",
+        )),
+    }
+}
+
+// --- MdmClassifier ---
+
+/// Minimum Distance to Mean (MDM) classifier on the SPD manifold.
+///
+/// Classifies SPD matrices (e.g. covariance matrices) by computing the
+/// Riemannian distance to each class mean, assigning the label of the
+/// nearest mean.
+///
+/// # Example
+/// ```python
+/// import zpybci as zbci
+/// import numpy as np
+///
+/// mdm = zbci.MdmClassifier(channels=4)
+/// X = np.stack([np.eye(4) * (1 + 0.1*i) for i in range(20)])
+/// y = np.array([0]*10 + [1]*10, dtype=np.int64)
+/// mdm.fit(X, y)
+/// preds = mdm.predict(X)
+/// ```
+#[pyclass]
+pub struct MdmClassifier {
+    channels: usize,
+    /// Flattened class means, each of length C*C
+    class_means: Vec<Vec<f64>>,
+    /// Sorted unique class labels
+    class_labels: Vec<i64>,
+}
+
+#[pymethods]
+impl MdmClassifier {
+    /// Create a new MDM classifier.
+    ///
+    /// Args:
+    ///     channels (int): Matrix dimension. Must be 4, 8, 16, or 32.
+    #[new]
+    fn new(channels: usize) -> PyResult<Self> {
+        match channels {
+            4 | 8 | 16 | 32 => {}
+            _ => return Err(PyValueError::new_err("channels must be 4, 8, 16, or 32")),
+        }
+        Ok(Self {
+            channels,
+            class_means: Vec::new(),
+            class_labels: Vec::new(),
+        })
+    }
+
+    /// Fit the classifier by computing Frechet means per class.
+    ///
+    /// Args:
+    ///     x (np.ndarray): 3D float64 array of shape (n_trials, C, C).
+    ///     y (np.ndarray): 1D int64 array of class labels, length n_trials.
+    fn fit(&mut self, x: PyReadonlyArray3<f64>, y: numpy::PyReadonlyArray1<i64>) -> PyResult<()> {
+        let shape = x.shape();
+        let n = shape[0];
+        let c = shape[1];
+        if c != self.channels || shape[2] != c {
+            return Err(PyValueError::new_err(format!(
+                "Expected ({}, {}) matrices, got shape ({}, {}, {})",
+                self.channels, self.channels, n, c, shape[2]
+            )));
+        }
+        let y_data = y.as_slice()?;
+        if y_data.len() != n {
+            return Err(PyValueError::new_err(format!(
+                "X has {} trials but y has {} labels",
+                n,
+                y_data.len()
+            )));
+        }
+        let x_data = x.as_slice()?;
+        let m = c * c;
+
+        // Find unique labels
+        let mut labels: Vec<i64> = y_data.to_vec();
+        labels.sort();
+        labels.dedup();
+
+        let mut means = Vec::with_capacity(labels.len());
+
+        for &label in &labels {
+            // Collect indices for this class
+            let indices: Vec<usize> = y_data
+                .iter()
+                .enumerate()
+                .filter(|(_, &l)| l == label)
+                .map(|(i, _)| i)
+                .collect();
+
+            if indices.is_empty() {
+                return Err(PyValueError::new_err(format!(
+                    "No trials for class {}",
+                    label
+                )));
+            }
+
+            // Compute Frechet mean for this class
+            let mean_flat = self.compute_frechet_mean(x_data, m, &indices)?;
+            means.push(mean_flat);
+        }
+
+        self.class_labels = labels;
+        self.class_means = means;
+        Ok(())
+    }
+
+    /// Predict class labels for SPD matrices.
+    ///
+    /// Args:
+    ///     x (np.ndarray): 3D float64 array of shape (n_trials, C, C).
+    ///
+    /// Returns:
+    ///     list[int]: Predicted class labels.
+    fn predict(&self, x: PyReadonlyArray3<f64>) -> PyResult<Vec<i64>> {
+        if self.class_means.is_empty() {
+            return Err(PyValueError::new_err("Classifier not fitted"));
+        }
+        let shape = x.shape();
+        let n = shape[0];
+        let c = shape[1];
+        if c != self.channels || shape[2] != c {
+            return Err(PyValueError::new_err(format!(
+                "Expected ({}, {}) matrices, got shape ({}, {}, {})",
+                self.channels, self.channels, n, c, shape[2]
+            )));
+        }
+        let x_data = x.as_slice()?;
+        let m = c * c;
+
+        let mut predictions = Vec::with_capacity(n);
+        for i in 0..n {
+            let trial_data = &x_data[i * m..(i + 1) * m];
+            let (cls_idx, _) = self.classify_trial(trial_data)?;
+            predictions.push(self.class_labels[cls_idx]);
+        }
+        Ok(predictions)
+    }
+
+    /// Compute distance matrix from trials to class means.
+    ///
+    /// Args:
+    ///     x (np.ndarray): 3D float64 array of shape (n_trials, C, C).
+    ///
+    /// Returns:
+    ///     np.ndarray: 2D float64 array of shape (n_trials, n_classes).
+    fn transform<'py>(
+        &self,
+        py: Python<'py>,
+        x: PyReadonlyArray3<f64>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        if self.class_means.is_empty() {
+            return Err(PyValueError::new_err("Classifier not fitted"));
+        }
+        let shape = x.shape();
+        let n = shape[0];
+        let c = shape[1];
+        if c != self.channels || shape[2] != c {
+            return Err(PyValueError::new_err(format!(
+                "Expected ({}, {}) matrices, got shape ({}, {}, {})",
+                self.channels, self.channels, n, c, shape[2]
+            )));
+        }
+        let x_data = x.as_slice()?;
+        let m = c * c;
+        let n_classes = self.class_means.len();
+
+        let mut distances = Vec::with_capacity(n * n_classes);
+        for i in 0..n {
+            let trial_data = &x_data[i * m..(i + 1) * m];
+            let dists = self.distances_to_means(trial_data)?;
+            distances.extend_from_slice(&dists);
+        }
+
+        let array = Array2::from_shape_vec((n, n_classes), distances).unwrap();
+        Ok(PyArray2::from_owned_array(py, array))
+    }
+
+    /// Compute classification accuracy.
+    ///
+    /// Args:
+    ///     x (np.ndarray): 3D float64 array of shape (n_trials, C, C).
+    ///     y (np.ndarray): 1D int64 array of true class labels.
+    ///
+    /// Returns:
+    ///     float: Classification accuracy (0.0 to 1.0).
+    fn score(&self, x: PyReadonlyArray3<f64>, y: numpy::PyReadonlyArray1<i64>) -> PyResult<f64> {
+        let predictions = self.predict(x)?;
+        let y_data = y.as_slice()?;
+        if predictions.len() != y_data.len() {
+            return Err(PyValueError::new_err("Length mismatch"));
+        }
+        let correct = predictions
+            .iter()
+            .zip(y_data.iter())
+            .filter(|(&p, &t)| p == t)
+            .count();
+        Ok(correct as f64 / predictions.len() as f64)
+    }
+
+    #[getter]
+    fn channels(&self) -> usize {
+        self.channels
+    }
+
+    #[getter]
+    fn n_classes(&self) -> usize {
+        self.class_labels.len()
+    }
+
+    fn __repr__(&self) -> String {
+        if self.class_means.is_empty() {
+            format!("MdmClassifier(channels={}, fitted=False)", self.channels)
+        } else {
+            format!(
+                "MdmClassifier(channels={}, n_classes={})",
+                self.channels,
+                self.class_labels.len()
+            )
+        }
+    }
+}
+
+impl MdmClassifier {
+    fn compute_frechet_mean(
+        &self,
+        x_data: &[f64],
+        _m: usize,
+        indices: &[usize],
+    ) -> PyResult<Vec<f64>> {
+        macro_rules! do_mean {
+            ($c:expr, $m:expr) => {{
+                let mut mats: Vec<Matrix<$c, $m>> = Vec::with_capacity(indices.len());
+                for &idx in indices {
+                    let mut arr = [0.0f64; $m];
+                    arr.copy_from_slice(&x_data[idx * $m..(idx + 1) * $m]);
+                    mats.push(Matrix::new(arr));
+                }
+                let refs: Vec<&Matrix<$c, $m>> = mats.iter().collect();
+                let mut output: Matrix<$c, $m> = Matrix::zeros();
+                zerostone::frechet_mean(&refs, &mut output, 20, 1e-8)
+                    .map_err(|e| PyValueError::new_err(format!("LinalgError: {:?}", e)))?;
+                Ok(output.data().to_vec())
+            }};
+        }
+
+        match self.channels {
+            4 => do_mean!(4, 16),
+            8 => do_mean!(8, 64),
+            16 => do_mean!(16, 256),
+            32 => do_mean!(32, 1024),
+            _ => Err(PyValueError::new_err("channels must be 4, 8, 16, or 32")),
+        }
+    }
+
+    fn classify_trial(&self, trial_data: &[f64]) -> PyResult<(usize, f64)> {
+        macro_rules! do_classify {
+            ($c:expr, $m:expr) => {{
+                let mut trial_arr = [0.0f64; $m];
+                trial_arr.copy_from_slice(trial_data);
+                let trial_mat = Matrix::<$c, $m>::new(trial_arr);
+
+                let mut mean_mats: Vec<Matrix<$c, $m>> = Vec::with_capacity(self.class_means.len());
+                for mean_data in &self.class_means {
+                    let mut arr = [0.0f64; $m];
+                    arr.copy_from_slice(mean_data);
+                    mean_mats.push(Matrix::new(arr));
+                }
+                let refs: Vec<&Matrix<$c, $m>> = mean_mats.iter().collect();
+                zerostone::mdm_classify(&trial_mat, &refs)
+                    .map_err(|e| PyValueError::new_err(format!("LinalgError: {:?}", e)))
+            }};
+        }
+
+        match self.channels {
+            4 => do_classify!(4, 16),
+            8 => do_classify!(8, 64),
+            16 => do_classify!(16, 256),
+            32 => do_classify!(32, 1024),
+            _ => Err(PyValueError::new_err("channels must be 4, 8, 16, or 32")),
+        }
+    }
+
+    fn distances_to_means(&self, trial_data: &[f64]) -> PyResult<Vec<f64>> {
+        macro_rules! do_distances {
+            ($c:expr, $m:expr) => {{
+                let mut trial_arr = [0.0f64; $m];
+                trial_arr.copy_from_slice(trial_data);
+                let trial_mat = Matrix::<$c, $m>::new(trial_arr);
+
+                let mut dists = Vec::with_capacity(self.class_means.len());
+                for mean_data in &self.class_means {
+                    let mut arr = [0.0f64; $m];
+                    arr.copy_from_slice(mean_data);
+                    let mean_mat = Matrix::<$c, $m>::new(arr);
+                    let d = zerostone::riemannian_distance(&trial_mat, &mean_mat)
+                        .map_err(|e| PyValueError::new_err(format!("LinalgError: {:?}", e)))?;
+                    dists.push(d);
+                }
+                Ok(dists)
+            }};
+        }
+
+        match self.channels {
+            4 => do_distances!(4, 16),
+            8 => do_distances!(8, 64),
+            16 => do_distances!(16, 256),
+            32 => do_distances!(32, 1024),
+            _ => Err(PyValueError::new_err("channels must be 4, 8, 16, or 32")),
+        }
+    }
+}
+
+pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(frechet_mean, m)?)?;
+    m.add_function(wrap_pyfunction!(riemannian_distance, m)?)?;
+    Ok(())
 }

@@ -167,6 +167,15 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
         result
     }
 
+    /// Compute the Frobenius norm of the matrix: sqrt(sum of squared elements).
+    pub fn frobenius_norm(&self) -> f64 {
+        let mut sum = 0.0;
+        for i in 0..M {
+            sum += self.data[i] * self.data[i];
+        }
+        libm::sqrt(sum)
+    }
+
     /// Scalar multiplication.
     pub fn scale(&self, scalar: f64) -> Self {
         let mut result = *self;

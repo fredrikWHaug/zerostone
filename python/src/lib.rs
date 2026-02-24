@@ -37,7 +37,7 @@ use notch::NotchFilter as PyNotchFilter;
 use percentile::StreamingPercentile;
 use pipeline::Pipeline;
 use resampling::{Decimator, Interpolator};
-use riemannian::TangentSpace;
+use riemannian::{MdmClassifier, TangentSpace};
 use spatial::{ChannelRouter, SurfaceLaplacian, CAR};
 use spectral::{Fft, MultiBandPower, Stft};
 use stats::{OnlineCov, OnlineStats};
@@ -268,6 +268,8 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Riemannian geometry
     m.add_class::<TangentSpace>()?;
+    m.add_class::<MdmClassifier>()?;
+    riemannian::register(m)?;
 
     // Online covariance
     m.add_class::<OnlineCov>()?;
