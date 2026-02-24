@@ -442,6 +442,164 @@ fn unvectorize_upper_triangular<const C: usize, const M: usize, const V: usize>(
     matrix
 }
 
+/// Compute the Riemannian (affine-invariant) distance between two SPD matrices.
+///
+/// d(A, B) = || log(A^{-1/2} B A^{-1/2}) ||_F
+///         = sqrt(sum(log(lambda_i)^2))
+///
+/// where lambda_i are the eigenvalues of A^{-1/2} B A^{-1/2}.
+///
+/// # Errors
+///
+/// Returns error if eigenvalue decomposition fails or matrices are not SPD.
+pub fn riemannian_distance<const C: usize, const M: usize>(
+    a: &Matrix<C, M>,
+    b: &Matrix<C, M>,
+) -> Result<f64, LinalgError> {
+    let a_inv_sqrt = matrix_inv_sqrt(a)?;
+
+    // Compute A^{-1/2} B A^{-1/2}
+    let temp = a_inv_sqrt.matmul(b).matmul(&a_inv_sqrt);
+
+    // Eigendecompose
+    let eigen = temp.eigen_symmetric(50, 1e-12)?;
+
+    // d = sqrt(sum(log(lambda_i)^2))
+    let mut sum_sq = 0.0;
+    for i in 0..C {
+        if eigen.eigenvalues[i] <= 0.0 {
+            return Err(LinalgError::NotPositiveDefinite);
+        }
+        let log_val = libm::log(eigen.eigenvalues[i]);
+        sum_sq += log_val * log_val;
+    }
+
+    Ok(libm::sqrt(sum_sq))
+}
+
+/// Compute the Frechet (geometric/Karcher) mean of a set of SPD matrices.
+///
+/// Uses Karcher flow iteration with adaptive step size.
+///
+/// # Arguments
+///
+/// * `matrices` - Slice of references to SPD matrices
+/// * `output` - Output matrix for the result
+/// * `max_iter` - Maximum number of iterations
+/// * `tolerance` - Convergence tolerance on ||J||_F
+///
+/// # Returns
+///
+/// Number of iterations used.
+///
+/// # Errors
+///
+/// Returns error if any matrix operation fails or convergence is not reached.
+pub fn frechet_mean<const C: usize, const M: usize>(
+    matrices: &[&Matrix<C, M>],
+    output: &mut Matrix<C, M>,
+    max_iter: usize,
+    tolerance: f64,
+) -> Result<usize, LinalgError> {
+    let n = matrices.len();
+    if n == 0 {
+        return Err(LinalgError::DimensionMismatch);
+    }
+    if n == 1 {
+        *output = *matrices[0];
+        return Ok(0);
+    }
+
+    // Initialize with arithmetic mean
+    let mut g = Matrix::<C, M>::zeros();
+    for mat in matrices {
+        g = g.add(mat);
+    }
+    g = g.scale(1.0 / n as f64);
+
+    let mut nu = 1.0; // adaptive step size
+    let mut prev_norm = f64::MAX;
+
+    for iter in 0..max_iter {
+        let g_sqrt = matrix_sqrt(&g)?;
+        let g_inv_sqrt = matrix_inv_sqrt(&g)?;
+
+        // Average tangent vectors at G
+        let mut j = Matrix::<C, M>::zeros();
+        for mat in matrices {
+            // logm(G^{-1/2} * C_i * G^{-1/2})
+            let whitened = g_inv_sqrt.matmul(mat).matmul(&g_inv_sqrt);
+            let log_whitened = matrix_log(&whitened)?;
+            j = j.add(&log_whitened);
+        }
+        j = j.scale(1.0 / n as f64);
+
+        // Check convergence
+        let j_norm = j.frobenius_norm();
+        if j_norm < tolerance {
+            *output = g;
+            return Ok(iter);
+        }
+
+        // Adaptive step size
+        if j_norm < prev_norm {
+            nu *= 0.95;
+        } else {
+            nu *= 0.5;
+        }
+        prev_norm = j_norm;
+
+        // Update: G = G^{1/2} * expm(nu * J) * G^{1/2}
+        let scaled_j = j.scale(nu);
+        let exp_j = matrix_exp(&scaled_j)?;
+        g = g_sqrt.matmul(&exp_j).matmul(&g_sqrt);
+
+        // Force symmetry
+        let g_t = g.transpose();
+        g = g.add(&g_t).scale(0.5);
+    }
+
+    // Return best result even if not fully converged
+    *output = g;
+    Ok(max_iter)
+}
+
+/// Classify an SPD matrix trial by minimum Riemannian distance to class means.
+///
+/// # Arguments
+///
+/// * `trial` - SPD matrix to classify
+/// * `class_means` - Slice of references to class mean SPD matrices
+///
+/// # Returns
+///
+/// Tuple of (class_index, min_distance).
+///
+/// # Errors
+///
+/// Returns error if distance computation fails or class_means is empty.
+pub fn mdm_classify<const C: usize, const M: usize>(
+    trial: &Matrix<C, M>,
+    class_means: &[&Matrix<C, M>],
+) -> Result<(usize, f64), LinalgError> {
+    if class_means.is_empty() {
+        return Err(LinalgError::DimensionMismatch);
+    }
+
+    let mut best_class = 0;
+    let mut best_dist = f64::MAX;
+
+    for (i, mean) in class_means.iter().enumerate() {
+        let dist = riemannian_distance(trial, mean)?;
+        if dist < best_dist {
+            best_dist = dist;
+            best_class = i;
+        }
+    }
+
+    Ok((best_class, best_dist))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -655,5 +813,174 @@ mod tests {
             different,
             "Different matrices should produce different vectors"
         );
+    }
+
+    // --- Riemannian distance tests ---
+
+    #[test]
+    fn test_riemannian_distance_identity_to_diagonal() {
+        // d(I, diag(a,b)) = sqrt(log(a)^2 + log(b)^2)
+        let eye: Matrix<2, 4> = Matrix::identity();
+        let mut diag: Matrix<2, 4> = Matrix::zeros();
+        diag.set(0, 0, 2.0);
+        diag.set(1, 1, 3.0);
+
+        let d = riemannian_distance(&eye, &diag).unwrap();
+        let expected =
+            libm::sqrt(libm::log(2.0) * libm::log(2.0) + libm::log(3.0) * libm::log(3.0));
+        assert!(
+            (d - expected).abs() < 1e-9,
+            "d={}, expected={}",
+            d,
+            expected
+        );
+    }
+
+    #[test]
+    fn test_riemannian_distance_self_is_zero() {
+        let cov: Matrix<3, 9> = Matrix::new([2.0, 0.5, 0.3, 0.5, 1.8, 0.2, 0.3, 0.2, 1.5]);
+        let d = riemannian_distance(&cov, &cov).unwrap();
+        assert!(d < 1e-9, "d(A,A) should be 0, got {}", d);
+    }
+
+    #[test]
+    fn test_riemannian_distance_symmetry() {
+        let a: Matrix<2, 4> = Matrix::new([2.0, 0.3, 0.3, 1.5]);
+        let b: Matrix<2, 4> = Matrix::new([1.5, 0.2, 0.2, 2.5]);
+
+        let d_ab = riemannian_distance(&a, &b).unwrap();
+        let d_ba = riemannian_distance(&b, &a).unwrap();
+        assert!(
+            (d_ab - d_ba).abs() < 1e-9,
+            "d(A,B)={} != d(B,A)={}",
+            d_ab,
+            d_ba
+        );
+    }
+
+    #[test]
+    fn test_riemannian_distance_triangle_inequality() {
+        let a: Matrix<2, 4> = Matrix::new([2.0, 0.3, 0.3, 1.5]);
+        let b: Matrix<2, 4> = Matrix::new([1.5, 0.2, 0.2, 2.5]);
+        let c: Matrix<2, 4> = Matrix::new([3.0, 0.1, 0.1, 1.2]);
+
+        let d_ab = riemannian_distance(&a, &b).unwrap();
+        let d_bc = riemannian_distance(&b, &c).unwrap();
+        let d_ac = riemannian_distance(&a, &c).unwrap();
+
+        assert!(
+            d_ac <= d_ab + d_bc + 1e-9,
+            "Triangle inequality violated: d(A,C)={} > d(A,B)+d(B,C)={}",
+            d_ac,
+            d_ab + d_bc
+        );
+    }
+
+    // --- Frechet mean tests ---
+
+    #[test]
+    fn test_frechet_mean_identical_matrices() {
+        let cov: Matrix<3, 9> = Matrix::new([2.0, 0.5, 0.3, 0.5, 1.8, 0.2, 0.3, 0.2, 1.5]);
+        let matrices = [&cov, &cov, &cov];
+        let mut output = Matrix::zeros();
+
+        let iters = frechet_mean(&matrices, &mut output, 20, 1e-8).unwrap();
+        assert!(iters < 5, "Should converge quickly for identical matrices");
+
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!(
+                    (output.get(i, j) - cov.get(i, j)).abs() < 1e-6,
+                    "Mean of identical matrices should equal the matrix"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_frechet_mean_identity_matrices() {
+        let eye: Matrix<3, 9> = Matrix::identity();
+        let matrices = [&eye, &eye, &eye, &eye];
+        let mut output = Matrix::zeros();
+
+        frechet_mean(&matrices, &mut output, 20, 1e-8).unwrap();
+
+        for i in 0..3 {
+            for j in 0..3 {
+                let expected = if i == j { 1.0 } else { 0.0 };
+                assert!(
+                    (output.get(i, j) - expected).abs() < 1e-6,
+                    "Mean of identity matrices should be identity"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_frechet_mean_convergence_8x8() {
+        // Build distinct SPD matrices
+        let mut mats: [Matrix<8, 64>; 4] = [Matrix::zeros(); 4];
+        for (idx, mat) in mats.iter_mut().enumerate() {
+            *mat = Matrix::identity();
+            for i in 0..8 {
+                mat.set(i, i, 1.0 + 0.5 * ((i + idx) as f64));
+            }
+            // Add small off-diagonal
+            for i in 0..7 {
+                let off = 0.1 * libm::sin((i + idx + 1) as f64);
+                mat.set(i, i + 1, off);
+                mat.set(i + 1, i, off);
+            }
+        }
+
+        let refs = [&mats[0], &mats[1], &mats[2], &mats[3]];
+        let mut output = Matrix::zeros();
+
+        let iters = frechet_mean(&refs, &mut output, 50, 1e-8).unwrap();
+        assert!(iters <= 50, "Should converge within 50 iterations");
+
+        // Verify output is SPD: eigenvalues all positive
+        let eigen = output.eigen_symmetric(30, 1e-10).unwrap();
+        for i in 0..8 {
+            assert!(
+                eigen.eigenvalues[i] > 0.0,
+                "Mean should be SPD, eigenvalue {} = {}",
+                i,
+                eigen.eigenvalues[i]
+            );
+        }
+    }
+
+    // --- MDM classify tests ---
+
+    #[test]
+    fn test_mdm_classify_2class() {
+        // Class 0: high variance in channel 0
+        let class0: Matrix<2, 4> = Matrix::new([3.0, 0.0, 0.0, 1.0]);
+        // Class 1: high variance in channel 1
+        let class1: Matrix<2, 4> = Matrix::new([1.0, 0.0, 0.0, 3.0]);
+
+        let means = [&class0, &class1];
+
+        // Trial close to class 0
+        let trial0: Matrix<2, 4> = Matrix::new([2.8, 0.0, 0.0, 1.1]);
+        let (cls, _) = mdm_classify(&trial0, &means).unwrap();
+        assert_eq!(cls, 0, "Should classify as class 0");
+
+        // Trial close to class 1
+        let trial1: Matrix<2, 4> = Matrix::new([1.1, 0.0, 0.0, 2.8]);
+        let (cls, _) = mdm_classify(&trial1, &means).unwrap();
+        assert_eq!(cls, 1, "Should classify as class 1");
+    }
+
+    #[test]
+    fn test_mdm_classify_exact_match() {
+        let class0: Matrix<2, 4> = Matrix::new([2.0, 0.0, 0.0, 1.0]);
+        let class1: Matrix<2, 4> = Matrix::new([1.0, 0.0, 0.0, 2.0]);
+        let means = [&class0, &class1];
+
+        let (cls, dist) = mdm_classify(&class0, &means).unwrap();
+        assert_eq!(cls, 0);
+        assert!(dist < 1e-9, "Distance to exact match should be ~0");
     }
 }

@@ -121,7 +121,10 @@ pub use interpolate::{InterpolationMethod, Interpolator};
 pub use notch::NotchFilter;
 pub use percentile::StreamingPercentile;
 pub use pipeline::{BlockProcessor, CloneableProcessor, Pipeline, RateChangingProcessor, Terminal};
-pub use riemannian::{matrix_exp, matrix_inv_sqrt, matrix_log, matrix_sqrt, TangentSpace};
+pub use riemannian::{
+    frechet_mean, matrix_exp, matrix_inv_sqrt, matrix_log, matrix_sqrt, mdm_classify,
+    riemannian_distance, TangentSpace,
+};
 pub use rms::WindowedRms;
 pub use router::ChannelRouter;
 pub use stats::{OnlineCov, OnlineStats};
