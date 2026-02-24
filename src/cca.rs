@@ -281,7 +281,10 @@ pub fn fill_ssvep_references<const H: usize>(
     output: &mut [[f64; H]],
 ) {
     assert!(H >= 2, "Need at least 2 reference components (1 harmonic)");
-    assert!(H.is_multiple_of(2), "H must be even (sin/cos pairs)");
+    #[allow(clippy::manual_is_multiple_of)]
+    {
+        assert!(H % 2 == 0, "H must be even (sin/cos pairs)");
+    }
 
     let n_harmonics = H / 2;
 
