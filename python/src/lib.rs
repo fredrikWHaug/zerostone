@@ -11,6 +11,7 @@ mod connectivity;
 mod csp;
 mod deconvolution;
 mod detection;
+mod erp;
 mod filters;
 mod notch;
 mod percentile;
@@ -288,6 +289,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // CCA / SSVEP detection
     cca::register(m)?;
+
+    // ERP / xDAWN
+    erp::register(m)?;
 
     // Window functions
     window::register(m)?;
