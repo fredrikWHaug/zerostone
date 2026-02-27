@@ -124,7 +124,7 @@ pub use notch::NotchFilter;
 pub use percentile::StreamingPercentile;
 pub use pipeline::{BlockProcessor, CloneableProcessor, Pipeline, RateChangingProcessor, Terminal};
 pub use riemannian::{
-    frechet_mean, matrix_exp, matrix_inv_sqrt, matrix_log, matrix_sqrt, mdm_classify,
+    frechet_mean, matrix_exp, matrix_inv_sqrt, matrix_log, matrix_sqrt, mdm_classify, recenter,
     riemannian_distance, TangentSpace,
 };
 pub use rms::WindowedRms;
