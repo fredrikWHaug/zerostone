@@ -1,7 +1,7 @@
 //! Python bindings for Riemannian geometry (tangent space projection, MDM classifier).
 
 use numpy::ndarray::{Array1, Array2};
-use numpy::{PyArray1, PyArray2, PyReadonlyArray2, PyReadonlyArray3, PyUntypedArrayMethods};
+use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArray2, PyReadonlyArray3, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use zerostone::linalg::Matrix;
@@ -287,6 +287,80 @@ fn riemannian_distance(a: PyReadonlyArray2<f64>, b: PyReadonlyArray2<f64>) -> Py
         8 => do_dist!(8, 64),
         16 => do_dist!(16, 256),
         32 => do_dist!(32, 1024),
+        _ => Err(PyValueError::new_err(
+            "channels must be 4, 8, 16, or 32",
+        )),
+    }
+}
+
+/// Recenter SPD matrices around the identity by removing a reference mean.
+///
+/// Computes ``M^{-1/2} X_i M^{-1/2}`` for each matrix ``X_i``, where ``M``
+/// is the given reference mean. After recentering, the Frechet mean of the
+/// transformed matrices is close to the identity matrix.
+///
+/// This is the core operation for Riemannian transfer learning.
+///
+/// Args:
+///     matrices (np.ndarray): 3D float64 array of shape (N, C, C).
+///     mean (np.ndarray): 2D float64 array of shape (C, C) — the reference mean.
+///
+/// Returns:
+///     np.ndarray: 3D float64 array of shape (N, C, C) — recentered matrices.
+#[pyfunction]
+fn recenter<'py>(
+    py: Python<'py>,
+    matrices: PyReadonlyArray3<f64>,
+    mean: PyReadonlyArray2<f64>,
+) -> PyResult<Bound<'py, numpy::PyArray3<f64>>> {
+    let shape = matrices.shape();
+    let n = shape[0];
+    let c = shape[1];
+    if shape[2] != c {
+        return Err(PyValueError::new_err(format!(
+            "Expected square matrices, got shape ({}, {}, {})",
+            n, c, shape[2]
+        )));
+    }
+    let mean_shape = mean.shape();
+    if mean_shape[0] != c || mean_shape[1] != c {
+        return Err(PyValueError::new_err(format!(
+            "Mean shape ({}, {}) doesn't match matrix dimension {}",
+            mean_shape[0], mean_shape[1], c
+        )));
+    }
+    let mat_data = matrices.as_slice()?;
+    let mean_data = mean.as_slice()?;
+
+    macro_rules! do_recenter {
+        ($c:expr, $m:expr) => {{
+            // Compute mean^{-1/2}
+            let mut mean_arr = [0.0f64; $m];
+            mean_arr.copy_from_slice(mean_data);
+            let mean_mat = Matrix::<$c, $m>::new(mean_arr);
+            let inv_sqrt = zerostone::matrix_inv_sqrt(&mean_mat)
+                .map_err(|e| PyValueError::new_err(format!("LinalgError: {:?}", e)))?;
+
+            // Recenter each matrix
+            let mut result = Vec::with_capacity(n * $m);
+            for i in 0..n {
+                let mut arr = [0.0f64; $m];
+                arr.copy_from_slice(&mat_data[i * $m..(i + 1) * $m]);
+                let mat = Matrix::<$c, $m>::new(arr);
+                let recentered = zerostone::recenter(&mat, &inv_sqrt);
+                result.extend_from_slice(recentered.data());
+            }
+
+            let array = numpy::ndarray::Array3::from_shape_vec((n, $c, $c), result).unwrap();
+            Ok(numpy::PyArray3::from_owned_array(py, array))
+        }};
+    }
+
+    match c {
+        4 => do_recenter!(4, 16),
+        8 => do_recenter!(8, 64),
+        16 => do_recenter!(16, 256),
+        32 => do_recenter!(32, 1024),
         _ => Err(PyValueError::new_err(
             "channels must be 4, 8, 16, or 32",
         )),
@@ -608,5 +682,6 @@ impl MdmClassifier {
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(frechet_mean, m)?)?;
     m.add_function(wrap_pyfunction!(riemannian_distance, m)?)?;
+    m.add_function(wrap_pyfunction!(recenter, m)?)?;
     Ok(())
 }

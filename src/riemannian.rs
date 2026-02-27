@@ -564,6 +564,31 @@ pub fn frechet_mean<const C: usize, const M: usize>(
     Ok(max_iter)
 }
 
+/// Recenter an SPD matrix around a new reference point.
+///
+/// Computes `M^{-1/2} * X * M^{-1/2}` where `M^{-1/2}` is the pre-computed
+/// inverse square root of the reference mean. After recentering a set of
+/// SPD matrices, their Frechet mean becomes (close to) the identity matrix.
+///
+/// This is the core operation for Riemannian transfer learning: by recentering
+/// each subject's covariance matrices to identity, domain shift between subjects
+/// is reduced.
+///
+/// # Arguments
+///
+/// * `matrix` - SPD matrix to recenter
+/// * `mean_inv_sqrt` - Inverse square root of the reference mean (pre-computed)
+///
+/// # Returns
+///
+/// Recentered SPD matrix
+pub fn recenter<const C: usize, const M: usize>(
+    matrix: &Matrix<C, M>,
+    mean_inv_sqrt: &Matrix<C, M>,
+) -> Matrix<C, M> {
+    mean_inv_sqrt.matmul(matrix).matmul(mean_inv_sqrt)
+}
+
 /// Classify an SPD matrix trial by minimum Riemannian distance to class means.
 ///
 /// # Arguments
@@ -982,5 +1007,81 @@ mod tests {
         let (cls, dist) = mdm_classify(&class0, &means).unwrap();
         assert_eq!(cls, 0);
         assert!(dist < 1e-9, "Distance to exact match should be ~0");
+    }
+
+    // --- Recenter tests ---
+
+    #[test]
+    fn test_recenter_identity_mean() {
+        // Recentering with identity as mean should return the same matrix
+        let eye: Matrix<3, 9> = Matrix::identity();
+        let inv_sqrt_eye = matrix_inv_sqrt(&eye).unwrap();
+
+        let cov: Matrix<3, 9> = Matrix::new([2.0, 0.5, 0.3, 0.5, 1.8, 0.2, 0.3, 0.2, 1.5]);
+        let recentered = recenter(&cov, &inv_sqrt_eye);
+
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!(
+                    (recentered.get(i, j) - cov.get(i, j)).abs() < 1e-9,
+                    "Recentering with identity should be no-op"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_recenter_frechet_mean_becomes_identity() {
+        // After recentering, the Frechet mean should be close to identity
+        let mat1: Matrix<3, 9> = Matrix::new([2.0, 0.3, 0.1, 0.3, 1.5, 0.2, 0.1, 0.2, 1.8]);
+        let mat2: Matrix<3, 9> = Matrix::new([1.8, 0.2, 0.1, 0.2, 2.2, 0.3, 0.1, 0.3, 1.3]);
+        let mat3: Matrix<3, 9> = Matrix::new([1.5, 0.1, 0.2, 0.1, 1.9, 0.1, 0.2, 0.1, 2.0]);
+
+        let refs = [&mat1, &mat2, &mat3];
+        let mut mean = Matrix::zeros();
+        frechet_mean(&refs, &mut mean, 50, 1e-10).unwrap();
+
+        let mean_inv_sqrt = matrix_inv_sqrt(&mean).unwrap();
+
+        let r1 = recenter(&mat1, &mean_inv_sqrt);
+        let r2 = recenter(&mat2, &mean_inv_sqrt);
+        let r3 = recenter(&mat3, &mean_inv_sqrt);
+
+        let r_refs = [&r1, &r2, &r3];
+        let mut r_mean = Matrix::zeros();
+        frechet_mean(&r_refs, &mut r_mean, 50, 1e-10).unwrap();
+
+        for i in 0..3 {
+            for j in 0..3 {
+                let expected = if i == j { 1.0 } else { 0.0 };
+                assert!(
+                    (r_mean.get(i, j) - expected).abs() < 1e-4,
+                    "Recentered Frechet mean should be ~identity, got ({},{})={}",
+                    i,
+                    j,
+                    r_mean.get(i, j)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_recenter_preserves_spd() {
+        // Recentered matrix should still be SPD (all positive eigenvalues)
+        let cov: Matrix<3, 9> = Matrix::new([2.0, 0.5, 0.3, 0.5, 1.8, 0.2, 0.3, 0.2, 1.5]);
+        let mean: Matrix<3, 9> = Matrix::new([1.8, 0.3, 0.1, 0.3, 2.0, 0.2, 0.1, 0.2, 1.6]);
+        let mean_inv_sqrt = matrix_inv_sqrt(&mean).unwrap();
+
+        let recentered = recenter(&cov, &mean_inv_sqrt);
+
+        let eigen = recentered.eigen_symmetric(30, 1e-10).unwrap();
+        for i in 0..3 {
+            assert!(
+                eigen.eigenvalues[i] > 0.0,
+                "Recentered matrix should be SPD, eigenvalue {} = {}",
+                i,
+                eigen.eigenvalues[i]
+            );
+        }
     }
 }

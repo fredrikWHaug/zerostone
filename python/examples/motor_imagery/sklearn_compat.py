@@ -9,16 +9,18 @@ Supported transformers:
     TangentSpaceTransformer -- wraps zbci.TangentSpace
     BandPowerTransformer   -- wraps zbci.MultiBandPower
     CovarianceEstimator    -- wraps zbci.OnlineCov
+    MdmWrapper             -- wraps zbci.MdmClassifier
 
 Channel constraints (inherited from zpybci enum dispatch):
     AdaptiveCsp    : channels in {4, 8, 16, 32, 64}, filters in {2, 4, 6}
     TangentSpace   : channels in {4, 8, 16, 32}
     MultiBandPower : channels in {1, 4, 8, 16, 32, 64}, fft_size in {256, 512, 1024}
     OnlineCov      : channels in {4, 8, 16, 32, 64}
+    MdmClassifier  : channels in {4, 8, 16, 32}
 """
 
 import numpy as np
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator, TransformerMixin, ClassifierMixin
 
 import zpybci as zbci
 
@@ -308,3 +310,44 @@ class CovarianceEstimator(BaseEstimator, TransformerMixin):
             covariances[i] = cov.covariance
 
         return covariances
+
+
+# ---------------------------------------------------------------------------
+# MdmWrapper
+# ---------------------------------------------------------------------------
+
+class MdmWrapper(BaseEstimator, ClassifierMixin):
+    """Minimum Distance to Mean classifier as a sklearn classifier.
+
+    Wraps zbci.MdmClassifier. Expects covariance matrices as input (3D array).
+    Intended to be used after CovarianceEstimator in a pipeline.
+
+    Input:
+        X : (n_trials, n_channels, n_channels) float64 — covariance matrices
+        y : (n_trials,) int array
+
+    Parameters
+    ----------
+    channels : int
+        Matrix dimension. Must be 4, 8, 16, or 32.
+    """
+
+    def __init__(self, channels):
+        self.channels = channels
+
+    def fit(self, X, y):
+        self.mdm_ = zbci.MdmClassifier(channels=self.channels)
+        X = np.asarray(X, dtype=np.float64)
+        y = np.asarray(y, dtype=np.int64)
+        self.mdm_.fit(X, y)
+        self.classes_ = np.unique(y)
+        return self
+
+    def predict(self, X):
+        X = np.asarray(X, dtype=np.float64)
+        return np.array(self.mdm_.predict(X), dtype=np.int64)
+
+    def score(self, X, y):
+        X = np.asarray(X, dtype=np.float64)
+        y = np.asarray(y, dtype=np.int64)
+        return self.mdm_.score(X, y)
