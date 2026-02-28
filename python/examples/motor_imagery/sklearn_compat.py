@@ -10,13 +10,15 @@ Supported transformers:
     BandPowerTransformer   -- wraps zbci.MultiBandPower
     CovarianceEstimator    -- wraps zbci.OnlineCov
     MdmWrapper             -- wraps zbci.MdmClassifier
+    XDawnWrapper           -- wraps zbci.XDawnTransformer
 
 Channel constraints (inherited from zpybci enum dispatch):
-    AdaptiveCsp    : channels in {4, 8, 16, 32, 64}, filters in {2, 4, 6}
-    TangentSpace   : channels in {4, 8, 16, 32}
-    MultiBandPower : channels in {1, 4, 8, 16, 32, 64}, fft_size in {256, 512, 1024}
-    OnlineCov      : channels in {4, 8, 16, 32, 64}
-    MdmClassifier  : channels in {4, 8, 16, 32}
+    AdaptiveCsp      : channels in {4, 8, 16, 32, 64}, filters in {2, 4, 6}
+    TangentSpace     : channels in {4, 8, 16, 32}
+    MultiBandPower   : channels in {1, 4, 8, 16, 32, 64}, fft_size in {256, 512, 1024}
+    OnlineCov        : channels in {4, 8, 16, 32, 64}
+    MdmClassifier    : channels in {4, 8, 16, 32}
+    XDawnTransformer : channels in {2, 4, 8, 16, 32, 64}, filters in {1, 2, 4, 6}
 """
 
 import numpy as np
@@ -351,3 +353,74 @@ class MdmWrapper(BaseEstimator, ClassifierMixin):
         X = np.asarray(X, dtype=np.float64)
         y = np.asarray(y, dtype=np.int64)
         return self.mdm_.score(X, y)
+
+
+# ---------------------------------------------------------------------------
+# XDawnWrapper
+# ---------------------------------------------------------------------------
+
+class XDawnWrapper(BaseEstimator, TransformerMixin):
+    """xDAWN spatial filter as a sklearn transformer.
+
+    Wraps zbci.XDawnTransformer. Learns spatial filters that maximize the
+    signal-to-signal-plus-noise ratio of event-related potentials (ERPs).
+    Expects binary labels (0 = nontarget, 1 = target).
+
+    Input:
+        X : (n_trials, n_samples, n_channels) float64 array
+        y : (n_trials,) int array, binary {0, 1}
+
+    Output:
+        (n_trials, n_samples, n_filters) float64 -- spatially filtered epochs
+
+    Parameters
+    ----------
+    channels : int
+        Number of EEG channels. Must be 2, 4, 8, 16, 32, or 64.
+    filters : int
+        Number of spatial filters to extract. Must be 1, 2, 4, or 6.
+    regularization : float
+        Regularization for covariance matrices. Default 1e-6.
+    """
+
+    def __init__(self, channels, filters=2, regularization=1e-6):
+        self.channels = channels
+        self.filters = filters
+        self.regularization = regularization
+
+    def fit(self, X, y):
+        """Fit xDAWN spatial filters on labeled epochs.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_trials, n_samples, n_channels)
+        y : array-like, shape (n_trials,), binary {0, 1}
+
+        Returns
+        -------
+        self
+        """
+        self.xdawn_ = zbci.XDawnTransformer(
+            channels=self.channels,
+            filters=self.filters,
+            regularization=self.regularization,
+        )
+
+        X = np.asarray(X, dtype=np.float64)
+        y = np.asarray(y, dtype=np.int64)
+        self.xdawn_.fit(X, y)
+        return self
+
+    def transform(self, X):
+        """Apply learned spatial filters to epochs.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_trials, n_samples, n_channels)
+
+        Returns
+        -------
+        filtered : ndarray, shape (n_trials, n_samples, n_filters)
+        """
+        X = np.asarray(X, dtype=np.float64)
+        return np.asarray(self.xdawn_.transform(X))

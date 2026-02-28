@@ -4,22 +4,46 @@ Zero-allocation signal processing primitives for real-time neural data acquisiti
 
 ---
 
-## Quick Start
-
-The fastest way to see what Zerostone can do is to run the interactive **Explore Tool**:
+## Python Package
 
 ```bash
-# Clone the repository
-git clone https://github.com/fredrikwhaug/zerostone.git
-cd zerostone
+pip install zpybci
+```
 
-# Run a built-in recipe
+```python
+import zpybci as zbci
+
+# Bandpass filter for alpha band
+bpf = zbci.IirFilter.butterworth_bandpass(sample_rate=256.0, low_cutoff=8.0, high_cutoff=12.0)
+filtered = bpf.process(signal)
+
+# SSVEP frequency detection
+best_freq, correlation = zbci.ssvep_detect(eeg_data, sample_rate=250.0,
+                                            target_frequencies=[8.0, 10.0, 12.0, 15.0])
+
+# Riemannian MDM classifier (sklearn-compatible)
+mdm = zbci.MdmClassifier(channels=16)
+mdm.fit(covariance_matrices, labels)
+predictions = mdm.predict(test_covariances)
+```
+
+Supports all three major BCI paradigms: motor imagery (CSP), SSVEP (CCA), and P300/ERP (xDAWN). See [`python/README.md`](python/README.md) for the full feature list.
+
+---
+
+## Rust Core
+
+The Rust library is `no_std` compatible with zero heap allocation, suitable for embedded deployment on ARM Cortex-M and similar targets.
+
+### Explore Tool
+
+```bash
 cargo run --example explore -- --recipe lowpass
 ```
 
-This will generate a visualization showing a 10 Hz signal with 60 Hz interference being cleaned by a lowpass filter. Check `output/explore_lowpass.png` to see the results!
+This generates a visualization showing a 10 Hz signal with 60 Hz interference being cleaned by a lowpass filter. Check `output/explore_lowpass.png` to see the results.
 
-**Try other recipes:**
+**Other recipes:**
 ```bash
 cargo run --example explore -- --recipe highpass   # Remove low-frequency drift
 cargo run --example explore -- --recipe bandpass   # Isolate a frequency band
