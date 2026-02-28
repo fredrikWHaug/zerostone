@@ -44,6 +44,7 @@ cleaned = pipe.process(signal)
 - **CAR** -- common average reference
 - **Surface Laplacian** -- current source density approximation
 - **Channel Router** -- flexible channel remapping
+- **xDAWN** -- supervised spatial filters maximizing ERP signal-to-noise ratio
 
 ### Spectral Analysis
 - **FFT** -- fast Fourier transform (magnitude/phase)
@@ -69,10 +70,21 @@ cleaned = pipe.process(signal)
 ### Statistics
 - **Online mean/variance** -- Welford's algorithm, no buffer required
 - **Online covariance** -- streaming covariance matrix
+- **Connectivity** -- coherence and phase locking value (PLV)
+
+### BCI Paradigms
+- **Motor imagery** -- CSP with online adaptation, sklearn-compatible transformer
+- **SSVEP** -- CCA-based frequency detection, reference signal generation
+- **P300/ERP** -- epoch averaging, xDAWN spatial filters
+
+### Riemannian Geometry
+- **Tangent space** -- SPD manifold projection for classification
+- **MDM classifier** -- minimum distance to mean on SPD manifold
+- **Frechet mean** -- geometric mean of SPD matrices
+- **Riemannian distance** -- affine-invariant distance metric
+- **Recentering** -- domain adaptation via Riemannian transport
 
 ### Advanced
-- **CSP** -- common spatial patterns with online adaptation
-- **Riemannian tangent space** -- SPD manifold projection for classification
 - **OASIS deconvolution** -- calcium transient inference from fluorescence traces
 
 ### Utilities
@@ -85,7 +97,7 @@ cleaned = pipe.process(signal)
 
 ## Version
 
-0.2.0
+0.3.0
 
 ## License
 
