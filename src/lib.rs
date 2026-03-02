@@ -84,6 +84,7 @@ pub mod erp;
 mod fft;
 mod filter;
 pub mod hilbert;
+pub mod ica;
 mod interpolate;
 pub mod linalg;
 mod notch;
@@ -119,13 +120,14 @@ pub use filter::{
     LmsFilter, MedianFilter, NlmsFilter, SurfaceLaplacian,
 };
 pub use hilbert::HilbertTransform;
+pub use ica::{ContrastFunction, Ica, IcaError};
 pub use interpolate::{InterpolationMethod, Interpolator};
 pub use notch::NotchFilter;
 pub use percentile::StreamingPercentile;
 pub use pipeline::{BlockProcessor, CloneableProcessor, Pipeline, RateChangingProcessor, Terminal};
 pub use riemannian::{
     frechet_mean, matrix_exp, matrix_inv_sqrt, matrix_log, matrix_sqrt, mdm_classify, recenter,
-    riemannian_distance, TangentSpace,
+    reconstruct_from_eigen, riemannian_distance, TangentSpace,
 };
 pub use rms::WindowedRms;
 pub use router::ChannelRouter;

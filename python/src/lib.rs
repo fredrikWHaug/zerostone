@@ -13,6 +13,7 @@ mod deconvolution;
 mod detection;
 mod erp;
 mod filters;
+mod ica;
 mod notch;
 mod percentile;
 mod pipeline;
@@ -44,6 +45,7 @@ use spectral::{Fft, MultiBandPower, Stft};
 use stats::{OnlineCov, OnlineStats};
 use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
 use wavelet::Cwt;
+use ica::Ica;
 use welch::WelchPsd as PyWelchPsd;
 
 /// IIR (Infinite Impulse Response) filter with cascaded biquad sections.
@@ -375,6 +377,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TangentSpace>()?;
     m.add_class::<MdmClassifier>()?;
     riemannian::register(m)?;
+
+    // ICA
+    m.add_class::<Ica>()?;
 
     // Online covariance
     m.add_class::<OnlineCov>()?;
