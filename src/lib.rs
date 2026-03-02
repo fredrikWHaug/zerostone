@@ -51,9 +51,9 @@
 //! use zerostone::{BiquadCoeffs, IirFilter, ThresholdDetector};
 //!
 //! // Create a 4th-order Butterworth lowpass filter at 100 Hz (1000 Hz sample rate)
-//! // 4th order = 2 cascaded biquad sections
-//! let coeffs = BiquadCoeffs::butterworth_lowpass(1000.0, 100.0);
-//! let mut filter: IirFilter<2> = IirFilter::new([coeffs, coeffs]);
+//! // 4th order = 2 cascaded biquad sections with proper pole placement
+//! let sections = BiquadCoeffs::butterworth_lowpass_sections::<2>(1000.0, 100.0);
+//! let mut filter: IirFilter<2> = IirFilter::new(sections);
 //!
 //! // Create a spike detector for 8 channels with threshold 3.0 and 100-sample refractory
 //! let mut detector: ThresholdDetector<8> = ThresholdDetector::new(3.0, 100);

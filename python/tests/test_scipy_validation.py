@@ -5,12 +5,8 @@ These tests verify that zerostone's signal processing primitives produce
 correct results. Key considerations:
 
 - zerostone uses f32 (single precision), scipy uses f64 (double precision)
-- zerostone's IIR filters use cascaded IDENTICAL biquad sections, while scipy
-  uses proper pole placement for each section. This means zerostone's "4th order"
-  filter is actually a 2nd-order filter squared, giving steeper rolloff but
-  different phase characteristics. This is a design choice, not a bug.
-- We validate functional correctness (passband/stopband behavior) rather than
-  exact numerical matching with scipy
+- zerostone's IIR Butterworth filters use proper pole placement per section,
+  matching scipy.signal.butter output to within f32 precision
 - FIR filters should match exactly (same algorithm)
 """
 
@@ -372,16 +368,10 @@ class TestMedianFilterValidation:
 
 
 class TestFrequencyResponse:
-    """Test frequency response characteristics.
-
-    Note: Zerostone's Butterworth implementation has a slight resonance peak
-    near the cutoff frequency due to the cascaded identical biquad design.
-    This is different from scipy's true Butterworth response but still provides
-    effective passband/stopband separation.
-    """
+    """Test frequency response characteristics against scipy."""
 
     def test_lowpass_frequency_response_shape(self):
-        """Verify lowpass effectively separates passband from stopband."""
+        """Verify lowpass has monotonically decreasing response with no resonance."""
         import zpybci as zbci
 
         sample_rate = 1000.0
@@ -389,68 +379,99 @@ class TestFrequencyResponse:
 
         zs_filter = zbci.IirFilter.butterworth_lowpass(sample_rate, cutoff)
 
-        # Measure response at several frequencies
-        test_freqs = [10, 50, 150, 200, 300]  # Avoid exact cutoff due to resonance
+        # Measure response at several frequencies including cutoff
+        test_freqs = [10, 50, 100, 150, 200, 300]
         zs_response = []
 
         for freq in test_freqs:
             zs_filter.reset()
 
-            # Create test signal
             t = np.arange(0, 2, 1/sample_rate, dtype=np.float32)
             test_signal = np.sin(2 * np.pi * freq * t).astype(np.float32)
-
-            # Filter and measure amplitude
             zs_output = zs_filter.process(test_signal)
 
-            # Measure RMS of last half (after settling)
             zs_rms = np.sqrt(np.mean(zs_output[1000:] ** 2))
             input_rms = np.sqrt(np.mean(test_signal[1000:] ** 2))
             zs_response.append(zs_rms / input_rms)
 
-        # Verify frequency response shape:
-        # 1. Low frequencies should pass (may have slight boost due to resonance)
-        assert zs_response[0] > 0.9 and zs_response[0] < 2.0, f"10 Hz gain unexpected: {zs_response[0]}"
-        assert zs_response[1] > 0.9, f"50 Hz should pass: {zs_response[1]}"
+        # 1. Passband: gain should be close to 1.0 (no resonance)
+        assert 0.95 < zs_response[0] < 1.05, f"10 Hz gain: {zs_response[0]}"
+        assert 0.90 < zs_response[1] < 1.05, f"50 Hz gain: {zs_response[1]}"
 
-        # 2. Stopband frequencies should be heavily attenuated
-        assert zs_response[2] < 0.5, f"150 Hz should be attenuated: {zs_response[2]}"
-        assert zs_response[3] < 0.1, f"200 Hz should be heavily attenuated: {zs_response[3]}"
-        assert zs_response[4] < 0.01, f"300 Hz should be very attenuated: {zs_response[4]}"
+        # 2. Cutoff: gain should be ~0.707 (-3dB)
+        assert 0.65 < zs_response[2] < 0.75, f"Cutoff gain: {zs_response[2]} (expect ~0.707)"
 
-        # 3. Stopband response should be monotonically decreasing
-        for i in range(2, len(zs_response) - 1):
-            assert zs_response[i] >= zs_response[i+1], \
-                f"Stopband response should decrease: {test_freqs[i]}Hz={zs_response[i]}, {test_freqs[i+1]}Hz={zs_response[i+1]}"
+        # 3. No gain > 1.0 at any frequency (no resonance)
+        for i, (freq, gain) in enumerate(zip(test_freqs, zs_response)):
+            assert gain <= 1.05, f"Resonance detected at {freq} Hz: gain={gain}"
 
-    def test_resonance_documented(self):
-        """Document the resonance behavior near cutoff frequency."""
+        # 4. Stopband attenuation
+        assert zs_response[3] < 0.3, f"150 Hz should be attenuated: {zs_response[3]}"
+        assert zs_response[4] < 0.05, f"200 Hz should be heavily attenuated: {zs_response[4]}"
+        assert zs_response[5] < 0.005, f"300 Hz should be very attenuated: {zs_response[5]}"
+
+    def test_frequency_response_matches_scipy(self):
+        """Verify frequency response matches scipy across the spectrum."""
         import zpybci as zbci
 
         sample_rate = 1000.0
         cutoff = 100.0
 
         zs_filter = zbci.IirFilter.butterworth_lowpass(sample_rate, cutoff)
+        sos = signal.butter(4, cutoff, btype='low', fs=sample_rate, output='sos')
 
-        # Measure response at cutoff
+        # Test at multiple frequencies
+        test_freqs = np.linspace(5, 400, 50)
+        max_db_error = 0.0
+
+        for freq in test_freqs:
+            zs_filter.reset()
+
+            t = np.arange(0, 2, 1/sample_rate, dtype=np.float32)
+            test_signal = np.sin(2 * np.pi * freq * t).astype(np.float32)
+
+            zs_output = zs_filter.process(test_signal)
+            scipy_output = signal.sosfilt(sos, test_signal.astype(np.float64)).astype(np.float32)
+
+            zs_rms = np.sqrt(np.mean(zs_output[1000:] ** 2))
+            scipy_rms = np.sqrt(np.mean(scipy_output[1000:] ** 2))
+
+            if scipy_rms > 1e-6:
+                db_error = abs(20 * np.log10(max(zs_rms, 1e-10)) - 20 * np.log10(max(scipy_rms, 1e-10)))
+                max_db_error = max(max_db_error, db_error)
+
+        assert max_db_error < 0.5, f"Max dB error vs scipy: {max_db_error:.3f} dB"
+
+    def test_lowpass_matches_scipy_sos(self):
+        """Compare SOS coefficients directly against scipy."""
+        import zpybci as zbci
+
+        sample_rate = 1000.0
+        cutoff = 100.0
+
+        # Get scipy SOS
+        sos = signal.butter(4, cutoff, btype='low', fs=sample_rate, output='sos')
+
+        # Get zerostone filter and measure response at cutoff
+        zs_filter = zbci.IirFilter.butterworth_lowpass(sample_rate, cutoff)
         zs_filter.reset()
+
         t = np.arange(0, 2, 1/sample_rate, dtype=np.float32)
         test_signal = np.sin(2 * np.pi * cutoff * t).astype(np.float32)
-        output = zs_filter.process(test_signal)
 
-        zs_rms = np.sqrt(np.mean(output[1000:] ** 2))
+        zs_output = zs_filter.process(test_signal)
+        scipy_output = signal.sosfilt(sos, test_signal.astype(np.float64)).astype(np.float32)
+
+        # Both should give -3dB at cutoff
+        zs_rms = np.sqrt(np.mean(zs_output[1000:] ** 2))
+        scipy_rms = np.sqrt(np.mean(scipy_output[1000:] ** 2))
         input_rms = np.sqrt(np.mean(test_signal[1000:] ** 2))
-        gain_at_cutoff = zs_rms / input_rms
 
-        # Document: zerostone has resonance at cutoff (gain > 1)
-        # This is a known characteristic of the cascaded identical biquad design
-        # True Butterworth would have gain = 0.707 (-3dB) at cutoff
-        # For applications where flat passband is critical, use scipy instead
-        print(f"Gain at cutoff: {gain_at_cutoff:.2f} (expected ~2.0 due to resonance)")
+        zs_gain = zs_rms / input_rms
+        scipy_gain = scipy_rms / input_rms
 
-        # Just verify the filter is consistent
-        assert gain_at_cutoff > 1.5, f"Expected resonance at cutoff: {gain_at_cutoff}"
-        assert gain_at_cutoff < 2.5, f"Resonance higher than expected: {gain_at_cutoff}"
+        assert abs(zs_gain - scipy_gain) < 0.02, \
+            f"Gain mismatch at cutoff: zerostone={zs_gain:.4f}, scipy={scipy_gain:.4f}"
 
 
 class TestNumericalPrecision:

@@ -118,5 +118,76 @@ def test_lowpass_attenuates_high_freq():
         "Filtered signal should be closer to passband"
 
 
+def test_order_parameter():
+    """Test creating filters with different orders."""
+    import zpybci as zbci
+
+    for order in [2, 4, 6, 8]:
+        lpf = zbci.IirFilter.butterworth_lowpass(1000.0, 40.0, order=order)
+        assert lpf.order == order
+        assert lpf.sample_rate == 1000.0
+
+        hpf = zbci.IirFilter.butterworth_highpass(1000.0, 10.0, order=order)
+        assert hpf.order == order
+
+        bpf = zbci.IirFilter.butterworth_bandpass(1000.0, 8.0, 12.0, order=order)
+        assert bpf.order == order
+
+
+def test_default_order_backward_compat():
+    """Test that default order is 4 (backward compatible)."""
+    import zpybci as zbci
+
+    lpf = zbci.IirFilter.butterworth_lowpass(1000.0, 40.0)
+    assert lpf.order == 4
+
+    hpf = zbci.IirFilter.butterworth_highpass(1000.0, 10.0)
+    assert hpf.order == 4
+
+    bpf = zbci.IirFilter.butterworth_bandpass(1000.0, 8.0, 12.0)
+    assert bpf.order == 4
+
+
+def test_invalid_order():
+    """Test that invalid orders raise ValueError."""
+    import zpybci as zbci
+
+    for order in [1, 3, 5, 7, 10]:
+        with pytest.raises(ValueError):
+            zbci.IirFilter.butterworth_lowpass(1000.0, 40.0, order=order)
+
+
+def test_order_affects_filtering():
+    """Test that higher orders produce steeper rolloff."""
+    import zpybci as zbci
+
+    sample_rate = 1000.0
+    cutoff = 50.0
+    test_freq = 100.0  # 1 octave above cutoff
+
+    t = np.arange(0, 2, 1/sample_rate, dtype=np.float32)
+    test_signal = np.sin(2 * np.pi * test_freq * t).astype(np.float32)
+
+    attenuations = []
+    for order in [2, 4, 6, 8]:
+        filt = zbci.IirFilter.butterworth_lowpass(sample_rate, cutoff, order=order)
+        output = filt.process(test_signal)
+        rms = np.sqrt(np.mean(output[1000:] ** 2))
+        attenuations.append(rms)
+
+    # Higher order should give more attenuation
+    for i in range(len(attenuations) - 1):
+        assert attenuations[i] > attenuations[i + 1], \
+            f"Order {2*(i+1)} should attenuate less than order {2*(i+2)}"
+
+
+def test_repr_shows_order():
+    """Test that repr includes order."""
+    import zpybci as zbci
+
+    lpf = zbci.IirFilter.butterworth_lowpass(1000.0, 40.0, order=6)
+    assert "order=6" in repr(lpf)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

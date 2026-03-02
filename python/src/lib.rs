@@ -48,16 +48,19 @@ use welch::WelchPsd as PyWelchPsd;
 
 /// IIR (Infinite Impulse Response) filter with cascaded biquad sections.
 ///
-/// This filter implements a 4th-order Butterworth filter (2 cascaded biquad sections)
-/// for high-quality lowpass, highpass, and bandpass filtering.
+/// Supports Butterworth filters of order 2, 4, 6, or 8 with proper pole placement.
+/// Each section uses a distinct Q factor, matching scipy.signal.butter output.
 ///
 /// # Example
 /// ```python
 /// import zpybci as zbci
 /// import numpy as np
 ///
-/// # Create a lowpass filter at 30 Hz (1000 Hz sample rate)
+/// # Create a 4th-order lowpass filter at 30 Hz (default order=4)
 /// lpf = zbci.IirFilter.butterworth_lowpass(1000.0, 30.0)
+///
+/// # Create a 2nd-order lowpass filter
+/// lpf2 = zbci.IirFilter.butterworth_lowpass(1000.0, 30.0, order=2)
 ///
 /// # Process a signal
 /// signal = np.random.randn(1000).astype(np.float32)
@@ -65,9 +68,45 @@ use welch::WelchPsd as PyWelchPsd;
 /// ```
 #[pyclass]
 struct IirFilter {
-    // Using 2 sections for 4th-order filter (standard for Butterworth)
-    filter: ZsIirFilter<2>,
+    inner: IirFilterInner,
     sample_rate: f32,
+    order: u32,
+}
+
+enum IirFilterInner {
+    Sections1(ZsIirFilter<1>),
+    Sections2(ZsIirFilter<2>),
+    Sections3(ZsIirFilter<3>),
+    Sections4(ZsIirFilter<4>),
+}
+
+impl IirFilterInner {
+    fn process_sample(&mut self, sample: f32) -> f32 {
+        match self {
+            IirFilterInner::Sections1(f) => f.process_sample(sample),
+            IirFilterInner::Sections2(f) => f.process_sample(sample),
+            IirFilterInner::Sections3(f) => f.process_sample(sample),
+            IirFilterInner::Sections4(f) => f.process_sample(sample),
+        }
+    }
+
+    fn reset(&mut self) {
+        match self {
+            IirFilterInner::Sections1(f) => f.reset(),
+            IirFilterInner::Sections2(f) => f.reset(),
+            IirFilterInner::Sections3(f) => f.reset(),
+            IirFilterInner::Sections4(f) => f.reset(),
+        }
+    }
+}
+
+fn validate_order(order: u32) -> PyResult<()> {
+    match order {
+        2 | 4 | 6 | 8 => Ok(()),
+        _ => Err(PyValueError::new_err(
+            "Order must be 2, 4, 6, or 8 (number of sections = order / 2)",
+        )),
+    }
 }
 
 #[pymethods]
@@ -77,27 +116,45 @@ impl IirFilter {
     /// Args:
     ///     sample_rate (float): Sampling frequency in Hz
     ///     cutoff (float): Cutoff frequency in Hz
+    ///     order (int, optional): Filter order (2, 4, 6, or 8). Default: 4
     ///
     /// Returns:
-    ///     IirFilter: A 4th-order Butterworth lowpass filter
+    ///     IirFilter: A Butterworth lowpass filter of the specified order
     ///
     /// Example:
     ///     >>> lpf = IirFilter.butterworth_lowpass(1000.0, 40.0)
+    ///     >>> lpf2 = IirFilter.butterworth_lowpass(1000.0, 40.0, order=2)
     #[staticmethod]
-    fn butterworth_lowpass(sample_rate: f32, cutoff: f32) -> PyResult<Self> {
+    #[pyo3(signature = (sample_rate, cutoff, order=4))]
+    fn butterworth_lowpass(sample_rate: f32, cutoff: f32, order: u32) -> PyResult<Self> {
         if cutoff <= 0.0 || cutoff >= sample_rate / 2.0 {
             return Err(PyValueError::new_err(format!(
                 "Cutoff frequency must be between 0 and {} Hz (Nyquist)",
                 sample_rate / 2.0
             )));
         }
+        validate_order(order)?;
 
-        let biquad = BiquadCoeffs::butterworth_lowpass(sample_rate, cutoff);
-        let filter = ZsIirFilter::new([biquad, biquad]);
+        let inner = match order {
+            2 => IirFilterInner::Sections1(ZsIirFilter::new(
+                BiquadCoeffs::butterworth_lowpass_sections::<1>(sample_rate, cutoff),
+            )),
+            4 => IirFilterInner::Sections2(ZsIirFilter::new(
+                BiquadCoeffs::butterworth_lowpass_sections::<2>(sample_rate, cutoff),
+            )),
+            6 => IirFilterInner::Sections3(ZsIirFilter::new(
+                BiquadCoeffs::butterworth_lowpass_sections::<3>(sample_rate, cutoff),
+            )),
+            8 => IirFilterInner::Sections4(ZsIirFilter::new(
+                BiquadCoeffs::butterworth_lowpass_sections::<4>(sample_rate, cutoff),
+            )),
+            _ => unreachable!(),
+        };
 
         Ok(Self {
-            filter,
+            inner,
             sample_rate,
+            order,
         })
     }
 
@@ -106,27 +163,44 @@ impl IirFilter {
     /// Args:
     ///     sample_rate (float): Sampling frequency in Hz
     ///     cutoff (float): Cutoff frequency in Hz
+    ///     order (int, optional): Filter order (2, 4, 6, or 8). Default: 4
     ///
     /// Returns:
-    ///     IirFilter: A 4th-order Butterworth highpass filter
+    ///     IirFilter: A Butterworth highpass filter of the specified order
     ///
     /// Example:
     ///     >>> hpf = IirFilter.butterworth_highpass(1000.0, 1.0)
     #[staticmethod]
-    fn butterworth_highpass(sample_rate: f32, cutoff: f32) -> PyResult<Self> {
+    #[pyo3(signature = (sample_rate, cutoff, order=4))]
+    fn butterworth_highpass(sample_rate: f32, cutoff: f32, order: u32) -> PyResult<Self> {
         if cutoff <= 0.0 || cutoff >= sample_rate / 2.0 {
             return Err(PyValueError::new_err(format!(
                 "Cutoff frequency must be between 0 and {} Hz (Nyquist)",
                 sample_rate / 2.0
             )));
         }
+        validate_order(order)?;
 
-        let biquad = BiquadCoeffs::butterworth_highpass(sample_rate, cutoff);
-        let filter = ZsIirFilter::new([biquad, biquad]);
+        let inner = match order {
+            2 => IirFilterInner::Sections1(ZsIirFilter::new(
+                BiquadCoeffs::butterworth_highpass_sections::<1>(sample_rate, cutoff),
+            )),
+            4 => IirFilterInner::Sections2(ZsIirFilter::new(
+                BiquadCoeffs::butterworth_highpass_sections::<2>(sample_rate, cutoff),
+            )),
+            6 => IirFilterInner::Sections3(ZsIirFilter::new(
+                BiquadCoeffs::butterworth_highpass_sections::<3>(sample_rate, cutoff),
+            )),
+            8 => IirFilterInner::Sections4(ZsIirFilter::new(
+                BiquadCoeffs::butterworth_highpass_sections::<4>(sample_rate, cutoff),
+            )),
+            _ => unreachable!(),
+        };
 
         Ok(Self {
-            filter,
+            inner,
             sample_rate,
+            order,
         })
     }
 
@@ -136,27 +210,49 @@ impl IirFilter {
     ///     sample_rate (float): Sampling frequency in Hz
     ///     low_cutoff (float): Lower cutoff frequency in Hz
     ///     high_cutoff (float): Upper cutoff frequency in Hz
+    ///     order (int, optional): Filter order (2, 4, 6, or 8). Default: 4
     ///
     /// Returns:
-    ///     IirFilter: A 4th-order Butterworth bandpass filter
+    ///     IirFilter: A Butterworth bandpass filter of the specified order
     ///
     /// Example:
     ///     >>> bpf = IirFilter.butterworth_bandpass(1000.0, 8.0, 12.0)
     #[staticmethod]
-    fn butterworth_bandpass(sample_rate: f32, low_cutoff: f32, high_cutoff: f32) -> PyResult<Self> {
+    #[pyo3(signature = (sample_rate, low_cutoff, high_cutoff, order=4))]
+    fn butterworth_bandpass(
+        sample_rate: f32,
+        low_cutoff: f32,
+        high_cutoff: f32,
+        order: u32,
+    ) -> PyResult<Self> {
         if low_cutoff <= 0.0 || high_cutoff >= sample_rate / 2.0 || low_cutoff >= high_cutoff {
             return Err(PyValueError::new_err(format!(
                 "Cutoff frequencies must satisfy: 0 < low_cutoff < high_cutoff < {} Hz (Nyquist)",
                 sample_rate / 2.0
             )));
         }
+        validate_order(order)?;
 
-        let biquad = BiquadCoeffs::butterworth_bandpass(sample_rate, low_cutoff, high_cutoff);
-        let filter = ZsIirFilter::new([biquad, biquad]);
+        let inner = match order {
+            2 => IirFilterInner::Sections1(ZsIirFilter::new(
+                BiquadCoeffs::butterworth_bandpass_sections::<1>(sample_rate, low_cutoff, high_cutoff),
+            )),
+            4 => IirFilterInner::Sections2(ZsIirFilter::new(
+                BiquadCoeffs::butterworth_bandpass_sections::<2>(sample_rate, low_cutoff, high_cutoff),
+            )),
+            6 => IirFilterInner::Sections3(ZsIirFilter::new(
+                BiquadCoeffs::butterworth_bandpass_sections::<3>(sample_rate, low_cutoff, high_cutoff),
+            )),
+            8 => IirFilterInner::Sections4(ZsIirFilter::new(
+                BiquadCoeffs::butterworth_bandpass_sections::<4>(sample_rate, low_cutoff, high_cutoff),
+            )),
+            _ => unreachable!(),
+        };
 
         Ok(Self {
-            filter,
+            inner,
             sample_rate,
+            order,
         })
     }
 
@@ -179,9 +275,8 @@ impl IirFilter {
         let input_slice = input.as_slice()?;
         let mut output = vec![0.0f32; input_slice.len()];
 
-        // Process each sample through the filter
         for (i, &sample) in input_slice.iter().enumerate() {
-            output[i] = self.filter.process_sample(sample);
+            output[i] = self.inner.process_sample(sample);
         }
 
         Ok(PyArray1::from_vec(py, output))
@@ -191,7 +286,7 @@ impl IirFilter {
     ///
     /// This is useful when processing discontinuous segments of data.
     fn reset(&mut self) {
-        self.filter.reset();
+        self.inner.reset();
     }
 
     /// Get the sample rate of the filter.
@@ -200,8 +295,17 @@ impl IirFilter {
         self.sample_rate
     }
 
+    /// Get the filter order.
+    #[getter]
+    fn order(&self) -> u32 {
+        self.order
+    }
+
     fn __repr__(&self) -> String {
-        format!("IirFilter(sample_rate={} Hz)", self.sample_rate)
+        format!(
+            "IirFilter(sample_rate={} Hz, order={})",
+            self.sample_rate, self.order
+        )
     }
 }
 
