@@ -365,7 +365,7 @@ pub fn matrix_inv_sqrt<const C: usize, const M: usize>(
 /// Reconstruct matrix from eigenvectors and modified eigenvalues.
 ///
 /// Computes: U * diag(eigenvalues) * U^T
-fn reconstruct_from_eigen<const C: usize, const M: usize>(
+pub fn reconstruct_from_eigen<const C: usize, const M: usize>(
     eigenvectors: &Matrix<C, M>,
     eigenvalues: &[f64; C],
 ) -> Result<Matrix<C, M>, LinalgError> {
