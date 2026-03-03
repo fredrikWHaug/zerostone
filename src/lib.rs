@@ -86,6 +86,8 @@ mod filter;
 pub mod hilbert;
 pub mod ica;
 mod interpolate;
+pub mod kalman;
+pub mod lda;
 pub mod linalg;
 mod notch;
 mod percentile;
@@ -122,6 +124,8 @@ pub use filter::{
 pub use hilbert::HilbertTransform;
 pub use ica::{ContrastFunction, Ica, IcaError};
 pub use interpolate::{InterpolationMethod, Interpolator};
+pub use kalman::{KalmanError, KalmanFilter};
+pub use lda::{Lda, LdaError};
 pub use notch::NotchFilter;
 pub use percentile::StreamingPercentile;
 pub use pipeline::{BlockProcessor, CloneableProcessor, Pipeline, RateChangingProcessor, Terminal};

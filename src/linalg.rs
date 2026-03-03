@@ -112,6 +112,11 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
         &self.data
     }
 
+    /// Get mutable reference to the underlying data array.
+    pub fn data_mut(&mut self) -> &mut [f64; M] {
+        &mut self.data
+    }
+
     /// Create matrix from covariance array (same format).
     pub fn from_array(data: [f64; M]) -> Self {
         Self::new(data)

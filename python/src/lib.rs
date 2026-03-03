@@ -14,6 +14,8 @@ mod detection;
 mod erp;
 mod filters;
 mod ica;
+mod kalman;
+mod lda;
 mod notch;
 mod percentile;
 mod pipeline;
@@ -46,6 +48,8 @@ use stats::{OnlineCov, OnlineStats};
 use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
 use wavelet::Cwt;
 use ica::Ica;
+use kalman::KalmanFilter;
+use lda::Lda;
 use welch::WelchPsd as PyWelchPsd;
 
 /// IIR (Infinite Impulse Response) filter with cascaded biquad sections.
@@ -380,6 +384,12 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // ICA
     m.add_class::<Ica>()?;
+
+    // Kalman filter
+    m.add_class::<KalmanFilter>()?;
+
+    // LDA
+    m.add_class::<Lda>()?;
 
     // Online covariance
     m.add_class::<OnlineCov>()?;
