@@ -11,6 +11,7 @@ mod connectivity;
 mod csp;
 mod deconvolution;
 mod detection;
+mod edf;
 mod erp;
 mod filters;
 mod ica;
@@ -51,6 +52,7 @@ use wavelet::Cwt;
 use ica::Ica;
 use kalman::KalmanFilter;
 use lda::Lda;
+use edf::EdfRecording;
 use spike_sort::{TemplateMatcher, WaveformPca};
 use welch::WelchPsd as PyWelchPsd;
 
@@ -397,6 +399,10 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<WaveformPca>()?;
     m.add_class::<TemplateMatcher>()?;
     spike_sort::register(m)?;
+
+    // EDF file reader
+    m.add_class::<EdfRecording>()?;
+    edf::register(m)?;
 
     // Online covariance
     m.add_class::<OnlineCov>()?;

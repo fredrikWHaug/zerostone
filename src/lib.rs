@@ -79,6 +79,7 @@ mod csp;
 mod decimate;
 mod deconvolution;
 mod detector;
+pub mod edf;
 mod envelope;
 pub mod erp;
 mod fft;
@@ -114,6 +115,10 @@ pub use deconvolution::{DeconvolutionResult, OasisDeconvolution};
 pub use detector::{
     AdaptiveThresholdDetector, CrossingDirection, DetectorState, SpikeEvent, SpikeEvents,
     ThresholdDetector, ZeroCrossingDetector,
+};
+pub use edf::{
+    parse_header, parse_signal_header, read_channel, read_record, EdfError, EdfHeader,
+    EdfSignalHeader,
 };
 pub use envelope::{EnvelopeFollower, Rectification};
 pub use erp::{apply_spatial_filter, epoch_average, xdawn_filters, ErpError};
