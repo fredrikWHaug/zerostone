@@ -17,6 +17,7 @@ mod ica;
 mod kalman;
 mod lda;
 mod notch;
+mod spike_sort;
 mod percentile;
 mod pipeline;
 mod resampling;
@@ -50,6 +51,7 @@ use wavelet::Cwt;
 use ica::Ica;
 use kalman::KalmanFilter;
 use lda::Lda;
+use spike_sort::{TemplateMatcher, WaveformPca};
 use welch::WelchPsd as PyWelchPsd;
 
 /// IIR (Infinite Impulse Response) filter with cascaded biquad sections.
@@ -390,6 +392,11 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // LDA
     m.add_class::<Lda>()?;
+
+    // Spike sorting
+    m.add_class::<WaveformPca>()?;
+    m.add_class::<TemplateMatcher>()?;
+    spike_sort::register(m)?;
 
     // Online covariance
     m.add_class::<OnlineCov>()?;

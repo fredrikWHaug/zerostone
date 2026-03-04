@@ -95,6 +95,7 @@ mod pipeline;
 pub mod riemannian;
 mod rms;
 mod router;
+pub mod spike_sort;
 mod stats;
 mod stft;
 mod sync;
@@ -135,6 +136,10 @@ pub use riemannian::{
 };
 pub use rms::WindowedRms;
 pub use router::ChannelRouter;
+pub use spike_sort::{
+    detect_spikes, estimate_noise_mad, SortError, SpikeCluster, TemplateMatch, WaveformExtractor,
+    WaveformPca,
+};
 pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;
 pub use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
