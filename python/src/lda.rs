@@ -1,6 +1,6 @@
 //! Python bindings for Linear Discriminant Analysis.
 
-use numpy::ndarray::{Array1, Array2};
+use numpy::ndarray::Array1;
 use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -133,10 +133,8 @@ impl Lda {
     #[new]
     #[pyo3(signature = (features, shrinkage=0.01))]
     fn new(features: usize, shrinkage: f64) -> PyResult<Self> {
-        if shrinkage < 0.0 || shrinkage > 1.0 {
-            return Err(PyValueError::new_err(
-                "shrinkage must be in [0, 1]",
-            ));
+        if !(0.0..=1.0).contains(&shrinkage) {
+            return Err(PyValueError::new_err("shrinkage must be in [0, 1]"));
         }
 
         let inner = match features {

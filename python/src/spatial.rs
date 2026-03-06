@@ -47,6 +47,7 @@ enum CarInner {
 /// # Output has zero mean across channels for each sample
 /// assert np.allclose(filtered.mean(axis=1), 0, atol=1e-6)
 /// ```
+#[allow(clippy::upper_case_acronyms)]
 #[pyclass]
 pub struct CAR {
     inner: CarInner,
@@ -529,12 +530,12 @@ fn build_linear_neighbors_8() -> [[u16; 2]; 8] {
 
 fn build_linear_neighbors_16() -> [[u16; 2]; 16] {
     let mut neighbors = [[INVALID; 2]; 16];
-    for i in 0..16 {
+    for (i, neighbor) in neighbors.iter_mut().enumerate() {
         if i > 0 {
-            neighbors[i][0] = (i - 1) as u16;
+            neighbor[0] = (i - 1) as u16;
         }
         if i < 15 {
-            neighbors[i][1] = (i + 1) as u16;
+            neighbor[1] = (i + 1) as u16;
         }
     }
     // Fix first channel
@@ -544,12 +545,12 @@ fn build_linear_neighbors_16() -> [[u16; 2]; 16] {
 
 fn build_linear_neighbors_32() -> [[u16; 2]; 32] {
     let mut neighbors = [[INVALID; 2]; 32];
-    for i in 0..32 {
+    for (i, neighbor) in neighbors.iter_mut().enumerate() {
         if i > 0 {
-            neighbors[i][0] = (i - 1) as u16;
+            neighbor[0] = (i - 1) as u16;
         }
         if i < 31 {
-            neighbors[i][1] = (i + 1) as u16;
+            neighbor[1] = (i + 1) as u16;
         }
     }
     neighbors[0] = [1, INVALID];
@@ -558,12 +559,12 @@ fn build_linear_neighbors_32() -> [[u16; 2]; 32] {
 
 fn build_linear_neighbors_64() -> [[u16; 2]; 64] {
     let mut neighbors = [[INVALID; 2]; 64];
-    for i in 0..64 {
+    for (i, neighbor) in neighbors.iter_mut().enumerate() {
         if i > 0 {
-            neighbors[i][0] = (i - 1) as u16;
+            neighbor[0] = (i - 1) as u16;
         }
         if i < 63 {
-            neighbors[i][1] = (i + 1) as u16;
+            neighbor[1] = (i + 1) as u16;
         }
     }
     neighbors[0] = [1, INVALID];

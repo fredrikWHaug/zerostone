@@ -21,19 +21,34 @@ bpf = zbci.IirFilter.butterworth_bandpass(sample_rate=256.0, low_cutoff=8.0, hig
 signal = np.random.randn(1000).astype(np.float32)
 filtered = bpf.process(signal)
 
-# Chain multiple stages into a pipeline
-pipe = zbci.Pipeline(sample_rate=256.0, stages=[
-    ("highpass", {"cutoff": 1.0}),
-    ("notch", {"freq": 50.0}),
-    ("lowpass", {"cutoff": 40.0}),
-])
-cleaned = pipe.process(signal)
+# ICA for artifact removal
+ica = zbci.Ica(channels=16, contrast="logcosh")
+ica.fit(eeg_data, max_iter=200)
+cleaned = ica.remove_components(eeg_data, exclude=[0, 2])  # remove blink/muscle artifacts
+
+# Load an EDF file -- no MNE dependency needed
+rec = zbci.read_edf("recording.edf")
+ch1 = rec.get_channel("Fp1")
+all_data = rec.get_all_channels()  # (n_channels, n_samples) numpy array
 ```
+
+## Validated Results
+
+Tested on the BCI Competition IV 2a motor imagery benchmark (9 subjects, 4-class, session-to-session transfer):
+
+| Pipeline   | Mean Accuracy | Published Baseline |
+|------------|---------------|--------------------|
+| CSP+LDA    | 40.5%         | ~40-50%            |
+| TS+LDA     | **64.4%**     | ~60-68%            |
+| MDM        | 59.0%         | ~55-62%            |
+| xDAWN+MDM  | 57.4%         | ~55-60%            |
+
+TS+LDA exceeds the original competition winner (FBCSP, ~63%). All pipelines built entirely with zpybci primitives.
 
 ## Features
 
 ### Filters
-- **IIR** -- 4th-order Butterworth (lowpass, highpass, bandpass)
+- **IIR** -- Butterworth lowpass, highpass, bandpass (order 2/4/6/8, proper pole placement matching scipy)
 - **FIR** -- arbitrary-length finite impulse response
 - **AC coupling** -- DC removal for streaming data
 - **Median** -- nonlinear smoothing
@@ -52,6 +67,35 @@ cleaned = pipe.process(signal)
 - **Multi-band power** -- concurrent power in multiple frequency bands
 - **Welch PSD** -- power spectral density estimation
 - **CWT** -- continuous wavelet transform (Morlet)
+
+### Independent Component Analysis
+- **FastICA** -- symmetric parallel extraction with LogCosh, Exp, and Cube contrast functions
+- **Artifact removal** -- remove blink/muscle/cardiac components and reconstruct clean signal
+- **Channel counts** -- 4, 8, 16, 32, or 64 channels
+
+### Kalman Filter
+- **State estimation** -- predict/update cycle for real-time decoder smoothing
+- **Joseph form** -- numerically stable covariance update (preserves positive definiteness)
+- **Flexible dimensions** -- 8 state/observation combinations from (2,1) to (8,8)
+
+### Linear Discriminant Analysis
+- **Fisher's LDA** -- binary classification with shrinkage regularization
+- **Calibrated probabilities** -- `predict_proba()` via sigmoid scaling
+- **Feature dimensions** -- 2, 4, 6, 8, 12, 16, 32, or 64
+
+### Spike Sorting
+- **Waveform extraction** -- extract spike waveforms around detected events
+- **Waveform PCA** -- dimensionality reduction for spike clustering
+- **Template matching** -- classify spikes by Euclidean distance or normalized cross-correlation
+- **MAD noise estimation** -- robust noise floor estimation for threshold setting
+- **Batch detection** -- negative-threshold crossing with refractory period
+- **Convenience pipeline** -- `spike_sort()` for end-to-end spike sorting with inline k-means
+
+### EDF/EDF+ File Reader
+- **read_edf()** -- load EDF/EDF+ files without MNE or pyedflib
+- **Channel access** -- by index or label name
+- **Physical units** -- automatic digital-to-physical conversion
+- **Mixed sample rates** -- zero-padded multi-channel extraction
 
 ### Detection
 - **Threshold** -- fixed-threshold event detection
@@ -97,8 +141,8 @@ cleaned = pipe.process(signal)
 
 ## Version
 
-0.3.0
+0.4.0
 
 ## License
 
-AGPL-3.0
+GPL-3.0

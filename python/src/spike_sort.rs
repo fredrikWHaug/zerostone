@@ -498,11 +498,7 @@ impl TemplateMatcher {
         let use_ncc = match method {
             "euclidean" => false,
             "ncc" => true,
-            _ => {
-                return Err(PyValueError::new_err(
-                    "method must be 'euclidean' or 'ncc'",
-                ))
-            }
+            _ => return Err(PyValueError::new_err("method must be 'euclidean' or 'ncc'")),
         };
 
         let flat = waveforms.as_slice()?;
@@ -700,7 +696,9 @@ fn extract_waveforms<'py>(
     let n = data_slice.len();
 
     if pre >= window {
-        return Err(PyValueError::new_err("pre_samples must be less than window"));
+        return Err(PyValueError::new_err(
+            "pre_samples must be less than window",
+        ));
     }
 
     let mut waveforms = Vec::new();
@@ -907,9 +905,9 @@ fn spike_sort<'py>(
     let mut centroids = vec![[0.0f64; 3]; k];
     // Initialize centroids from first k waveforms (spread evenly)
     let step = n_valid / k;
-    for c in 0..k {
+    for (c, centroid) in centroids.iter_mut().enumerate() {
         let idx = c * step;
-        centroids[c].copy_from_slice(&pca_features[idx * 3..(idx + 1) * 3]);
+        centroid.copy_from_slice(&pca_features[idx * 3..(idx + 1) * 3]);
     }
 
     let mut labels = vec![0usize; n_valid];
@@ -920,10 +918,10 @@ fn spike_sort<'py>(
             let feat = &pca_features[i * 3..(i + 1) * 3];
             let mut best = 0;
             let mut best_d = f64::MAX;
-            for c in 0..k {
+            for (c, centroid) in centroids.iter().enumerate() {
                 let mut d = 0.0;
                 for j in 0..3 {
-                    let diff = feat[j] - centroids[c][j];
+                    let diff = feat[j] - centroid[j];
                     d += diff * diff;
                 }
                 if d < best_d {
@@ -980,8 +978,7 @@ fn spike_sort<'py>(
     // Build result dict
     let dict = pyo3::types::PyDict::new(py);
 
-    let spike_times_arr =
-        PyArray1::from_owned_array(py, Array1::from_vec(valid_times));
+    let spike_times_arr = PyArray1::from_owned_array(py, Array1::from_vec(valid_times));
     dict.set_item("spike_times", spike_times_arr)?;
 
     let wf_arr = Array2::from_shape_vec((n_valid, window), waveforms_flat)

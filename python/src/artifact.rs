@@ -226,7 +226,7 @@ impl ArtifactDetector {
                 det.detect_any(&s)
             }
             ArtifactDetectorInner::Dynamic {
-                channels,
+                channels: _,
                 amplitude_threshold,
                 gradient_threshold,
                 prev_sample,
@@ -287,7 +287,7 @@ impl ArtifactDetector {
                 det.detect_count(&s)
             }
             ArtifactDetectorInner::Dynamic {
-                channels,
+                channels: _,
                 amplitude_threshold,
                 gradient_threshold,
                 prev_sample,
@@ -434,7 +434,7 @@ impl ZscoreArtifact {
     ///
     /// Args:
     ///     channels (int): Number of channels (1, 4, 8, 16, 32, or 64).
-    ///     threshold (float): Z-score threshold for artifact detection (e.g., 3.0 for 3σ).
+    ///     threshold (float): Z-score threshold for artifact detection (e.g., 3.0 for 3sigma).
     ///     min_samples (int): Minimum samples before detection starts (warm-up period).
     ///
     /// Returns:

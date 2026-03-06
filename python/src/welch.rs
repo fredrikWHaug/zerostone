@@ -63,7 +63,7 @@ impl WelchPsd {
     #[new]
     #[pyo3(signature = (fft_size, window = "hann", overlap = 0.5))]
     fn new(fft_size: usize, window: &str, overlap: f32) -> PyResult<Self> {
-        if overlap < 0.0 || overlap >= 1.0 {
+        if !(0.0..1.0).contains(&overlap) {
             return Err(PyValueError::new_err("overlap must be in [0.0, 1.0)"));
         }
 

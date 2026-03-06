@@ -163,7 +163,7 @@ fn spectral_coherence<'py>(
     if sample_rate <= 0.0 {
         return Err(PyValueError::new_err("sample_rate must be positive"));
     }
-    if overlap < 0.0 || overlap >= 1.0 {
+    if !(0.0..1.0).contains(&overlap) {
         return Err(PyValueError::new_err("overlap must be in [0.0, 1.0)"));
     }
 

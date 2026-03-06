@@ -111,7 +111,7 @@ impl ThresholdDetector {
     ///     ...     print(f"Spike at sample {sample_idx}, channel {channel}: {amplitude}")
     fn process(&mut self, input: PyReadonlyArray2<f32>) -> PyResult<Vec<(usize, usize, f32)>> {
         let shape = input.shape();
-        let (n_samples, n_channels) = (shape[0], shape[1]);
+        let (_n_samples, n_channels) = (shape[0], shape[1]);
 
         if n_channels != self.channels {
             return Err(PyValueError::new_err(format!(
@@ -324,7 +324,7 @@ impl AdaptiveThresholdDetector {
     ///     list[tuple[int, int, float]]: List of events as (sample_idx, channel, amplitude).
     fn process(&mut self, input: PyReadonlyArray2<f32>) -> PyResult<Vec<(usize, usize, f32)>> {
         let shape = input.shape();
-        let (n_samples, n_channels) = (shape[0], shape[1]);
+        let (_n_samples, n_channels) = (shape[0], shape[1]);
 
         if n_channels != self.channels {
             return Err(PyValueError::new_err(format!(
