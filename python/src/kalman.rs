@@ -21,7 +21,14 @@ macro_rules! make_kalman_inner {
         struct $name(ZsKalmanFilter<$s, $o, $sm, $om, $som>);
 
         impl $name {
-            fn new(f_flat: &[f64], h_flat: &[f64], q_flat: &[f64], r_flat: &[f64], x0_flat: &[f64], p0_flat: &[f64]) -> Self {
+            fn new(
+                f_flat: &[f64],
+                h_flat: &[f64],
+                q_flat: &[f64],
+                r_flat: &[f64],
+                x0_flat: &[f64],
+                p0_flat: &[f64],
+            ) -> Self {
                 let mut f_data = [0.0f64; $sm];
                 f_data.copy_from_slice(f_flat);
                 let mut h_data = [0.0f64; $som];
@@ -73,6 +80,7 @@ macro_rules! make_kalman_inner {
                 self.0.reset(x0_data, Matrix::new(p0_data));
             }
 
+            #[allow(dead_code)]
             fn innovation(&self) -> Option<Vec<f64>> {
                 self.0.innovation().map(|i| i.to_vec())
             }
@@ -147,6 +155,7 @@ impl KalmanFilter {
     #[new]
     #[pyo3(signature = (state_dim, obs_dim, F, H, Q, R, x0=None, P0=None))]
     #[allow(non_snake_case)]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         state_dim: usize,
         obs_dim: usize,
@@ -230,14 +239,30 @@ impl KalmanFilter {
         };
 
         let inner = match (state_dim, obs_dim) {
-            (2, 1) => KalmanInner::S2O1(KalmanS2O1::new(f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec)),
-            (2, 2) => KalmanInner::S2O2(KalmanS2O2::new(f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec)),
-            (4, 2) => KalmanInner::S4O2(KalmanS4O2::new(f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec)),
-            (4, 4) => KalmanInner::S4O4(KalmanS4O4::new(f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec)),
-            (6, 3) => KalmanInner::S6O3(KalmanS6O3::new(f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec)),
-            (6, 6) => KalmanInner::S6O6(KalmanS6O6::new(f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec)),
-            (8, 4) => KalmanInner::S8O4(KalmanS8O4::new(f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec)),
-            (8, 8) => KalmanInner::S8O8(KalmanS8O8::new(f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec)),
+            (2, 1) => KalmanInner::S2O1(KalmanS2O1::new(
+                f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec,
+            )),
+            (2, 2) => KalmanInner::S2O2(KalmanS2O2::new(
+                f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec,
+            )),
+            (4, 2) => KalmanInner::S4O2(KalmanS4O2::new(
+                f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec,
+            )),
+            (4, 4) => KalmanInner::S4O4(KalmanS4O4::new(
+                f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec,
+            )),
+            (6, 3) => KalmanInner::S6O3(KalmanS6O3::new(
+                f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec,
+            )),
+            (6, 6) => KalmanInner::S6O6(KalmanS6O6::new(
+                f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec,
+            )),
+            (8, 4) => KalmanInner::S8O4(KalmanS8O4::new(
+                f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec,
+            )),
+            (8, 8) => KalmanInner::S8O8(KalmanS8O8::new(
+                f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec,
+            )),
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "Unsupported (state_dim, obs_dim) = ({}, {}). Supported: (2,1), (2,2), (4,2), (4,4), (6,3), (6,6), (8,4), (8,8)",

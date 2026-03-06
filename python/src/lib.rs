@@ -18,13 +18,13 @@ mod ica;
 mod kalman;
 mod lda;
 mod notch;
-mod spike_sort;
 mod percentile;
 mod pipeline;
 mod resampling;
 mod riemannian;
 mod spatial;
 mod spectral;
+mod spike_sort;
 mod stats;
 mod sync;
 mod utils;
@@ -38,7 +38,11 @@ use artifact::{ArtifactDetector, ZscoreArtifact};
 use csp::AdaptiveCsp;
 use deconvolution::OasisDeconvolution;
 use detection::{AdaptiveThresholdDetector, ThresholdDetector, ZeroCrossingDetector};
+use edf::EdfRecording;
 use filters::{AcCoupler, FirFilter, LmsFilter, MedianFilter, NlmsFilter};
+use ica::Ica;
+use kalman::KalmanFilter;
+use lda::Lda;
 use notch::NotchFilter as PyNotchFilter;
 use percentile::StreamingPercentile;
 use pipeline::Pipeline;
@@ -46,14 +50,10 @@ use resampling::{Decimator, Interpolator};
 use riemannian::{MdmClassifier, TangentSpace};
 use spatial::{ChannelRouter, SurfaceLaplacian, CAR};
 use spectral::{Fft, MultiBandPower, Stft};
+use spike_sort::{TemplateMatcher, WaveformPca};
 use stats::{OnlineCov, OnlineStats};
 use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
 use wavelet::Cwt;
-use ica::Ica;
-use kalman::KalmanFilter;
-use lda::Lda;
-use edf::EdfRecording;
-use spike_sort::{TemplateMatcher, WaveformPca};
 use welch::WelchPsd as PyWelchPsd;
 
 /// IIR (Infinite Impulse Response) filter with cascaded biquad sections.
@@ -245,16 +245,32 @@ impl IirFilter {
 
         let inner = match order {
             2 => IirFilterInner::Sections1(ZsIirFilter::new(
-                BiquadCoeffs::butterworth_bandpass_sections::<1>(sample_rate, low_cutoff, high_cutoff),
+                BiquadCoeffs::butterworth_bandpass_sections::<1>(
+                    sample_rate,
+                    low_cutoff,
+                    high_cutoff,
+                ),
             )),
             4 => IirFilterInner::Sections2(ZsIirFilter::new(
-                BiquadCoeffs::butterworth_bandpass_sections::<2>(sample_rate, low_cutoff, high_cutoff),
+                BiquadCoeffs::butterworth_bandpass_sections::<2>(
+                    sample_rate,
+                    low_cutoff,
+                    high_cutoff,
+                ),
             )),
             6 => IirFilterInner::Sections3(ZsIirFilter::new(
-                BiquadCoeffs::butterworth_bandpass_sections::<3>(sample_rate, low_cutoff, high_cutoff),
+                BiquadCoeffs::butterworth_bandpass_sections::<3>(
+                    sample_rate,
+                    low_cutoff,
+                    high_cutoff,
+                ),
             )),
             8 => IirFilterInner::Sections4(ZsIirFilter::new(
-                BiquadCoeffs::butterworth_bandpass_sections::<4>(sample_rate, low_cutoff, high_cutoff),
+                BiquadCoeffs::butterworth_bandpass_sections::<4>(
+                    sample_rate,
+                    low_cutoff,
+                    high_cutoff,
+                ),
             )),
             _ => unreachable!(),
         };

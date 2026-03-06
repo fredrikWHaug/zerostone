@@ -142,10 +142,7 @@ impl EdfRecording {
     ///
     /// Returns:
     ///     2D numpy array of shape (n_signals, max_total_samples).
-    fn get_all_channels<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    fn get_all_channels<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let n_records = if self.header.n_records >= 0 {
             self.header.n_records as usize
         } else {
@@ -234,8 +231,8 @@ impl EdfRecording {
 ///     >>> ch = rec.get_channel("Fp1")
 #[pyfunction]
 fn read_edf(filepath: &str) -> PyResult<EdfRecording> {
-    let bytes =
-        fs::read(filepath).map_err(|e| PyValueError::new_err(format!("Cannot read file: {}", e)))?;
+    let bytes = fs::read(filepath)
+        .map_err(|e| PyValueError::new_err(format!("Cannot read file: {}", e)))?;
 
     let header = edf::parse_header(&bytes)
         .map_err(|e| PyValueError::new_err(format!("Invalid EDF header: {:?}", e)))?;
@@ -262,10 +259,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 /// Trim ASCII spaces (mirrors the private helper in zerostone::edf).
 fn edf_trim_ascii(bytes: &[u8]) -> &[u8] {
-    let start = bytes
-        .iter()
-        .position(|&b| b != b' ')
-        .unwrap_or(bytes.len());
+    let start = bytes.iter().position(|&b| b != b' ').unwrap_or(bytes.len());
     let end = bytes
         .iter()
         .rposition(|&b| b != b' ')

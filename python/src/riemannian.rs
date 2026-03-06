@@ -1,7 +1,9 @@
 //! Python bindings for Riemannian geometry (tangent space projection, MDM classifier).
 
-use numpy::ndarray::{Array1, Array2};
-use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArray2, PyReadonlyArray3, PyUntypedArrayMethods};
+use numpy::ndarray::Array2;
+use numpy::{
+    PyArray1, PyArray2, PyReadonlyArray2, PyReadonlyArray3, PyUntypedArrayMethods,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use zerostone::linalg::Matrix;
@@ -241,9 +243,7 @@ fn frechet_mean<'py>(
         8 => do_frechet!(8, 64),
         16 => do_frechet!(16, 256),
         32 => do_frechet!(32, 1024),
-        _ => Err(PyValueError::new_err(
-            "channels must be 4, 8, 16, or 32",
-        )),
+        _ => Err(PyValueError::new_err("channels must be 4, 8, 16, or 32")),
     }
 }
 
@@ -287,9 +287,7 @@ fn riemannian_distance(a: PyReadonlyArray2<f64>, b: PyReadonlyArray2<f64>) -> Py
         8 => do_dist!(8, 64),
         16 => do_dist!(16, 256),
         32 => do_dist!(32, 1024),
-        _ => Err(PyValueError::new_err(
-            "channels must be 4, 8, 16, or 32",
-        )),
+        _ => Err(PyValueError::new_err("channels must be 4, 8, 16, or 32")),
     }
 }
 
@@ -303,10 +301,10 @@ fn riemannian_distance(a: PyReadonlyArray2<f64>, b: PyReadonlyArray2<f64>) -> Py
 ///
 /// Args:
 ///     matrices (np.ndarray): 3D float64 array of shape (N, C, C).
-///     mean (np.ndarray): 2D float64 array of shape (C, C) — the reference mean.
+///     mean (np.ndarray): 2D float64 array of shape (C, C) -- the reference mean.
 ///
 /// Returns:
-///     np.ndarray: 3D float64 array of shape (N, C, C) — recentered matrices.
+///     np.ndarray: 3D float64 array of shape (N, C, C) -- recentered matrices.
 #[pyfunction]
 fn recenter<'py>(
     py: Python<'py>,
@@ -361,9 +359,7 @@ fn recenter<'py>(
         8 => do_recenter!(8, 64),
         16 => do_recenter!(16, 256),
         32 => do_recenter!(32, 1024),
-        _ => Err(PyValueError::new_err(
-            "channels must be 4, 8, 16, or 32",
-        )),
+        _ => Err(PyValueError::new_err("channels must be 4, 8, 16, or 32")),
     }
 }
 

@@ -102,10 +102,10 @@ fn xcorr<'py>(
         let n_end = (n as i32).min(m as i32 - lag).max(0) as usize;
 
         if n_end > n_start {
-            for i in n_start..n_end {
-                let y_idx = (i as i32 + lag) as usize;
+            for (i, &x_val) in x_slice[n_start..n_end].iter().enumerate() {
+                let y_idx = ((n_start + i) as i32 + lag) as usize;
                 if y_idx < m {
-                    sum += x_slice[i] * y_slice[y_idx];
+                    sum += x_val * y_slice[y_idx];
                     count += 1;
                 }
             }

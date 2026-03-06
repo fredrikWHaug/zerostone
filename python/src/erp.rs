@@ -120,7 +120,7 @@ pub struct XDawnTransformer {
     regularization: f64,
     max_iters: usize,
     tol: f64,
-    filters: Option<Vec<Vec<f64>>>,  // F × C stored as Vec<Vec>
+    filters: Option<Vec<Vec<f64>>>, // F × C stored as Vec<Vec>
 }
 
 #[pymethods]
@@ -174,6 +174,7 @@ impl XDawnTransformer {
     ///
     /// Returns:
     ///     self: Fitted transformer.
+    #[allow(non_snake_case)]
     fn fit(&mut self, X: PyReadonlyArray3<f64>, y: PyReadonlyArray1<i64>) -> PyResult<()> {
         let shape = X.shape();
         let (n_trials, n_samples, n_channels) = (shape[0], shape[1], shape[2]);
@@ -194,7 +195,7 @@ impl XDawnTransformer {
             )));
         }
 
-        let X_data = X.as_slice()?;
+        let x_data = X.as_slice()?;
 
         // Dispatch based on channels and filters
         macro_rules! fit_xdawn {
@@ -212,7 +213,7 @@ impl XDawnTransformer {
                     for sample_idx in 0..n_samples {
                         for ch_idx in 0..$c {
                             trial[sample_idx][ch_idx] =
-                                X_data[trial_offset + sample_idx * $c + ch_idx];
+                                x_data[trial_offset + sample_idx * $c + ch_idx];
                         }
                     }
 
@@ -230,8 +231,7 @@ impl XDawnTransformer {
                 }
 
                 // Convert to references
-                let target_refs: Vec<&[[f64; $c]]> =
-                    target_epochs.iter().map(|e| &e[..]).collect();
+                let target_refs: Vec<&[[f64; $c]]> = target_epochs.iter().map(|e| &e[..]).collect();
                 let nontarget_refs: Vec<&[[f64; $c]]> =
                     nontarget_epochs.iter().map(|e| &e[..]).collect();
 
@@ -250,12 +250,7 @@ impl XDawnTransformer {
                 .map_err(|e| PyValueError::new_err(format!("xDAWN failed: {:?}", e)))?;
 
                 // Store filters as Vec<Vec<f64>> for later use
-                self.filters = Some(
-                    filters_array
-                        .iter()
-                        .map(|f| f.to_vec())
-                        .collect()
-                );
+                self.filters = Some(filters_array.iter().map(|f| f.to_vec()).collect());
 
                 Ok(())
             }};
@@ -297,14 +292,16 @@ impl XDawnTransformer {
     ///
     /// Returns:
     ///     np.ndarray: Filtered epochs with shape (n_trials, n_samples, n_filters).
+    #[allow(non_snake_case)]
     fn transform<'py>(
         &self,
         py: Python<'py>,
         X: PyReadonlyArray3<f64>,
     ) -> PyResult<Bound<'py, PyArray3<f64>>> {
-        let filters = self.filters.as_ref().ok_or_else(|| {
-            PyValueError::new_err("Transformer not fitted. Call fit() first.")
-        })?;
+        let filters = self
+            .filters
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("Transformer not fitted. Call fit() first."))?;
 
         let shape = X.shape();
         let (n_trials, n_samples, n_channels) = (shape[0], shape[1], shape[2]);
@@ -316,7 +313,7 @@ impl XDawnTransformer {
             )));
         }
 
-        let X_data = X.as_slice()?;
+        let x_data = X.as_slice()?;
         let mut output = vec![0.0; n_trials * n_samples * self.num_filters];
 
         // Apply filters
@@ -336,7 +333,7 @@ impl XDawnTransformer {
                     for sample_idx in 0..n_samples {
                         for ch_idx in 0..$c {
                             epoch[sample_idx][ch_idx] =
-                                X_data[trial_offset + sample_idx * $c + ch_idx];
+                                x_data[trial_offset + sample_idx * $c + ch_idx];
                         }
                     }
 
@@ -405,13 +402,14 @@ impl XDawnTransformer {
     }
 
     fn __repr__(&self) -> String {
-        let fitted = if self.filters.is_some() { "True" } else { "False" };
+        let fitted = if self.filters.is_some() {
+            "True"
+        } else {
+            "False"
+        };
         format!(
             "XDawnTransformer(channels={}, filters={}, regularization={}, fitted={})",
-            self.channels,
-            self.num_filters,
-            self.regularization,
-            fitted
+            self.channels, self.num_filters, self.regularization, fitted
         )
     }
 }

@@ -119,7 +119,7 @@ impl Decimator {
         }
 
         // Calculate output size
-        let out_samples = (n_samples + self.factor - 1) / self.factor;
+        let out_samples = n_samples.div_ceil(self.factor);
         let input_array = input.as_array();
         let mut output = vec![0.0f32; out_samples * n_channels];
         let mut out_idx = 0;

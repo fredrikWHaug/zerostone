@@ -173,8 +173,8 @@ impl FirFilter {
 
                     let mut out = 0.0;
                     let mut delay_idx = *index;
-                    for tap in 0..num_taps {
-                        out += coeffs[tap] * delay_line[delay_idx];
+                    for coeff in coeffs.iter() {
+                        out += coeff * delay_line[delay_idx];
                         delay_idx = if delay_idx == 0 {
                             num_taps - 1
                         } else {
@@ -625,8 +625,8 @@ impl LmsFilter {
                     // Compute output: y(n) = w^T * u(n)
                     let mut y = 0.0;
                     let mut delay_idx = *index;
-                    for tap in 0..num_taps {
-                        y += weights[tap] * delay_line[delay_idx];
+                    for weight in weights.iter() {
+                        y += *weight * delay_line[delay_idx];
                         delay_idx = if delay_idx == 0 {
                             num_taps - 1
                         } else {
@@ -639,8 +639,8 @@ impl LmsFilter {
 
                     // Update weights: w(n) = w(n-1) + mu * e(n) * u(n)
                     delay_idx = *index;
-                    for tap in 0..num_taps {
-                        weights[tap] += *mu * e * delay_line[delay_idx];
+                    for weight in weights.iter_mut() {
+                        *weight += *mu * e * delay_line[delay_idx];
                         delay_idx = if delay_idx == 0 {
                             num_taps - 1
                         } else {
@@ -886,9 +886,9 @@ impl NlmsFilter {
                     let mut y = 0.0;
                     let mut input_power = 0.0;
                     let mut delay_idx = *index;
-                    for tap in 0..num_taps {
+                    for weight in weights.iter() {
                         let val = delay_line[delay_idx];
-                        y += weights[tap] * val;
+                        y += *weight * val;
                         input_power += val * val;
                         delay_idx = if delay_idx == 0 {
                             num_taps - 1
@@ -905,8 +905,8 @@ impl NlmsFilter {
 
                     // Update weights
                     delay_idx = *index;
-                    for tap in 0..num_taps {
-                        weights[tap] += norm_mu * e * delay_line[delay_idx];
+                    for weight in weights.iter_mut() {
+                        *weight += norm_mu * e * delay_line[delay_idx];
                         delay_idx = if delay_idx == 0 {
                             num_taps - 1
                         } else {
