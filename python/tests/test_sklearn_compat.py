@@ -1,12 +1,9 @@
 """Tests for sklearn-compatible zpybci wrappers.
 
 Verifies that CSPTransformer, TangentSpaceTransformer, BandPowerTransformer,
-and CovarianceEstimator implement the sklearn interface correctly and compose
-into sklearn pipelines and cross_val_score.
+CovarianceEstimator, LdaClassifier, and IcaTransformer implement the sklearn
+interface correctly and compose into sklearn pipelines and cross_val_score.
 """
-
-import sys
-import os
 
 import numpy as np
 import pytest
@@ -20,17 +17,13 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis  # noqa: E4
 from sklearn.pipeline import Pipeline                                  # noqa: E402
 from sklearn.model_selection import cross_val_score                    # noqa: E402
 
-# Resolve the module from the examples directory without installing it
-_COMPAT_DIR = os.path.join(
-    os.path.dirname(__file__), "..", "examples", "motor_imagery"
-)
-sys.path.insert(0, os.path.abspath(_COMPAT_DIR))
-
-from sklearn_compat import (  # noqa: E402
+from zpybci.sklearn import (  # noqa: E402
     CSPTransformer,
     TangentSpaceTransformer,
     BandPowerTransformer,
     CovarianceEstimator,
+    LdaClassifier,
+    IcaTransformer,
 )
 
 RNG = np.random.default_rng(42)
@@ -364,3 +357,152 @@ class TestCovarianceEstimator:
         assert scores.shape == (5,)
         assert np.isfinite(scores).all()
         assert (scores >= 0.0).all() and (scores <= 1.0).all()
+
+
+# ---------------------------------------------------------------------------
+# LdaClassifier
+# ---------------------------------------------------------------------------
+
+LDA_FEATURES = 4
+N_LDA_SAMPLES = 40
+
+
+def _make_lda_data(n_samples=N_LDA_SAMPLES, n_features=LDA_FEATURES):
+    """Generate linearly separable 2-class data."""
+    rng = np.random.default_rng(99)
+    X0 = rng.standard_normal((n_samples // 2, n_features)) - 2.0
+    X1 = rng.standard_normal((n_samples // 2, n_features)) + 2.0
+    X = np.vstack([X0, X1])
+    y = np.array([0] * (n_samples // 2) + [1] * (n_samples // 2), dtype=int)
+    return X, y
+
+
+class TestLdaClassifier:
+    def test_fit_predict_shape(self):
+        X, y = _make_lda_data()
+        clf = LdaClassifier(features=LDA_FEATURES)
+        clf.fit(X, y)
+        preds = clf.predict(X)
+        assert preds.shape == (N_LDA_SAMPLES,)
+
+    def test_separable_accuracy(self):
+        X, y = _make_lda_data()
+        clf = LdaClassifier(features=LDA_FEATURES)
+        clf.fit(X, y)
+        acc = clf.score(X, y)
+        assert acc > 0.9, f"Expected >90% on separable data, got {acc}"
+
+    def test_predict_proba_shape(self):
+        X, y = _make_lda_data()
+        clf = LdaClassifier(features=LDA_FEATURES)
+        clf.fit(X, y)
+        proba = clf.predict_proba(X)
+        assert proba.shape == (N_LDA_SAMPLES, 2)
+        assert np.allclose(proba.sum(axis=1), 1.0, atol=1e-6)
+
+    def test_decision_function_shape(self):
+        X, y = _make_lda_data()
+        clf = LdaClassifier(features=LDA_FEATURES)
+        clf.fit(X, y)
+        df = clf.decision_function(X)
+        assert df.shape == (N_LDA_SAMPLES,)
+
+    def test_get_params(self):
+        clf = LdaClassifier(features=8, shrinkage=0.05)
+        params = clf.get_params()
+        assert params["features"] == 8
+        assert params["shrinkage"] == 0.05
+
+    def test_cross_val_score(self):
+        X, y = _make_lda_data(n_samples=50)
+        clf = LdaClassifier(features=LDA_FEATURES)
+        scores = cross_val_score(clf, X, y, cv=5)
+        assert scores.shape == (5,)
+        assert np.isfinite(scores).all()
+
+    def test_pipeline_cov_ts_lda(self):
+        """Full pipeline: raw epochs -> covariance -> tangent space -> LDA."""
+        X = _make_trials(channels=TS_CHANNELS)
+        y = _make_labels()
+        n_features = TS_CHANNELS * (TS_CHANNELS + 1) // 2  # 10 for 4 channels
+        # LDA needs a supported feature count -- 8 is closest below 10
+        # Use sklearn LDA here since zbci.Lda needs exact feature match
+        pipe = Pipeline([
+            ("cov", CovarianceEstimator(channels=TS_CHANNELS)),
+            ("ts", TangentSpaceTransformer(channels=TS_CHANNELS)),
+            ("lda", LinearDiscriminantAnalysis()),
+        ])
+        pipe.fit(X, y)
+        preds = pipe.predict(X)
+        assert preds.shape == (N_TRIALS,)
+
+
+# ---------------------------------------------------------------------------
+# IcaTransformer
+# ---------------------------------------------------------------------------
+
+ICA_CHANNELS = 4
+N_ICA_SAMPLES = 500
+
+
+def _make_ica_data(n_samples=N_ICA_SAMPLES, channels=ICA_CHANNELS):
+    """Generate mixed source data for ICA."""
+    rng = np.random.default_rng(77)
+    t = np.linspace(0, 1, n_samples)
+    sources = np.zeros((n_samples, channels))
+    sources[:, 0] = np.sin(2 * np.pi * 5 * t)
+    sources[:, 1] = np.sign(np.sin(2 * np.pi * 11 * t))
+    for c in range(2, channels):
+        sources[:, c] = rng.standard_normal(n_samples)
+    A = rng.standard_normal((channels, channels))
+    return sources @ A.T
+
+
+class TestIcaTransformer:
+    def test_fit_transform_shape(self):
+        X = _make_ica_data()
+        ica = IcaTransformer(channels=ICA_CHANNELS)
+        ica.fit(X)
+        out = ica.transform(X)
+        assert out.shape == (N_ICA_SAMPLES, ICA_CHANNELS)
+
+    def test_output_finite(self):
+        X = _make_ica_data()
+        ica = IcaTransformer(channels=ICA_CHANNELS)
+        ica.fit(X)
+        out = ica.transform(X)
+        assert np.isfinite(out).all()
+
+    def test_fit_transform_convenience(self):
+        X = _make_ica_data()
+        ica = IcaTransformer(channels=ICA_CHANNELS)
+        out = ica.fit_transform(X)
+        assert out.shape == (N_ICA_SAMPLES, ICA_CHANNELS)
+
+    def test_exclude_components(self):
+        X = _make_ica_data()
+        ica_no_exclude = IcaTransformer(channels=ICA_CHANNELS)
+        ica_no_exclude.fit(X)
+        out_full = ica_no_exclude.transform(X)
+
+        ica_exclude = IcaTransformer(channels=ICA_CHANNELS, exclude=[0])
+        ica_exclude.fit(X)
+        out_cleaned = ica_exclude.transform(X)
+
+        # Removing a component should change the output
+        assert not np.allclose(out_full, out_cleaned, atol=1e-6)
+
+    def test_get_params(self):
+        ica = IcaTransformer(channels=8, contrast="exp", max_iter=100)
+        params = ica.get_params()
+        assert params["channels"] == 8
+        assert params["contrast"] == "exp"
+        assert params["max_iter"] == 100
+
+    def test_different_contrasts(self):
+        X = _make_ica_data()
+        for contrast in ["logcosh", "exp", "cube"]:
+            ica = IcaTransformer(channels=ICA_CHANNELS, contrast=contrast)
+            out = ica.fit_transform(X)
+            assert out.shape == (N_ICA_SAMPLES, ICA_CHANNELS)
+            assert np.isfinite(out).all()
