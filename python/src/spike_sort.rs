@@ -5,6 +5,7 @@ use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArr
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::vec::Vec;
+use zerostone::online_kmeans::OnlineKMeans as ZsOnlineKMeans;
 use zerostone::spike_sort::{
     self as zs, SortError, TemplateMatch as ZsTemplateMatch, WaveformPca as ZsWaveformPca,
 };
@@ -900,60 +901,27 @@ fn spike_sort<'py>(
         _ => unreachable!(),
     }
 
-    // Step 5: Simple k-means in PCA space
+    // Step 5: K-means clustering in PCA space using OnlineKMeans
     let k = n_clusters;
-    let mut centroids = vec![[0.0f64; 3]; k];
-    // Initialize centroids from first k waveforms (spread evenly)
+
+    // Seed centroids from evenly-spaced waveforms, then assign all points
+    let mut km = ZsOnlineKMeans::<3, 32>::new(10000);
     let step = n_valid / k;
-    for (c, centroid) in centroids.iter_mut().enumerate() {
+    for c in 0..k {
         let idx = c * step;
+        let mut centroid = [0.0f64; 3];
         centroid.copy_from_slice(&pca_features[idx * 3..(idx + 1) * 3]);
+        let _ = km.seed_centroid(&centroid);
     }
 
+    // Run two passes: first pass assigns all points, second pass refines
     let mut labels = vec![0usize; n_valid];
-    for _iter in 0..50 {
-        // Assign
-        let mut changed = false;
+    for _pass in 0..2 {
         for i in 0..n_valid {
-            let feat = &pca_features[i * 3..(i + 1) * 3];
-            let mut best = 0;
-            let mut best_d = f64::MAX;
-            for (c, centroid) in centroids.iter().enumerate() {
-                let mut d = 0.0;
-                for j in 0..3 {
-                    let diff = feat[j] - centroid[j];
-                    d += diff * diff;
-                }
-                if d < best_d {
-                    best_d = d;
-                    best = c;
-                }
-            }
-            if labels[i] != best {
-                changed = true;
-                labels[i] = best;
-            }
-        }
-        if !changed {
-            break;
-        }
-
-        // Update centroids
-        let mut sums = vec![[0.0f64; 3]; k];
-        let mut counts = vec![0usize; k];
-        for i in 0..n_valid {
-            let c = labels[i];
-            counts[c] += 1;
-            for j in 0..3 {
-                sums[c][j] += pca_features[i * 3 + j];
-            }
-        }
-        for c in 0..k {
-            if counts[c] > 0 {
-                for j in 0..3 {
-                    centroids[c][j] = sums[c][j] / counts[c] as f64;
-                }
-            }
+            let mut feat = [0.0f64; 3];
+            feat.copy_from_slice(&pca_features[i * 3..(i + 1) * 3]);
+            let result = km.update(&feat);
+            labels[i] = result.cluster;
         }
     }
 

@@ -18,6 +18,7 @@ mod ica;
 mod kalman;
 mod lda;
 mod notch;
+mod online_kmeans;
 mod percentile;
 mod pipeline;
 mod resampling;
@@ -50,6 +51,7 @@ use resampling::{Decimator, Interpolator};
 use riemannian::{MdmClassifier, TangentSpace};
 use spatial::{ChannelRouter, SurfaceLaplacian, CAR};
 use spectral::{Fft, MultiBandPower, Stft};
+use online_kmeans::OnlineKMeans;
 use spike_sort::{TemplateMatcher, WaveformPca};
 use stats::{OnlineCov, OnlineStats};
 use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
@@ -415,6 +417,10 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<WaveformPca>()?;
     m.add_class::<TemplateMatcher>()?;
     spike_sort::register(m)?;
+
+    // Online k-means clustering
+    m.add_class::<OnlineKMeans>()?;
+    online_kmeans::register(m)?;
 
     // EDF file reader
     m.add_class::<EdfRecording>()?;

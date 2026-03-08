@@ -44,6 +44,7 @@
 //! - **[`OffsetBuffer`]** - Filtered clock offset buffer with quality selection
 //! - **[`TangentSpace`]** - Riemannian tangent space projection for SPD matrices
 //! - **[`matrix_log`], [`matrix_exp`]** - Matrix logarithm/exponential for SPD matrices
+//! - **[`OnlineKMeans`]** - Online k-means clustering for spike sorting
 //!
 //! # Example
 //!
@@ -91,6 +92,7 @@ pub mod kalman;
 pub mod lda;
 pub mod linalg;
 mod notch;
+pub mod online_kmeans;
 mod percentile;
 mod pipeline;
 pub mod riemannian;
@@ -133,6 +135,7 @@ pub use interpolate::{InterpolationMethod, Interpolator};
 pub use kalman::{KalmanError, KalmanFilter};
 pub use lda::{Lda, LdaError};
 pub use notch::NotchFilter;
+pub use online_kmeans::{KMeansError, KMeansResult, OnlineKMeans};
 pub use percentile::StreamingPercentile;
 pub use pipeline::{BlockProcessor, CloneableProcessor, Pipeline, RateChangingProcessor, Terminal};
 pub use riemannian::{
