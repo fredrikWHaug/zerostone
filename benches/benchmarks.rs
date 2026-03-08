@@ -6,8 +6,8 @@ use zerostone::{
     AcCoupler, AdaptiveCsp, AdaptiveThresholdDetector, ArtifactDetector, BandPower, BiquadCoeffs,
     CircularBuffer, CommonAverageReference, Complex, Cwt, Decimator, EnvelopeFollower, Fft,
     FirFilter, IirFilter, Interpolator, LmsFilter, MultiChannelCwt, NlmsFilter, OasisDeconvolution,
-    OnlineCov, Rectification, Stft, StreamingPercentile, SurfaceLaplacian, ThresholdDetector,
-    UpdateConfig, WindowType, WindowedRms, ZscoreArtifact,
+    OnlineCov, OnlineKMeans, Rectification, Stft, StreamingPercentile, SurfaceLaplacian,
+    ThresholdDetector, UpdateConfig, WindowType, WindowedRms, ZscoreArtifact,
 };
 
 // Target from proposal: 1024-channel ring buffer insert <1 μs (30M samples/sec)
@@ -2232,6 +2232,64 @@ fn bench_common_average_reference(c: &mut Criterion) {
     group.finish();
 }
 
+// Online k-means clustering benchmarks - spike sorting cluster discovery
+fn bench_online_kmeans(c: &mut Criterion) {
+    let mut group = c.benchmark_group("online_kmeans");
+
+    // D=3, K=8 single point update (typical spike sorting PCA features)
+    {
+        let mut km = OnlineKMeans::<3, 8>::new(10000);
+        // Seed 4 clusters
+        km.seed_centroid(&[0.0, 0.0, 0.0]).unwrap();
+        km.seed_centroid(&[5.0, 0.0, 0.0]).unwrap();
+        km.seed_centroid(&[0.0, 5.0, 0.0]).unwrap();
+        km.seed_centroid(&[0.0, 0.0, 5.0]).unwrap();
+
+        let point = [1.0, 0.5, 0.2];
+        group.bench_function("update_d3_k8", |b| {
+            b.iter(|| {
+                black_box(km.update(black_box(&point)));
+            });
+        });
+    }
+
+    // D=3, K=8 predict (read-only)
+    {
+        let mut km = OnlineKMeans::<3, 8>::new(10000);
+        km.seed_centroid(&[0.0, 0.0, 0.0]).unwrap();
+        km.seed_centroid(&[5.0, 0.0, 0.0]).unwrap();
+        km.seed_centroid(&[0.0, 5.0, 0.0]).unwrap();
+        km.seed_centroid(&[0.0, 0.0, 5.0]).unwrap();
+
+        let point = [1.0, 0.5, 0.2];
+        group.bench_function("predict_d3_k8", |b| {
+            b.iter(|| {
+                black_box(km.predict(black_box(&point)));
+            });
+        });
+    }
+
+    // D=8, K=32 update (high-dimensional, many clusters)
+    {
+        let mut km = OnlineKMeans::<8, 32>::new(10000);
+        // Seed 16 clusters
+        for i in 0..16 {
+            let mut c = [0.0f64; 8];
+            c[i % 8] = (i as f64) * 2.0;
+            km.seed_centroid(&c).unwrap();
+        }
+
+        let point = [1.0, 0.5, 0.2, 0.1, 0.0, -0.1, -0.2, -0.5];
+        group.bench_function("update_d8_k32", |b| {
+            b.iter(|| {
+                black_box(km.update(black_box(&point)));
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -2264,6 +2322,7 @@ criterion_group!(
     bench_nlms_filter,
     bench_windowed_rms,
     bench_surface_laplacian,
-    bench_common_average_reference
+    bench_common_average_reference,
+    bench_online_kmeans
 );
 criterion_main!(benches);
