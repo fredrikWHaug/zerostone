@@ -13,6 +13,7 @@ mod deconvolution;
 mod detection;
 mod edf;
 mod erp;
+mod xdf;
 mod filters;
 mod ica;
 mod kalman;
@@ -40,6 +41,7 @@ use csp::AdaptiveCsp;
 use deconvolution::OasisDeconvolution;
 use detection::{AdaptiveThresholdDetector, ThresholdDetector, ZeroCrossingDetector};
 use edf::EdfRecording;
+use xdf::{XdfRecording, XdfStream};
 use filters::{AcCoupler, FirFilter, LmsFilter, MedianFilter, NlmsFilter};
 use ica::Ica;
 use kalman::KalmanFilter;
@@ -425,6 +427,11 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // EDF file reader
     m.add_class::<EdfRecording>()?;
     edf::register(m)?;
+
+    // XDF file reader
+    m.add_class::<XdfRecording>()?;
+    m.add_class::<XdfStream>()?;
+    xdf::register(m)?;
 
     // Online covariance
     m.add_class::<OnlineCov>()?;
