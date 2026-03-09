@@ -106,6 +106,7 @@ pub mod wavelet;
 mod welch;
 mod window;
 pub mod xcorr;
+pub mod xdf;
 
 // Re-export at crate root for convenience
 pub use artifact::{ArtifactDetector, ArtifactType, ZscoreArtifact};
@@ -156,4 +157,10 @@ pub use welch::WelchPsd;
 pub use window::{
     apply_window, apply_window_f64, coherent_gain, equivalent_noise_bandwidth, window_coefficient,
     WindowType,
+};
+pub use xdf::{
+    count_chunk_samples, decode_samples_f64, find_tag_value, next_chunk, parse_clock_offset,
+    parse_stream_info, read_varlen, validate_magic, ClockOffsetPair, XdfChannelFormat, XdfChunk,
+    XdfError, XdfStreamInfo, TAG_BOUNDARY, TAG_CLOCK_OFFSET, TAG_FILE_HEADER, TAG_SAMPLES,
+    TAG_STREAM_FOOTER, TAG_STREAM_HEADER,
 };
