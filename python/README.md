@@ -89,13 +89,20 @@ TS+LDA exceeds the original competition winner (FBCSP, ~63%). All pipelines buil
 - **Template matching** -- classify spikes by Euclidean distance or normalized cross-correlation
 - **MAD noise estimation** -- robust noise floor estimation for threshold setting
 - **Batch detection** -- negative-threshold crossing with refractory period
-- **Convenience pipeline** -- `spike_sort()` for end-to-end spike sorting with inline k-means
+- **Online k-means** -- adaptive clustering with auto-create, merge, and prune (OSort-inspired)
+- **Convenience pipeline** -- `spike_sort()` for end-to-end spike sorting with online k-means
 
 ### EDF/EDF+ File Reader
 - **read_edf()** -- load EDF/EDF+ files without MNE or pyedflib
 - **Channel access** -- by index or label name
 - **Physical units** -- automatic digital-to-physical conversion
 - **Mixed sample rates** -- zero-padded multi-channel extraction
+
+### XDF File Reader (Lab Streaming Layer)
+- **read_xdf()** -- load XDF files from LSL recordings
+- **Multi-stream** -- numeric and string streams with per-stream metadata
+- **Clock offsets** -- collection time and offset value pairs
+- **Sample formats** -- float32, float64, int8, int16, int32, int64, string
 
 ### Detection
 - **Threshold** -- fixed-threshold event detection
@@ -111,10 +118,28 @@ TS+LDA exceeds the original competition winner (FBCSP, ~63%). All pipelines buil
 - **Windowed RMS** -- streaming root-mean-square
 - **Hilbert transform** -- analytic signal, instantaneous phase/frequency
 
+### Phase-Amplitude Coupling
+- **Modulation index** -- Tort et al. (2010), KL-divergence from uniform phase distribution
+- **Mean vector length** -- Canolty et al. (2006), normalized complex coupling strength
+- **Comodulogram** -- PAC across frequency pairs (bandpass + Hilbert + MI/MVL)
+- **Phase-amplitude distribution** -- binned amplitude histogram for visualization
+
+### Entropy Measures
+- **Sample entropy** -- template-matching complexity measure (SampEn)
+- **Approximate entropy** -- regularity statistic with self-matches (ApEn)
+- **Spectral entropy** -- Shannon entropy of normalized PSD
+- **Multiscale entropy** -- coarse-grained sample entropy across time scales
+
+### Event-Related Spectral Perturbation (ERSP)
+- **compute_ersp()** -- STFT-based time-frequency decomposition with epoch averaging
+- **baseline_normalize()** -- dB, z-score, percentage, and log-ratio normalization modes
+- **Single-trial mode** -- per-epoch time-frequency maps without averaging
+
 ### Statistics
 - **Online mean/variance** -- Welford's algorithm, no buffer required
 - **Online covariance** -- streaming covariance matrix
-- **Connectivity** -- coherence and phase locking value (PLV)
+- **Connectivity** -- coherence, phase locking value (PLV), and Granger causality
+- **Conditional Granger** -- Granger causality conditioned on confound variables
 
 ### BCI Paradigms
 - **Motor imagery** -- CSP with online adaptation, sklearn-compatible transformer
@@ -127,6 +152,17 @@ TS+LDA exceeds the original competition winner (FBCSP, ~63%). All pipelines buil
 - **Frechet mean** -- geometric mean of SPD matrices
 - **Riemannian distance** -- affine-invariant distance metric
 - **Recentering** -- domain adaptation via Riemannian transport
+
+### Sklearn Integration
+- **CSPTransformer** -- common spatial patterns as sklearn transformer
+- **TangentSpaceTransformer** -- Riemannian tangent space projection
+- **BandPowerTransformer** -- multi-band power feature extraction
+- **CovarianceEstimator** -- covariance matrix estimation
+- **LdaClassifier** -- Fisher's LDA with predict_proba and score
+- **IcaTransformer** -- ICA with component exclusion for artifact removal
+- **MdmWrapper** -- minimum distance to mean classifier
+- **XDawnWrapper** -- xDAWN spatial filter transformer
+- Works with `make_pipeline()`, `cross_val_score()`, `GridSearchCV()`
 
 ### Advanced
 - **OASIS deconvolution** -- calcium transient inference from fluorescence traces
@@ -141,7 +177,7 @@ TS+LDA exceeds the original competition winner (FBCSP, ~63%). All pipelines buil
 
 ## Version
 
-0.4.0
+0.5.0
 
 ## License
 
