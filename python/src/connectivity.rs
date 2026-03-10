@@ -236,10 +236,161 @@ fn phase_locking_value(
     Ok(zs_conn::phase_locking_value(a_slice, b_slice))
 }
 
+/// Test whether x Granger-causes y.
+///
+/// Granger causality tests whether past values of x provide statistically
+/// significant information for predicting y, beyond what y's own past provides.
+///
+/// Args:
+///     x (np.ndarray): Potential cause signal as 1D float64 array.
+///     y (np.ndarray): Effect signal as 1D float64 array (same length as x).
+///     order (int): Model order (number of lags). Must be in [1, 20]. Default: 5.
+///
+/// Returns:
+///     tuple[float, float]: (f_statistic, p_value). A small p_value (e.g., < 0.05)
+///         indicates that x significantly Granger-causes y.
+///
+/// Example:
+///     >>> import zpybci as zbci
+///     >>> import numpy as np
+///     >>> np.random.seed(42)
+///     >>> x = np.random.randn(500)
+///     >>> y = np.zeros(500)
+///     >>> for t in range(1, 500):
+///     ...     y[t] = 0.5 * y[t-1] + 0.3 * x[t-1] + np.random.randn() * 0.1
+///     >>> f_stat, p_value = zbci.granger_causality(x, y, order=1)
+///     >>> assert p_value < 0.01
+#[pyfunction]
+#[pyo3(signature = (x, y, order = 5))]
+fn granger_causality(
+    x: PyReadonlyArray1<f64>,
+    y: PyReadonlyArray1<f64>,
+    order: usize,
+) -> PyResult<(f64, f64)> {
+    let x_slice = x.as_slice()?;
+    let y_slice = y.as_slice()?;
+
+    if x_slice.len() != y_slice.len() {
+        return Err(PyValueError::new_err(format!(
+            "Signals must have equal length: {} vs {}",
+            x_slice.len(),
+            y_slice.len()
+        )));
+    }
+    if order == 0 || order > 20 {
+        return Err(PyValueError::new_err("order must be in [1, 20]"));
+    }
+    if x_slice.len() <= 3 * order {
+        return Err(PyValueError::new_err(format!(
+            "Signal length {} too short for order {} (need > {})",
+            x_slice.len(),
+            order,
+            3 * order
+        )));
+    }
+
+    let result = zs_conn::granger_causality(x_slice, y_slice, order);
+    Ok((result.f_statistic, result.p_value))
+}
+
+/// Test whether x Granger-causes y, conditioned on confound signal z.
+///
+/// Controls for the effect of z by including its lags in both the restricted
+/// and unrestricted models. Useful for distinguishing direct from indirect
+/// causal relationships.
+///
+/// Args:
+///     x (np.ndarray): Potential cause signal as 1D float64 array.
+///     y (np.ndarray): Effect signal as 1D float64 array.
+///     z (np.ndarray): Confound signal as 1D float64 array.
+///     order (int): Model order (number of lags). Must be in [1, 20]. Default: 5.
+///
+/// Returns:
+///     tuple[float, float]: (f_statistic, p_value).
+///
+/// Example:
+///     >>> import zpybci as zbci
+///     >>> import numpy as np
+///     >>> np.random.seed(42)
+///     >>> x = np.random.randn(500)
+///     >>> z = np.random.randn(500)
+///     >>> y = np.zeros(500)
+///     >>> for t in range(1, 500):
+///     ...     y[t] = 0.5 * y[t-1] + 0.3 * x[t-1] + np.random.randn() * 0.1
+///     >>> f_stat, p_value = zbci.conditional_granger(x, y, z, order=1)
+///     >>> assert p_value < 0.01
+#[pyfunction]
+#[pyo3(signature = (x, y, z, order = 5))]
+fn conditional_granger(
+    x: PyReadonlyArray1<f64>,
+    y: PyReadonlyArray1<f64>,
+    z: PyReadonlyArray1<f64>,
+    order: usize,
+) -> PyResult<(f64, f64)> {
+    let x_slice = x.as_slice()?;
+    let y_slice = y.as_slice()?;
+    let z_slice = z.as_slice()?;
+
+    if x_slice.len() != y_slice.len() || y_slice.len() != z_slice.len() {
+        return Err(PyValueError::new_err("All signals must have equal length"));
+    }
+    if order == 0 || order > 20 {
+        return Err(PyValueError::new_err("order must be in [1, 20]"));
+    }
+    if x_slice.len() <= 4 * order {
+        return Err(PyValueError::new_err(format!(
+            "Signal length {} too short for conditional Granger with order {} (need > {})",
+            x_slice.len(),
+            order,
+            4 * order
+        )));
+    }
+
+    let result = zs_conn::conditional_granger(x_slice, y_slice, z_slice, order);
+    Ok((result.f_statistic, result.p_value))
+}
+
+/// Compute p-value for a Granger causality F-statistic.
+///
+/// Standalone function for computing the significance when you already have
+/// the F-statistic from a Granger test. Uses F(order, n_obs - 3*order)
+/// distribution.
+///
+/// Args:
+///     f_statistic (float): The F-statistic value.
+///     n_obs (int): Number of observations in the original signals.
+///     order (int): Model order used in the Granger test.
+///
+/// Returns:
+///     float: p-value in [0, 1].
+///
+/// Example:
+///     >>> import zpybci as zbci
+///     >>> p = zbci.granger_significance(5.0, 106, 1)
+///     >>> assert p < 0.05
+#[pyfunction]
+fn granger_significance(f_statistic: f64, n_obs: usize, order: usize) -> PyResult<f64> {
+    if order == 0 || order > 20 {
+        return Err(PyValueError::new_err("order must be in [1, 20]"));
+    }
+    if n_obs <= 3 * order {
+        return Err(PyValueError::new_err(format!(
+            "n_obs {} too small for order {} (need > {})",
+            n_obs,
+            order,
+            3 * order
+        )));
+    }
+    Ok(zs_conn::granger_significance(f_statistic, n_obs, order))
+}
+
 /// Register connectivity functions with the module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(coherence, m)?)?;
     m.add_function(wrap_pyfunction!(spectral_coherence, m)?)?;
     m.add_function(wrap_pyfunction!(phase_locking_value, m)?)?;
+    m.add_function(wrap_pyfunction!(granger_causality, m)?)?;
+    m.add_function(wrap_pyfunction!(conditional_granger, m)?)?;
+    m.add_function(wrap_pyfunction!(granger_significance, m)?)?;
     Ok(())
 }
