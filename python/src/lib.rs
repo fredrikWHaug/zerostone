@@ -12,6 +12,7 @@ mod csp;
 mod deconvolution;
 mod detection;
 mod edf;
+mod entropy;
 mod erp;
 mod filters;
 mod ica;
@@ -448,6 +449,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Connectivity metrics
     connectivity::register(m)?;
+
+    // Entropy measures
+    entropy::register(m)?;
 
     // Phase-Amplitude Coupling
     pac::register(m)?;
