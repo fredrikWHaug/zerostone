@@ -13,13 +13,13 @@ mod deconvolution;
 mod detection;
 mod edf;
 mod erp;
-mod xdf;
 mod filters;
 mod ica;
 mod kalman;
 mod lda;
 mod notch;
 mod online_kmeans;
+mod pac;
 mod percentile;
 mod pipeline;
 mod resampling;
@@ -34,6 +34,7 @@ mod wavelet;
 mod welch;
 mod window;
 mod xcorr;
+mod xdf;
 
 use analysis::{EnvelopeFollower, HilbertTransform, WindowedRms};
 use artifact::{ArtifactDetector, ZscoreArtifact};
@@ -41,24 +42,24 @@ use csp::AdaptiveCsp;
 use deconvolution::OasisDeconvolution;
 use detection::{AdaptiveThresholdDetector, ThresholdDetector, ZeroCrossingDetector};
 use edf::EdfRecording;
-use xdf::{XdfRecording, XdfStream};
 use filters::{AcCoupler, FirFilter, LmsFilter, MedianFilter, NlmsFilter};
 use ica::Ica;
 use kalman::KalmanFilter;
 use lda::Lda;
 use notch::NotchFilter as PyNotchFilter;
+use online_kmeans::OnlineKMeans;
 use percentile::StreamingPercentile;
 use pipeline::Pipeline;
 use resampling::{Decimator, Interpolator};
 use riemannian::{MdmClassifier, TangentSpace};
 use spatial::{ChannelRouter, SurfaceLaplacian, CAR};
 use spectral::{Fft, MultiBandPower, Stft};
-use online_kmeans::OnlineKMeans;
 use spike_sort::{TemplateMatcher, WaveformPca};
 use stats::{OnlineCov, OnlineStats};
 use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
 use wavelet::Cwt;
 use welch::WelchPsd as PyWelchPsd;
+use xdf::{XdfRecording, XdfStream};
 
 /// IIR (Infinite Impulse Response) filter with cascaded biquad sections.
 ///
@@ -447,6 +448,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Connectivity metrics
     connectivity::register(m)?;
+
+    // Phase-Amplitude Coupling
+    pac::register(m)?;
 
     // CCA / SSVEP detection
     cca::register(m)?;

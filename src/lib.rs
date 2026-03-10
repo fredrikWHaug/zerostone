@@ -45,6 +45,7 @@
 //! - **[`TangentSpace`]** - Riemannian tangent space projection for SPD matrices
 //! - **[`matrix_log`], [`matrix_exp`]** - Matrix logarithm/exponential for SPD matrices
 //! - **[`OnlineKMeans`]** - Online k-means clustering for spike sorting
+//! - **[`modulation_index`], [`mean_vector_length`]** - Phase-amplitude coupling metrics
 //!
 //! # Example
 //!
@@ -93,6 +94,7 @@ pub mod lda;
 pub mod linalg;
 mod notch;
 pub mod online_kmeans;
+pub mod pac;
 mod percentile;
 mod pipeline;
 pub mod riemannian;
@@ -137,6 +139,7 @@ pub use kalman::{KalmanError, KalmanFilter};
 pub use lda::{Lda, LdaError};
 pub use notch::NotchFilter;
 pub use online_kmeans::{KMeansError, KMeansResult, OnlineKMeans};
+pub use pac::{mean_vector_length, modulation_index, phase_amplitude_distribution};
 pub use percentile::StreamingPercentile;
 pub use pipeline::{BlockProcessor, CloneableProcessor, Pipeline, RateChangingProcessor, Terminal};
 pub use riemannian::{

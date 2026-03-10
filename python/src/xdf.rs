@@ -124,8 +124,12 @@ impl XdfStream {
     fn __repr__(&self) -> String {
         format!(
             "XdfStream(name='{}', type='{}', channels={}, samples={}, rate={} Hz, format='{}')",
-            self.name, self.stream_type, self.channel_count, self.n_samples,
-            self.sample_rate, self.channel_format
+            self.name,
+            self.stream_type,
+            self.channel_count,
+            self.n_samples,
+            self.sample_rate,
+            self.channel_format
         )
     }
 }
@@ -270,8 +274,8 @@ fn read_xdf(py: Python<'_>, filepath: &str) -> PyResult<XdfRecording> {
     let mut header_xml = String::new();
     let mut pos = 4; // skip magic
 
-    while let Some(chunk) =
-        xdf::next_chunk(&bytes, &mut pos).map_err(|e| PyValueError::new_err(format!("XDF parse error: {:?}", e)))?
+    while let Some(chunk) = xdf::next_chunk(&bytes, &mut pos)
+        .map_err(|e| PyValueError::new_err(format!("XDF parse error: {:?}", e)))?
     {
         match chunk.tag {
             xdf::TAG_FILE_HEADER => {
@@ -283,8 +287,9 @@ fn read_xdf(py: Python<'_>, filepath: &str) -> PyResult<XdfRecording> {
                     .ok_or_else(|| PyValueError::new_err("StreamHeader missing stream_id"))?;
                 // XML is content after the 4-byte stream_id
                 let xml = &chunk.content[4..];
-                let info = xdf::parse_stream_info(xml, stream_id)
-                    .map_err(|e| PyValueError::new_err(format!("Invalid stream header: {:?}", e)))?;
+                let info = xdf::parse_stream_info(xml, stream_id).map_err(|e| {
+                    PyValueError::new_err(format!("Invalid stream header: {:?}", e))
+                })?;
 
                 let format_str = match info.channel_format {
                     xdf::XdfChannelFormat::Float32 => "float32",
@@ -342,9 +347,11 @@ fn read_xdf(py: Python<'_>, filepath: &str) -> PyResult<XdfRecording> {
                     .ok_or_else(|| PyValueError::new_err("ClockOffset missing stream_id"))?;
                 if let Some(sc) = streams.get_mut(&stream_id) {
                     let co_content = &chunk.content[4..];
-                    let pair = xdf::parse_clock_offset(co_content)
-                        .map_err(|e| PyValueError::new_err(format!("Clock offset error: {:?}", e)))?;
-                    sc.clock_offsets.push((pair.collection_time, pair.offset_value));
+                    let pair = xdf::parse_clock_offset(co_content).map_err(|e| {
+                        PyValueError::new_err(format!("Clock offset error: {:?}", e))
+                    })?;
+                    sc.clock_offsets
+                        .push((pair.collection_time, pair.offset_value));
                 }
             }
             _ => {} // Skip Boundary, StreamFooter
