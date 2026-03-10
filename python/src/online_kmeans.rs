@@ -5,9 +5,7 @@ use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArr
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use zerostone::online_kmeans::{
-    KMeansError, OnlineKMeans as ZsOnlineKMeans,
-};
+use zerostone::online_kmeans::{KMeansError, OnlineKMeans as ZsOnlineKMeans};
 
 fn kmeans_error_to_py(e: KMeansError) -> PyErr {
     let msg = match e {

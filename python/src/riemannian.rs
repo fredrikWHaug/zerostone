@@ -1,9 +1,7 @@
 //! Python bindings for Riemannian geometry (tangent space projection, MDM classifier).
 
 use numpy::ndarray::Array2;
-use numpy::{
-    PyArray1, PyArray2, PyReadonlyArray2, PyReadonlyArray3, PyUntypedArrayMethods,
-};
+use numpy::{PyArray1, PyArray2, PyReadonlyArray2, PyReadonlyArray3, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use zerostone::linalg::Matrix;
