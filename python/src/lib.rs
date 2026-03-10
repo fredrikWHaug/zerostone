@@ -14,6 +14,7 @@ mod detection;
 mod edf;
 mod entropy;
 mod erp;
+mod ersp;
 mod filters;
 mod ica;
 mod kalman;
@@ -461,6 +462,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // ERP / xDAWN
     erp::register(m)?;
+
+    // ERSP
+    ersp::register(m)?;
 
     // Window functions
     window::register(m)?;

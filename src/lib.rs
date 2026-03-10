@@ -86,6 +86,7 @@ pub mod edf;
 pub mod entropy;
 mod envelope;
 pub mod erp;
+pub mod ersp;
 mod fft;
 mod filter;
 pub mod hilbert;
@@ -130,6 +131,7 @@ pub use edf::{
 pub use entropy::{approximate_entropy, multiscale_entropy, sample_entropy, spectral_entropy};
 pub use envelope::{EnvelopeFollower, Rectification};
 pub use erp::{apply_spatial_filter, epoch_average, xdawn_filters, ErpError};
+pub use ersp::{BaselineMode, ErspError};
 pub use fft::{BandPower, Complex, Fft};
 pub use filter::{
     AcCoupler, AdaptiveOutput, BiquadCoeffs, CommonAverageReference, FirFilter, IirFilter,

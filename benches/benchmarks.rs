@@ -2362,6 +2362,59 @@ fn bench_entropy(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_ersp(c: &mut Criterion) {
+    use zerostone::ersp;
+
+    let mut group = c.benchmark_group("ersp");
+
+    // 100 frames x 129 freq bins (typical for 256-point FFT)
+    let n_frames = 100;
+    let n_freqs = 129;
+    let mut power = [0.0f64; 100 * 129];
+    for (i, v) in power.iter_mut().enumerate() {
+        *v = 1.0 + (i as f64 * 0.01).sin().abs();
+    }
+
+    group.bench_function("baseline_normalize_100x129", |b| {
+        b.iter(|| {
+            let mut p = power;
+            ersp::baseline_normalize(
+                black_box(&mut p),
+                n_frames,
+                n_freqs,
+                0,
+                20,
+                ersp::BaselineMode::Db,
+            )
+            .unwrap();
+        });
+    });
+
+    // 20 epochs x 100 frames x 129 freqs
+    let n_epochs = 20;
+    let epoch_size = n_frames * n_freqs;
+    let mut epochs = vec![0.0f64; n_epochs * epoch_size];
+    for (i, v) in epochs.iter_mut().enumerate() {
+        *v = 1.0 + (i as f64 * 0.007).sin().abs();
+    }
+    let mut output = vec![0.0f64; epoch_size];
+
+    group.bench_function("epoch_average_20x100x129", |b| {
+        b.iter(|| {
+            ersp::epoch_average(
+                black_box(&epochs),
+                n_epochs,
+                n_frames,
+                n_freqs,
+                black_box(&mut output),
+            )
+            .unwrap();
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -2396,6 +2449,7 @@ criterion_group!(
     bench_surface_laplacian,
     bench_common_average_reference,
     bench_online_kmeans,
-    bench_entropy
+    bench_entropy,
+    bench_ersp
 );
 criterion_main!(benches);
