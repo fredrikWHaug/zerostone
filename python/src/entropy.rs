@@ -36,16 +36,10 @@ fn sample_entropy(data: PyReadonlyArray1<f64>, m: usize, r: f64) -> PyResult<f64
         return Err(PyValueError::new_err("data must not be empty"));
     }
     if m < 1 {
-        return Err(PyValueError::new_err(format!(
-            "m must be >= 1, got {}",
-            m
-        )));
+        return Err(PyValueError::new_err(format!("m must be >= 1, got {}", m)));
     }
     if r <= 0.0 {
-        return Err(PyValueError::new_err(format!(
-            "r must be > 0, got {}",
-            r
-        )));
+        return Err(PyValueError::new_err(format!("r must be > 0, got {}", r)));
     }
     if slice.len() <= m + 1 {
         return Err(PyValueError::new_err(format!(
@@ -86,16 +80,10 @@ fn approximate_entropy(data: PyReadonlyArray1<f64>, m: usize, r: f64) -> PyResul
         return Err(PyValueError::new_err("data must not be empty"));
     }
     if m < 1 {
-        return Err(PyValueError::new_err(format!(
-            "m must be >= 1, got {}",
-            m
-        )));
+        return Err(PyValueError::new_err(format!("m must be >= 1, got {}", m)));
     }
     if r <= 0.0 {
-        return Err(PyValueError::new_err(format!(
-            "r must be > 0, got {}",
-            r
-        )));
+        return Err(PyValueError::new_err(format!("r must be > 0, got {}", r)));
     }
     if slice.len() <= m {
         return Err(PyValueError::new_err(format!(
@@ -160,7 +148,12 @@ fn spectral_entropy(psd: PyReadonlyArray1<f64>, normalize: bool) -> PyResult<f64
 ///     >>> assert abs(mse1 - se) < 1e-10
 #[pyfunction]
 #[pyo3(signature = (data, scale=1, m=2, r=0.2))]
-fn multiscale_entropy(data: PyReadonlyArray1<f64>, scale: usize, m: usize, r: f64) -> PyResult<f64> {
+fn multiscale_entropy(
+    data: PyReadonlyArray1<f64>,
+    scale: usize,
+    m: usize,
+    r: f64,
+) -> PyResult<f64> {
     let slice = data.as_slice()?;
 
     if slice.is_empty() {
@@ -173,16 +166,10 @@ fn multiscale_entropy(data: PyReadonlyArray1<f64>, scale: usize, m: usize, r: f6
         )));
     }
     if m < 1 {
-        return Err(PyValueError::new_err(format!(
-            "m must be >= 1, got {}",
-            m
-        )));
+        return Err(PyValueError::new_err(format!("m must be >= 1, got {}", m)));
     }
     if r <= 0.0 {
-        return Err(PyValueError::new_err(format!(
-            "r must be > 0, got {}",
-            r
-        )));
+        return Err(PyValueError::new_err(format!("r must be > 0, got {}", r)));
     }
 
     if scale == 1 {
@@ -206,7 +193,13 @@ fn multiscale_entropy(data: PyReadonlyArray1<f64>, scale: usize, m: usize, r: f6
     }
 
     let mut scratch = vec![0.0f64; coarse_len];
-    Ok(zs_entropy::multiscale_entropy(slice, scale, m, r, &mut scratch))
+    Ok(zs_entropy::multiscale_entropy(
+        slice,
+        scale,
+        m,
+        r,
+        &mut scratch,
+    ))
 }
 
 /// Register entropy functions with the module.
