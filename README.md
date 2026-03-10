@@ -37,7 +37,7 @@ mdm.fit(covariance_matrices, labels)
 predictions = mdm.predict(test_covariances)
 ```
 
-Supports all three major BCI paradigms: motor imagery (CSP), SSVEP (CCA), and P300/ERP (xDAWN). See [`python/README.md`](python/README.md) for the full feature list.
+Supports all three major BCI paradigms: motor imagery (CSP), SSVEP (CCA), and P300/ERP (xDAWN). Includes sklearn-compatible wrappers, spike sorting with online k-means, XDF/EDF file readers, phase-amplitude coupling, entropy measures, ERSP, and Granger causality. See [`python/README.md`](python/README.md) for the full feature list.
 
 ### BCI Competition IV 2a Results
 
