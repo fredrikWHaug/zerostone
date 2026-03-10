@@ -274,3 +274,234 @@ class TestConnectivityIntegration:
 
         # Coherence in the passband should be high
         assert coh[10] > 0.5, f"Coherence at 10 Hz after filtering should be high, got {coh[10]}"
+
+
+class TestGrangerCausality:
+    """Tests for Granger causality."""
+
+    def test_known_causality(self):
+        """x Granger-causes y when y depends on lagged x."""
+        np.random.seed(42)
+        n = 500
+        x = np.random.randn(n)
+        y = np.zeros(n)
+        for t in range(1, n):
+            y[t] = 0.5 * y[t - 1] + 0.3 * x[t - 1] + np.random.randn() * 0.1
+
+        f_stat, p_value = zbci.granger_causality(x, y, order=1)
+        assert p_value < 0.01, f"x should Granger-cause y, p={p_value}"
+        assert f_stat > 0
+
+    def test_no_causality(self):
+        """Independent AR(1) processes should not show causality."""
+        np.random.seed(42)
+        n = 1000
+        x = np.zeros(n)
+        y = np.zeros(n)
+        for t in range(1, n):
+            x[t] = 0.5 * x[t - 1] + np.random.randn()
+            y[t] = 0.5 * y[t - 1] + np.random.randn()
+
+        _, p_value = zbci.granger_causality(x, y, order=1)
+        assert p_value > 0.01, f"Independent signals should not show causality, p={p_value}"
+
+    def test_reverse_direction(self):
+        """If x causes y, y should not Granger-cause x (or much less)."""
+        np.random.seed(42)
+        n = 500
+        x = np.random.randn(n)
+        y = np.zeros(n)
+        for t in range(1, n):
+            y[t] = 0.5 * y[t - 1] + 0.3 * x[t - 1] + np.random.randn() * 0.1
+
+        _, p_xy = zbci.granger_causality(x, y, order=1)
+        _, p_yx = zbci.granger_causality(y, x, order=1)
+
+        assert p_xy < p_yx, f"x->y (p={p_xy}) should be more significant than y->x (p={p_yx})"
+
+    def test_higher_order(self):
+        """Lag-3 causal effect should be detected with order >= 3."""
+        np.random.seed(77)
+        n = 600
+        x = np.random.randn(n)
+        y = np.zeros(n)
+        for t in range(3, n):
+            y[t] = 0.3 * y[t - 1] + 0.4 * x[t - 3] + np.random.randn() * 0.1
+
+        f_low, _ = zbci.granger_causality(x, y, order=1)
+        f_high, _ = zbci.granger_causality(x, y, order=3)
+        assert f_high > f_low, f"Order 3 should capture lag-3: F(3)={f_high} vs F(1)={f_low}"
+
+    def test_default_order(self):
+        """Default order should be 5."""
+        np.random.seed(42)
+        x = np.random.randn(200)
+        y = np.random.randn(200)
+        f_stat, p_value = zbci.granger_causality(x, y)
+        assert 0 <= p_value <= 1
+
+    def test_p_value_range(self):
+        """p-value and F-statistic must be in valid ranges."""
+        np.random.seed(42)
+        x = np.random.randn(200)
+        y = np.random.randn(200)
+        f_stat, p_value = zbci.granger_causality(x, y, order=5)
+        assert p_value >= 0.0
+        assert p_value <= 1.0
+        assert f_stat >= 0.0
+
+    def test_invalid_order_zero(self):
+        """Order 0 should raise ValueError."""
+        x = np.zeros(100)
+        y = np.zeros(100)
+        with pytest.raises(ValueError, match="order"):
+            zbci.granger_causality(x, y, order=0)
+
+    def test_invalid_order_too_large(self):
+        """Order > 20 should raise ValueError."""
+        x = np.zeros(100)
+        y = np.zeros(100)
+        with pytest.raises(ValueError, match="order"):
+            zbci.granger_causality(x, y, order=21)
+
+    def test_signal_too_short(self):
+        """Too-short signal should raise ValueError."""
+        x = np.zeros(10)
+        y = np.zeros(10)
+        with pytest.raises(ValueError, match="too short"):
+            zbci.granger_causality(x, y, order=5)
+
+    def test_unequal_lengths(self):
+        """Unequal signal lengths should raise ValueError."""
+        x = np.zeros(100)
+        y = np.zeros(50)
+        with pytest.raises(ValueError, match="equal length"):
+            zbci.granger_causality(x, y, order=1)
+
+
+class TestConditionalGranger:
+    """Tests for conditional Granger causality."""
+
+    def test_direct_cause_with_noise_confound(self):
+        """x directly causes y, z is independent. Should still detect x->y."""
+        np.random.seed(42)
+        n = 500
+        x = np.random.randn(n)
+        z = np.random.randn(n)
+        y = np.zeros(n)
+        for t in range(1, n):
+            y[t] = 0.5 * y[t - 1] + 0.3 * x[t - 1] + np.random.randn() * 0.1
+
+        f_stat, p_value = zbci.conditional_granger(x, y, z, order=1)
+        assert p_value < 0.01, f"x->y should still be significant controlling for z, p={p_value}"
+
+    def test_mediated_cause(self):
+        """x->z->y: conditioning on z should weaken x->y."""
+        np.random.seed(42)
+        n = 500
+        x = np.random.randn(n)
+        z = np.zeros(n)
+        y = np.zeros(n)
+        for t in range(1, n):
+            z[t] = 0.3 * z[t - 1] + 0.5 * x[t - 1] + np.random.randn() * 0.1
+            y[t] = 0.3 * y[t - 1] + 0.5 * z[t - 1] + np.random.randn() * 0.1
+
+        _, p_uncond = zbci.granger_causality(x, y, order=2)
+        _, p_cond = zbci.conditional_granger(x, y, z, order=2)
+
+        assert p_uncond < 0.05, f"Unconditional x->y should be significant, p={p_uncond}"
+        assert p_cond > p_uncond, f"Conditional p={p_cond} should be > unconditional p={p_uncond}"
+
+    def test_default_order(self):
+        """Default order should be 5."""
+        np.random.seed(42)
+        x = np.random.randn(200)
+        y = np.random.randn(200)
+        z = np.random.randn(200)
+        f_stat, p_value = zbci.conditional_granger(x, y, z)
+        assert 0 <= p_value <= 1
+
+    def test_signal_too_short(self):
+        """Too-short signal for conditional Granger should raise."""
+        x = np.zeros(15)
+        y = np.zeros(15)
+        z = np.zeros(15)
+        with pytest.raises(ValueError, match="too short"):
+            zbci.conditional_granger(x, y, z, order=5)
+
+    def test_unequal_lengths(self):
+        """All signals must have equal length."""
+        x = np.zeros(100)
+        y = np.zeros(100)
+        z = np.zeros(50)
+        with pytest.raises(ValueError, match="equal length"):
+            zbci.conditional_granger(x, y, z, order=1)
+
+
+class TestGrangerSignificance:
+    """Tests for standalone Granger significance function."""
+
+    def test_large_f_significant(self):
+        """Large F-statistic should give small p-value."""
+        p = zbci.granger_significance(10.0, 200, 5)
+        assert p < 0.01, f"F=10 should be significant, p={p}"
+
+    def test_small_f_not_significant(self):
+        """Small F-statistic should give large p-value."""
+        p = zbci.granger_significance(0.5, 200, 5)
+        assert p > 0.5, f"F=0.5 should not be significant, p={p}"
+
+    def test_zero_f(self):
+        """F=0 should give p=1."""
+        p = zbci.granger_significance(0.0, 200, 5)
+        assert abs(p - 1.0) < 1e-6, f"F=0 should give p=1, got {p}"
+
+    def test_invalid_order(self):
+        """Invalid order should raise."""
+        with pytest.raises(ValueError, match="order"):
+            zbci.granger_significance(5.0, 100, 0)
+
+    def test_too_few_observations(self):
+        """Too few observations should raise."""
+        with pytest.raises(ValueError, match="too small"):
+            zbci.granger_significance(5.0, 10, 5)
+
+
+class TestGrangerIntegration:
+    """Integration tests for Granger causality with other connectivity measures."""
+
+    def test_coherent_but_not_causal(self):
+        """Two signals driven by a common source have high coherence but
+        neither Granger-causes the other."""
+        np.random.seed(42)
+        n = 1000
+        source = np.random.randn(n)
+        x = np.zeros(n)
+        y = np.zeros(n)
+        for t in range(1, n):
+            x[t] = 0.5 * x[t - 1] + 0.3 * source[t - 1] + np.random.randn() * 0.1
+            y[t] = 0.5 * y[t - 1] + 0.3 * source[t - 1] + np.random.randn() * 0.1
+
+        # Neither should Granger-cause the other
+        _, p_xy = zbci.granger_causality(x, y, order=2)
+        _, p_yx = zbci.granger_causality(y, x, order=2)
+
+        # Both p-values should be relatively large (not strongly significant)
+        assert p_xy > 0.001 or p_yx > 0.001, \
+            f"Common-source signals should not show strong bidirectional causality: p_xy={p_xy}, p_yx={p_yx}"
+
+    def test_granger_complements_coherence(self):
+        """x causes y: Granger detects directionality that coherence cannot."""
+        np.random.seed(42)
+        n = 500
+        x = np.random.randn(n)
+        y = np.zeros(n)
+        for t in range(1, n):
+            y[t] = 0.5 * y[t - 1] + 0.3 * x[t - 1] + np.random.randn() * 0.1
+
+        # Granger: x->y significant, y->x not
+        _, p_xy = zbci.granger_causality(x, y, order=1)
+        _, p_yx = zbci.granger_causality(y, x, order=1)
+
+        assert p_xy < 0.01, f"Granger should detect x->y, p={p_xy}"
+        assert p_xy < p_yx, "Granger correctly identifies direction"

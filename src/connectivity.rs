@@ -1,9 +1,9 @@
 //! Connectivity metrics for brain signal analysis.
 //!
-//! This module provides coherence and phase locking value (PLV) for measuring
-//! synchronization between brain regions. These are fundamental metrics in
-//! BCI research for connectivity analysis — determining how brain areas
-//! communicate and synchronize.
+//! This module provides coherence, phase locking value (PLV), and Granger
+//! causality for measuring synchronization and directional information flow
+//! between brain regions. These are fundamental metrics in BCI research for
+//! connectivity analysis.
 //!
 //! # Overview
 //!
@@ -11,6 +11,9 @@
 //! - [`spectral_coherence`] — Welch-style averaged coherence (more robust)
 //! - [`phase_locking_value`] — Phase synchronization metric from instantaneous phases
 //! - [`coherence_frequencies`] — Frequency bin centers for coherence output
+//! - [`granger_causality`] — Test if one signal Granger-causes another
+//! - [`conditional_granger`] — Granger causality conditioned on a confound signal
+//! - [`granger_significance`] — P-value from F-statistic for Granger test
 //!
 //! # Coherence
 //!
@@ -371,6 +374,493 @@ pub fn coherence_frequencies<const N: usize>(sample_rate: f32, output: &mut [f32
     }
 }
 
+// --- Granger Causality ---
+
+/// Maximum AR model order for Granger causality.
+const GRANGER_MAX_ORDER: usize = 20;
+
+/// Maximum number of regression parameters (3 * MAX_ORDER for conditional).
+const GRANGER_MAX_DIM: usize = 60;
+
+/// Result of a Granger causality test.
+///
+/// Tests whether one time series (x) provides statistically significant
+/// information for predicting another (y) beyond what y's own past provides.
+///
+/// The test compares two models:
+/// - Restricted: y predicted from its own lagged values only
+/// - Unrestricted: y predicted from lagged values of both y and x
+///
+/// If the unrestricted model significantly reduces prediction error, x is said
+/// to Granger-cause y.
+#[derive(Debug, Clone, Copy)]
+pub struct GrangerResult {
+    /// F-statistic for the Granger causality test.
+    pub f_statistic: f64,
+    /// p-value (probability of observing this F-statistic under the null).
+    pub p_value: f64,
+    /// Residual variance of the restricted model.
+    pub restricted_variance: f64,
+    /// Residual variance of the unrestricted model.
+    pub unrestricted_variance: f64,
+}
+
+/// Continued fraction evaluation for the regularized incomplete beta function.
+///
+/// Uses the modified Lentz algorithm (Numerical Recipes, Press et al.).
+fn beta_continued_fraction(a: f64, b: f64, x: f64) -> f64 {
+    const MAX_ITER: usize = 200;
+    const EPS: f64 = 3e-12;
+    const FPMIN: f64 = 1e-30;
+
+    let qab = a + b;
+    let qap = a + 1.0;
+    let qam = a - 1.0;
+
+    let mut c = 1.0;
+    let mut d = 1.0 - qab * x / qap;
+    if libm::fabs(d) < FPMIN {
+        d = FPMIN;
+    }
+    d = 1.0 / d;
+    let mut h = d;
+
+    for m in 1..=MAX_ITER {
+        let mf = m as f64;
+        let m2 = 2.0 * mf;
+
+        // Even step
+        let aa = mf * (b - mf) * x / ((qam + m2) * (a + m2));
+        d = 1.0 + aa * d;
+        if libm::fabs(d) < FPMIN {
+            d = FPMIN;
+        }
+        c = 1.0 + aa / c;
+        if libm::fabs(c) < FPMIN {
+            c = FPMIN;
+        }
+        d = 1.0 / d;
+        h *= d * c;
+
+        // Odd step
+        let aa = -(a + mf) * (qab + mf) * x / ((a + m2) * (qap + m2));
+        d = 1.0 + aa * d;
+        if libm::fabs(d) < FPMIN {
+            d = FPMIN;
+        }
+        c = 1.0 + aa / c;
+        if libm::fabs(c) < FPMIN {
+            c = FPMIN;
+        }
+        d = 1.0 / d;
+        let del = d * c;
+        h *= del;
+
+        if libm::fabs(del - 1.0) <= EPS {
+            break;
+        }
+    }
+
+    h
+}
+
+/// Regularized incomplete beta function I_x(a, b).
+///
+/// Uses the continued fraction representation with symmetry transform
+/// for convergence.
+fn regularized_incomplete_beta(x: f64, a: f64, b: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if x >= 1.0 {
+        return 1.0;
+    }
+
+    let (lga, _) = libm::lgamma_r(a);
+    let (lgb, _) = libm::lgamma_r(b);
+    let (lgab, _) = libm::lgamma_r(a + b);
+
+    let bt = libm::exp(a * libm::log(x) + b * libm::log(1.0 - x) + lgab - lga - lgb);
+
+    if x < (a + 1.0) / (a + b + 2.0) {
+        bt * beta_continued_fraction(a, b, x) / a
+    } else {
+        1.0 - bt * beta_continued_fraction(b, a, 1.0 - x) / b
+    }
+}
+
+/// Survival function of the F-distribution: P(F > f | df1, df2).
+fn f_distribution_sf(f: f64, df1: f64, df2: f64) -> f64 {
+    if f <= 0.0 {
+        return 1.0;
+    }
+    let x = df1 * f / (df1 * f + df2);
+    1.0 - regularized_incomplete_beta(x, df1 / 2.0, df2 / 2.0)
+}
+
+/// Cholesky decomposition of a dim x dim matrix stored as flat row-major array.
+///
+/// Overwrites the lower triangle of `a` with L such that A = L * L^T.
+/// Returns false if matrix is not positive definite.
+fn cholesky_inplace(a: &mut [f64], dim: usize) -> bool {
+    for i in 0..dim {
+        for j in 0..=i {
+            let mut sum = 0.0;
+            for k in 0..j {
+                sum += a[i * dim + k] * a[j * dim + k];
+            }
+            if i == j {
+                let val = a[i * dim + i] - sum;
+                if val <= 1e-14 {
+                    return false;
+                }
+                a[i * dim + j] = libm::sqrt(val);
+            } else {
+                a[i * dim + j] = (a[i * dim + j] - sum) / a[j * dim + j];
+            }
+        }
+    }
+    true
+}
+
+/// Solve L * L^T * x = b given Cholesky factor L (lower triangular, flat row-major).
+fn cholesky_solve(l: &[f64], b: &[f64], dim: usize, x: &mut [f64]) {
+    // Forward substitution: L * z = b
+    let mut z = [0.0f64; GRANGER_MAX_DIM];
+    for i in 0..dim {
+        let mut sum = b[i];
+        for j in 0..i {
+            sum -= l[i * dim + j] * z[j];
+        }
+        z[i] = sum / l[i * dim + i];
+    }
+    // Backward substitution: L^T * x = z
+    for i in (0..dim).rev() {
+        let mut sum = z[i];
+        for j in (i + 1)..dim {
+            sum -= l[j * dim + i] * x[j];
+        }
+        x[i] = sum / l[i * dim + i];
+    }
+}
+
+/// Compute residual sum of squares from OLS fit of target on lagged signals.
+///
+/// Fits the model: target(t) = sum_{s,k} beta_{s,k} * signals[s][t-k-1] + e(t)
+/// for t in [order, n), and returns the residual sum of squares.
+///
+/// Each signal contributes `order` lagged regressors (lags 1 through order).
+fn ols_residual_sum_of_squares(signals: &[&[f64]], target: &[f64], n: usize, order: usize) -> f64 {
+    let n_signals = signals.len();
+    let dim = n_signals * order;
+
+    // Build X'X (upper triangle) and X'y
+    let mut xtx = [0.0f64; GRANGER_MAX_DIM * GRANGER_MAX_DIM];
+    let mut xty = [0.0f64; GRANGER_MAX_DIM];
+
+    for t in order..n {
+        let yt = target[t];
+        for i in 0..dim {
+            let si = i / order;
+            let ki = i % order;
+            let ri = signals[si][t - ki - 1];
+            xty[i] += ri * yt;
+            for j in i..dim {
+                let sj = j / order;
+                let kj = j % order;
+                let rj = signals[sj][t - kj - 1];
+                xtx[i * dim + j] += ri * rj;
+            }
+        }
+    }
+
+    // Mirror upper to lower triangle
+    for i in 0..dim {
+        for j in (i + 1)..dim {
+            xtx[j * dim + i] = xtx[i * dim + j];
+        }
+    }
+
+    // Tikhonov regularization for numerical stability
+    let mut trace = 0.0f64;
+    for i in 0..dim {
+        trace += xtx[i * dim + i];
+    }
+    if trace > 0.0 {
+        let reg = 1e-10 * trace / dim as f64;
+        for i in 0..dim {
+            xtx[i * dim + i] += reg;
+        }
+    }
+
+    // Cholesky solve
+    assert!(
+        cholesky_inplace(&mut xtx, dim),
+        "Normal equations matrix is not positive definite (degenerate signal)"
+    );
+    let mut beta = [0.0f64; GRANGER_MAX_DIM];
+    cholesky_solve(&xtx, &xty, dim, &mut beta);
+
+    // Compute RSS
+    let mut rss = 0.0f64;
+    for t in order..n {
+        let mut pred = 0.0;
+        for (i, &bi) in beta[..dim].iter().enumerate() {
+            let si = i / order;
+            let ki = i % order;
+            pred += bi * signals[si][t - ki - 1];
+        }
+        let residual = target[t] - pred;
+        rss += residual * residual;
+    }
+
+    rss
+}
+
+/// Test whether x Granger-causes y at the given model order.
+///
+/// Fits two models and compares their prediction errors:
+/// - Restricted: y(t) predicted from its own lags only
+/// - Unrestricted: y(t) predicted from lags of both y and x
+///
+/// Uses OLS via normal equations (Cholesky decomposition) for both models.
+/// The restricted model's normal equations have Toeplitz structure, equivalent
+/// to Levinson-Durbin recursion on the sample autocovariance.
+///
+/// # Arguments
+///
+/// * `x` - Potential cause signal (f64 slice)
+/// * `y` - Effect signal (f64 slice, same length as x)
+/// * `order` - Model order (number of lags, 1..=20)
+///
+/// # Returns
+///
+/// [`GrangerResult`] with F-statistic, p-value, and residual variances.
+///
+/// # Panics
+///
+/// Panics if signals have different lengths, order is 0 or > 20,
+/// or signals are too short (need length > 3 * order).
+///
+/// # Example
+///
+/// ```
+/// use zerostone::connectivity::granger_causality;
+///
+/// let n = 300;
+/// let mut x = [0.0f64; 300];
+/// let mut y = [0.0f64; 300];
+/// let mut state: u64 = 42;
+/// for t in 0..n {
+///     state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+///     x[t] = (state >> 33) as f64 / (1u64 << 31) as f64 - 1.0;
+/// }
+/// for t in 1..n {
+///     state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+///     let noise = (state >> 33) as f64 / (1u64 << 31) as f64 - 1.0;
+///     y[t] = 0.5 * y[t - 1] + 0.3 * x[t - 1] + noise * 0.1;
+/// }
+///
+/// let result = granger_causality(&x, &y, 1);
+/// assert!(result.p_value < 0.05);
+/// ```
+pub fn granger_causality(x: &[f64], y: &[f64], order: usize) -> GrangerResult {
+    assert_eq!(x.len(), y.len(), "Signals must have equal length");
+    assert!(order > 0, "Order must be > 0");
+    assert!(
+        order <= GRANGER_MAX_ORDER,
+        "Order {} exceeds maximum {}",
+        order,
+        GRANGER_MAX_ORDER
+    );
+    let n = x.len();
+    assert!(
+        n > 3 * order,
+        "Signal length {} too short for order {} (need > {})",
+        n,
+        order,
+        3 * order
+    );
+
+    let n_eff = n - order;
+    let p = order;
+
+    // Restricted model: y on its own lags
+    let rss_r = ols_residual_sum_of_squares(&[y], y, n, order);
+
+    // Unrestricted model: y on lags of y and x
+    let rss_u = ols_residual_sum_of_squares(&[y, x], y, n, order);
+
+    // F-test: df1 = p (extra parameters), df2 = n_eff - 2p (residual df of unrestricted)
+    let df1 = p as f64;
+    let df2 = (n_eff - 2 * p) as f64;
+    assert!(
+        df2 > 0.0,
+        "Not enough observations for F-test (n={}, order={})",
+        n,
+        order
+    );
+
+    let f_stat = if rss_u > 0.0 {
+        ((rss_r - rss_u) / df1) / (rss_u / df2)
+    } else {
+        0.0
+    };
+    // Clamp to non-negative (rounding could make it slightly negative)
+    let f_stat = if f_stat < 0.0 { 0.0 } else { f_stat };
+
+    let p_value = f_distribution_sf(f_stat, df1, df2);
+
+    GrangerResult {
+        f_statistic: f_stat,
+        p_value,
+        restricted_variance: rss_r / n_eff as f64,
+        unrestricted_variance: rss_u / n_eff as f64,
+    }
+}
+
+/// Test whether x Granger-causes y, conditioned on confound signal z.
+///
+/// Controls for the effect of z by including its lags in both models:
+/// - Restricted: y(t) predicted from lags of y and z
+/// - Unrestricted: y(t) predicted from lags of y, x, and z
+///
+/// If x provides additional predictive information beyond what y and z
+/// already provide, the test will be significant.
+///
+/// # Arguments
+///
+/// * `x` - Potential cause signal
+/// * `y` - Effect signal (same length as x)
+/// * `z` - Confound signal to control for (same length as x)
+/// * `order` - Model order (1..=20)
+///
+/// # Panics
+///
+/// Panics if signals have different lengths, order is 0 or > 20,
+/// or signals are too short (need length > 4 * order).
+///
+/// # Example
+///
+/// ```
+/// use zerostone::connectivity::conditional_granger;
+///
+/// let n = 300;
+/// let mut x = [0.0f64; 300];
+/// let mut y = [0.0f64; 300];
+/// let mut z = [0.0f64; 300];
+/// let mut state: u64 = 42;
+/// for t in 0..n {
+///     state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+///     x[t] = (state >> 33) as f64 / (1u64 << 31) as f64 - 1.0;
+///     state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+///     z[t] = (state >> 33) as f64 / (1u64 << 31) as f64 - 1.0;
+/// }
+/// for t in 1..n {
+///     state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+///     let noise = (state >> 33) as f64 / (1u64 << 31) as f64 - 1.0;
+///     y[t] = 0.5 * y[t - 1] + 0.3 * x[t - 1] + noise * 0.1;
+/// }
+///
+/// let result = conditional_granger(&x, &y, &z, 1);
+/// assert!(result.p_value < 0.05); // x still causes y even controlling for z
+/// ```
+pub fn conditional_granger(x: &[f64], y: &[f64], z: &[f64], order: usize) -> GrangerResult {
+    assert_eq!(x.len(), y.len(), "Signals must have equal length");
+    assert_eq!(y.len(), z.len(), "Signals must have equal length");
+    assert!(order > 0, "Order must be > 0");
+    assert!(
+        order <= GRANGER_MAX_ORDER,
+        "Order {} exceeds maximum {}",
+        order,
+        GRANGER_MAX_ORDER
+    );
+    let n = x.len();
+    assert!(
+        n > 4 * order,
+        "Signal length {} too short for conditional Granger with order {} (need > {})",
+        n,
+        order,
+        4 * order
+    );
+
+    let n_eff = n - order;
+
+    // Restricted: y on lags of y and z (2p parameters)
+    let rss_r = ols_residual_sum_of_squares(&[y, z], y, n, order);
+
+    // Unrestricted: y on lags of y, x, and z (3p parameters)
+    let rss_u = ols_residual_sum_of_squares(&[y, x, z], y, n, order);
+
+    // F-test: df1 = p, df2 = n_eff - 3p
+    let df1 = order as f64;
+    let df2 = (n_eff - 3 * order) as f64;
+    assert!(
+        df2 > 0.0,
+        "Not enough observations for conditional F-test (n={}, order={})",
+        n,
+        order
+    );
+
+    let f_stat = if rss_u > 0.0 {
+        ((rss_r - rss_u) / df1) / (rss_u / df2)
+    } else {
+        0.0
+    };
+    let f_stat = if f_stat < 0.0 { 0.0 } else { f_stat };
+
+    let p_value = f_distribution_sf(f_stat, df1, df2);
+
+    GrangerResult {
+        f_statistic: f_stat,
+        p_value,
+        restricted_variance: rss_r / n_eff as f64,
+        unrestricted_variance: rss_u / n_eff as f64,
+    }
+}
+
+/// Compute p-value for a Granger causality F-statistic.
+///
+/// Standalone function for computing the p-value when you have the F-statistic
+/// from a previous test. Uses the F-distribution with df1 = order and
+/// df2 = n_obs - 3 * order.
+///
+/// # Arguments
+///
+/// * `f_statistic` - The F-statistic from a Granger causality test
+/// * `n_obs` - Number of observations in the original signals
+/// * `order` - Model order used in the test
+///
+/// # Returns
+///
+/// p-value in \[0, 1\].
+///
+/// # Panics
+///
+/// Panics if there are not enough observations (need n_obs > 3 * order).
+///
+/// # Example
+///
+/// ```
+/// use zerostone::connectivity::granger_significance;
+///
+/// // F(5, 100) = 3.0 should give a small p-value
+/// let p = granger_significance(3.0, 120, 5);
+/// assert!(p < 0.05);
+/// ```
+pub fn granger_significance(f_statistic: f64, n_obs: usize, order: usize) -> f64 {
+    let n_eff = n_obs - order;
+    let df1 = order as f64;
+    let df2 = (n_eff - 2 * order) as f64;
+    assert!(
+        df2 > 0.0,
+        "Not enough observations (n={}, order={})",
+        n_obs,
+        order
+    );
+    f_distribution_sf(f_statistic, df1, df2)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,5 +1175,322 @@ mod tests {
             "Coherence at shared frequency should be high, got {}",
             coh[10]
         );
+    }
+
+    // --- Granger Causality Tests ---
+
+    /// Deterministic PRNG for test reproducibility (LCG).
+    fn lcg_next(state: &mut u32) -> f64 {
+        *state = state.wrapping_mul(1103515245).wrapping_add(12345);
+        (*state as f64 / u32::MAX as f64) * 2.0 - 1.0
+    }
+
+    #[test]
+    fn test_granger_known_causality() {
+        // x is white noise, y(t) = 0.5*y(t-1) + 0.3*x(t-1) + small noise
+        // x should Granger-cause y.
+        let mut x = [0.0f64; 500];
+        let mut y = [0.0f64; 500];
+        let mut state: u32 = 42;
+
+        for xi in x.iter_mut() {
+            *xi = lcg_next(&mut state);
+        }
+        for t in 1..x.len() {
+            let noise = lcg_next(&mut state);
+            y[t] = 0.5 * y[t - 1] + 0.3 * x[t - 1] + noise * 0.1;
+        }
+
+        let result = granger_causality(&x, &y, 1);
+        assert!(
+            result.p_value < 0.01,
+            "x should Granger-cause y, p={}",
+            result.p_value
+        );
+        assert!(result.f_statistic > 0.0);
+        assert!(result.unrestricted_variance < result.restricted_variance);
+    }
+
+    #[test]
+    fn test_granger_no_causality() {
+        // Independent AR(1) processes — should not show Granger causality.
+        let mut x = [0.0f64; 1000];
+        let mut y = [0.0f64; 1000];
+        let mut state: u32 = 42;
+
+        for t in 1..x.len() {
+            let nx = lcg_next(&mut state);
+            x[t] = 0.5 * x[t - 1] + nx * 0.5;
+            let ny = lcg_next(&mut state);
+            y[t] = 0.5 * y[t - 1] + ny * 0.5;
+        }
+
+        let result = granger_causality(&x, &y, 1);
+        assert!(
+            result.p_value > 0.01,
+            "Independent signals should not show causality, p={}",
+            result.p_value
+        );
+    }
+
+    #[test]
+    fn test_granger_reverse_direction() {
+        // If x causes y, then y→x should be much weaker than x→y.
+        let mut x = [0.0f64; 500];
+        let mut y = [0.0f64; 500];
+        let mut state: u32 = 42;
+
+        for xi in x.iter_mut() {
+            *xi = lcg_next(&mut state);
+        }
+        for t in 1..x.len() {
+            let noise = lcg_next(&mut state);
+            y[t] = 0.5 * y[t - 1] + 0.3 * x[t - 1] + noise * 0.1;
+        }
+
+        let result_xy = granger_causality(&x, &y, 1);
+        let result_yx = granger_causality(&y, &x, 1);
+
+        // x→y should be far more significant than y→x
+        assert!(
+            result_xy.p_value < result_yx.p_value,
+            "x→y (p={}) should be more significant than y→x (p={})",
+            result_xy.p_value,
+            result_yx.p_value
+        );
+    }
+
+    #[test]
+    fn test_granger_higher_order() {
+        // x causes y with lag 3
+        let mut x = [0.0f64; 600];
+        let mut y = [0.0f64; 600];
+        let mut state: u32 = 77;
+
+        for xi in x.iter_mut() {
+            *xi = lcg_next(&mut state);
+        }
+        for t in 3..x.len() {
+            let noise = lcg_next(&mut state);
+            y[t] = 0.3 * y[t - 1] + 0.4 * x[t - 3] + noise * 0.1;
+        }
+
+        // Order 1 should miss the lag-3 effect
+        let result_low = granger_causality(&x, &y, 1);
+        // Order 3+ should capture it
+        let result_high = granger_causality(&x, &y, 3);
+
+        assert!(
+            result_high.f_statistic > result_low.f_statistic,
+            "Higher order should capture lag-3 effect: F(3)={} vs F(1)={}",
+            result_high.f_statistic,
+            result_low.f_statistic
+        );
+    }
+
+    #[test]
+    fn test_granger_p_value_range() {
+        let mut x = [0.0f64; 200];
+        let mut y = [0.0f64; 200];
+        let mut state: u32 = 42;
+        for (xi, yi) in x.iter_mut().zip(y.iter_mut()) {
+            *xi = lcg_next(&mut state);
+            *yi = lcg_next(&mut state);
+        }
+
+        let result = granger_causality(&x, &y, 5);
+        assert!(result.p_value >= 0.0, "p-value must be >= 0");
+        assert!(result.p_value <= 1.0, "p-value must be <= 1");
+        assert!(result.f_statistic >= 0.0, "F-statistic must be >= 0");
+    }
+
+    #[test]
+    #[should_panic(expected = "Order must be > 0")]
+    fn test_granger_order_zero() {
+        let x = [0.0f64; 100];
+        let y = [0.0f64; 100];
+        granger_causality(&x, &y, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds maximum")]
+    fn test_granger_order_too_large() {
+        let x = [0.0f64; 100];
+        let y = [0.0f64; 100];
+        granger_causality(&x, &y, 21);
+    }
+
+    #[test]
+    #[should_panic(expected = "too short")]
+    fn test_granger_signal_too_short() {
+        let x = [0.0f64; 10];
+        let y = [0.0f64; 10];
+        granger_causality(&x, &y, 5);
+    }
+
+    #[test]
+    #[should_panic(expected = "equal length")]
+    fn test_granger_unequal_lengths() {
+        let x = [0.0f64; 100];
+        let y = [0.0f64; 50];
+        granger_causality(&x, &y, 1);
+    }
+
+    #[test]
+    fn test_granger_significance_standalone() {
+        // F(1, 100) critical value at alpha=0.05 is ~3.94
+        let p = granger_significance(5.0, 106, 1);
+        assert!(
+            p < 0.05,
+            "F=5.0 with df(1,100) should be significant, p={}",
+            p
+        );
+
+        let p2 = granger_significance(1.0, 106, 1);
+        assert!(
+            p2 > 0.1,
+            "F=1.0 with df(1,100) should not be significant, p={}",
+            p2
+        );
+    }
+
+    #[test]
+    fn test_conditional_granger_direct_cause() {
+        // x directly causes y, z is independent noise.
+        // Conditional Granger (controlling for z) should still detect x→y.
+        let n = 500;
+        let mut x = [0.0f64; 500];
+        let mut y = [0.0f64; 500];
+        let mut z = [0.0f64; 500];
+        let mut state: u32 = 42;
+
+        for i in 0..n {
+            x[i] = lcg_next(&mut state);
+            z[i] = lcg_next(&mut state);
+        }
+        for t in 1..n {
+            let noise = lcg_next(&mut state);
+            y[t] = 0.5 * y[t - 1] + 0.3 * x[t - 1] + noise * 0.1;
+        }
+
+        let result = conditional_granger(&x, &y, &z, 1);
+        assert!(
+            result.p_value < 0.01,
+            "x→y should still be significant controlling for z, p={}",
+            result.p_value
+        );
+    }
+
+    #[test]
+    fn test_conditional_granger_mediated() {
+        // x→z→y: x causes z, z causes y. Conditioning on z should reduce
+        // the apparent x→y causality.
+        let mut x = [0.0f64; 500];
+        let mut y = [0.0f64; 500];
+        let mut z = [0.0f64; 500];
+        let mut state: u32 = 42;
+
+        for xi in x.iter_mut() {
+            *xi = lcg_next(&mut state);
+        }
+        for t in 1..x.len() {
+            let nz = lcg_next(&mut state);
+            z[t] = 0.3 * z[t - 1] + 0.5 * x[t - 1] + nz * 0.1;
+            let ny = lcg_next(&mut state);
+            y[t] = 0.3 * y[t - 1] + 0.5 * z[t - 1] + ny * 0.1;
+        }
+
+        // Unconditional: x→y should be significant (indirect effect)
+        let result_uncond = granger_causality(&x, &y, 2);
+        assert!(
+            result_uncond.p_value < 0.05,
+            "Unconditional x→y should be significant, p={}",
+            result_uncond.p_value
+        );
+
+        // Conditional on z: x→y should be weaker (z mediates the effect)
+        let result_cond = conditional_granger(&x, &y, &z, 2);
+        assert!(
+            result_cond.p_value > result_uncond.p_value,
+            "Conditional x→y|z (p={}) should be less significant than unconditional (p={})",
+            result_cond.p_value,
+            result_uncond.p_value
+        );
+    }
+
+    #[test]
+    fn test_incomplete_beta_known_values() {
+        // I_0.5(1, 1) = 0.5 (uniform distribution)
+        let val = regularized_incomplete_beta(0.5, 1.0, 1.0);
+        assert!(
+            libm::fabs(val - 0.5) < 1e-10,
+            "I_0.5(1,1) should be 0.5, got {}",
+            val
+        );
+
+        // I_0(a, b) = 0 for any a, b
+        let val = regularized_incomplete_beta(0.0, 2.0, 3.0);
+        assert!(libm::fabs(val) < 1e-10, "I_0(a,b) should be 0, got {}", val);
+
+        // I_1(a, b) = 1 for any a, b
+        let val = regularized_incomplete_beta(1.0, 2.0, 3.0);
+        assert!(
+            libm::fabs(val - 1.0) < 1e-10,
+            "I_1(a,b) should be 1, got {}",
+            val
+        );
+
+        // I_0.5(2, 2) = 0.5 (symmetric beta distribution)
+        let val = regularized_incomplete_beta(0.5, 2.0, 2.0);
+        assert!(
+            libm::fabs(val - 0.5) < 1e-8,
+            "I_0.5(2,2) should be 0.5, got {}",
+            val
+        );
+    }
+
+    #[test]
+    fn test_f_distribution_sf_known_values() {
+        // P(F > 0 | df1, df2) = 1.0 for any df
+        let p = f_distribution_sf(0.0, 5.0, 100.0);
+        assert!(
+            libm::fabs(p - 1.0) < 1e-10,
+            "P(F>0) should be 1.0, got {}",
+            p
+        );
+
+        // F(1, inf) ~ chi-squared(1). P(chi2 > 3.84) ≈ 0.05
+        // For F(1, 1000), P(F > 3.84) should be close to 0.05
+        let p = f_distribution_sf(3.84, 1.0, 1000.0);
+        assert!(
+            libm::fabs(p - 0.05) < 0.01,
+            "P(F(1,1000) > 3.84) should be ~0.05, got {}",
+            p
+        );
+
+        // Very large F → p ≈ 0
+        let p = f_distribution_sf(100.0, 5.0, 100.0);
+        assert!(p < 1e-10, "Very large F should give tiny p, got {}", p);
+    }
+
+    #[test]
+    fn test_cholesky_2x2() {
+        // A = [[4, 2], [2, 3]] → L = [[2, 0], [1, sqrt(2)]]
+        let mut a = [4.0, 2.0, 2.0, 3.0];
+        assert!(cholesky_inplace(&mut a, 2));
+        assert!(libm::fabs(a[0] - 2.0) < 1e-10);
+        assert!(libm::fabs(a[2] - 1.0) < 1e-10);
+        assert!(libm::fabs(a[3] - libm::sqrt(2.0)) < 1e-10);
+    }
+
+    #[test]
+    fn test_cholesky_solve_identity() {
+        // Solve I * x = b → x = b
+        let l = [1.0, 0.0, 0.0, 1.0]; // Identity (already Cholesky factor)
+        let b = [3.0, 7.0];
+        let mut x = [0.0; GRANGER_MAX_DIM];
+        cholesky_solve(&l, &b, 2, &mut x);
+        assert!(libm::fabs(x[0] - 3.0) < 1e-10);
+        assert!(libm::fabs(x[1] - 7.0) < 1e-10);
     }
 }
