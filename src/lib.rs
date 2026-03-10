@@ -46,6 +46,7 @@
 //! - **[`matrix_log`], [`matrix_exp`]** - Matrix logarithm/exponential for SPD matrices
 //! - **[`OnlineKMeans`]** - Online k-means clustering for spike sorting
 //! - **[`modulation_index`], [`mean_vector_length`]** - Phase-amplitude coupling metrics
+//! - **[`entropy`]** - Sample, approximate, spectral, and multiscale entropy measures
 //!
 //! # Example
 //!
@@ -82,6 +83,7 @@ mod decimate;
 mod deconvolution;
 mod detector;
 pub mod edf;
+pub mod entropy;
 mod envelope;
 pub mod erp;
 mod fft;
@@ -125,6 +127,7 @@ pub use edf::{
     parse_header, parse_signal_header, read_channel, read_record, EdfError, EdfHeader,
     EdfSignalHeader,
 };
+pub use entropy::{approximate_entropy, multiscale_entropy, sample_entropy, spectral_entropy};
 pub use envelope::{EnvelopeFollower, Rectification};
 pub use erp::{apply_spatial_filter, epoch_average, xdawn_filters, ErpError};
 pub use fft::{BandPower, Complex, Fft};

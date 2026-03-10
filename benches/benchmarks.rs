@@ -2290,6 +2290,78 @@ fn bench_online_kmeans(c: &mut Criterion) {
     group.finish();
 }
 
+// Entropy measures benchmarks - SampEn O(N^2), ApEn, SpectralEn, MSE
+fn bench_entropy(c: &mut Criterion) {
+    use zerostone::entropy;
+
+    let mut group = c.benchmark_group("entropy");
+
+    // Generate test data: sine wave with noise
+    let mut data_256 = [0.0f64; 256];
+    let mut data_1024 = [0.0f64; 1024];
+    let mut data_4096 = [0.0f64; 4096];
+
+    for (i, v) in data_256.iter_mut().enumerate() {
+        *v = libm::sin(i as f64 * 0.3) + (i as f64 * 0.7).sin() * 0.3;
+    }
+    for (i, v) in data_1024.iter_mut().enumerate() {
+        *v = libm::sin(i as f64 * 0.3) + (i as f64 * 0.7).sin() * 0.3;
+    }
+    for (i, v) in data_4096.iter_mut().enumerate() {
+        *v = libm::sin(i as f64 * 0.3) + (i as f64 * 0.7).sin() * 0.3;
+    }
+
+    // Sample entropy at different N (O(N^2) scaling)
+    group.bench_function("sample_entropy_n256", |b| {
+        b.iter(|| {
+            black_box(entropy::sample_entropy(black_box(&data_256), 2, 0.2));
+        });
+    });
+
+    group.bench_function("sample_entropy_n1024", |b| {
+        b.iter(|| {
+            black_box(entropy::sample_entropy(black_box(&data_1024), 2, 0.2));
+        });
+    });
+
+    group.bench_function("sample_entropy_n4096", |b| {
+        b.iter(|| {
+            black_box(entropy::sample_entropy(black_box(&data_4096), 2, 0.2));
+        });
+    });
+
+    // Approximate entropy at N=1024
+    group.bench_function("approximate_entropy_n1024", |b| {
+        b.iter(|| {
+            black_box(entropy::approximate_entropy(black_box(&data_1024), 2, 0.2));
+        });
+    });
+
+    // Spectral entropy (should be fast, O(N))
+    let psd = [1.0f64; 1024];
+    group.bench_function("spectral_entropy_n1024", |b| {
+        b.iter(|| {
+            black_box(entropy::spectral_entropy(black_box(&psd), true));
+        });
+    });
+
+    // Multiscale entropy at N=1024, scale=4
+    group.bench_function("multiscale_entropy_n1024_s4", |b| {
+        let mut scratch = [0.0f64; 256];
+        b.iter(|| {
+            black_box(entropy::multiscale_entropy(
+                black_box(&data_1024),
+                4,
+                2,
+                0.2,
+                black_box(&mut scratch),
+            ));
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_push_pop_throughput,
@@ -2323,6 +2395,7 @@ criterion_group!(
     bench_windowed_rms,
     bench_surface_laplacian,
     bench_common_average_reference,
-    bench_online_kmeans
+    bench_online_kmeans,
+    bench_entropy
 );
 criterion_main!(benches);
