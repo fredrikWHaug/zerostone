@@ -9,3 +9,11 @@ Cargo.lock
 
 # Generated output from examples (plots, CSV files)
 /output/
+
+# Build artifacts
+dist/
+*.whl
+
+# Python bytecode
+__pycache__/
+*.pyc
