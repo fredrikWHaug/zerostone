@@ -988,6 +988,28 @@ impl<const C: usize> Default for ZeroCrossingDetector<C> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(2)]
+    fn threshold_detector_no_panic() {
+        let threshold: f32 = kani::any();
+        let refractory_samples: u32 = kani::any();
+        let input: f32 = kani::any();
+        let counter: u32 = kani::any();
+
+        kani::assume(threshold.is_finite());
+        kani::assume(input.is_finite());
+
+        let mut detector: ThresholdDetector<1> =
+            ThresholdDetector::new(threshold, refractory_samples);
+        detector.refractory_counter[0] = counter;
+        let _ = detector.process_sample(&[input]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;

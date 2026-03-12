@@ -20,6 +20,9 @@ toml = "0.8"
 proptest = "1"
 libm = "0.2"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
 [[bench]]
 name = "benchmarks"
 harness = false

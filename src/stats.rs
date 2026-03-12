@@ -256,6 +256,26 @@ impl<const C: usize, const M: usize> OnlineCov<C, M> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn online_stats_update_finite() {
+        let mut stats: OnlineStats<1> = OnlineStats::new();
+        let mut i: u32 = 0;
+        while i < 8 {
+            let val: f64 = kani::any();
+            kani::assume(val.is_finite() && val >= -1e6 && val <= 1e6);
+            stats.update(&[val]);
+            assert!(stats.mean[0].is_finite(), "mean must stay finite");
+            assert!(stats.m2[0].is_finite(), "m2 must stay finite");
+            i += 1;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

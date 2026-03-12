@@ -17,7 +17,7 @@ depth = 0
 code = 0
 for line in open(sys.argv[1]):
     stripped = line.strip()
-    if '#[cfg(test)]' in stripped:
+    if '#[cfg(test)]' in stripped or '#[cfg(kani)]' in stripped:
         in_test = True
         depth = 0
         continue
