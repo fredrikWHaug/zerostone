@@ -4,6 +4,9 @@
 //! output across code changes. Any change to these outputs requires explicit acknowledgment.
 //!
 //! Convention: commits tagged [refactor] must NOT change any hash in this file.
+//!
+//! All trig uses `libm` (pure Rust) instead of platform `sin()`/`cos()` to guarantee
+//! identical results on macOS ARM64, Linux x86_64, etc.
 
 use zerostone::{BiquadCoeffs, Complex, Fft, IirFilter, ThresholdDetector, WelchPsd, WindowType};
 
@@ -20,11 +23,12 @@ fn hash_f32(data: &[f32]) -> u64 {
 }
 
 /// Deterministic test signal: 10 Hz + 25 Hz sinusoids at 250 Hz sample rate.
+/// Uses libm::sinf for cross-platform bit-exact reproducibility.
 fn test_signal_1024() -> [f32; 1024] {
     core::array::from_fn(|i| {
         let t = i as f32 / 250.0;
-        (2.0 * std::f32::consts::PI * 10.0 * t).sin()
-            + 0.5 * (2.0 * std::f32::consts::PI * 25.0 * t).sin()
+        libm::sinf(2.0 * std::f32::consts::PI * 10.0 * t)
+            + 0.5 * libm::sinf(2.0 * std::f32::consts::PI * 25.0 * t)
     })
 }
 
@@ -74,7 +78,7 @@ fn replay_spike_detection() {
     let mut signal = [0.0f32; 1024];
     for (i, s) in signal.iter_mut().enumerate() {
         let t = i as f32 / 250.0;
-        *s = (2.0 * std::f32::consts::PI * 5.0 * t).sin();
+        *s = libm::sinf(2.0 * std::f32::consts::PI * 5.0 * t);
     }
     // Inject spikes
     signal[100] = 5.0;
@@ -136,8 +140,8 @@ fn replay_csp_filters() {
     let mut class2_trial = [[0.0f64; 4]; 100];
     for i in 0..100 {
         let t = i as f64 / 250.0;
-        let s1 = (2.0 * std::f64::consts::PI * 10.0 * t).sin();
-        let s2 = (2.0 * std::f64::consts::PI * 12.0 * t).sin();
+        let s1 = libm::sin(2.0 * std::f64::consts::PI * 10.0 * t);
+        let s2 = libm::sin(2.0 * std::f64::consts::PI * 12.0 * t);
         class1_trial[i] = [s1, s1 * 0.8, 0.1 * s2, 0.05 * s2];
         class2_trial[i] = [0.1 * s1, 0.05 * s1, s2, s2 * 0.8];
     }
@@ -159,8 +163,8 @@ fn replay_csp_filters() {
 
 // Canonical hashes -- regenerate by running tests and updating from failure messages.
 // Any change here means pipeline output changed. Commits tagged [refactor] must not change these.
-const HASH_BANDPASS: u64 = 0xbb904a59984efbac;
-const HASH_FFT: u64 = 0xd9993adcd44e96c1;
-const HASH_WELCH: u64 = 0x9ab1224152955640;
+const HASH_BANDPASS: u64 = 0x2cfb75bb77f0f1ec;
+const HASH_FFT: u64 = 0x536017a5e587159d;
+const HASH_WELCH: u64 = 0x22c723d86dad4098;
 const HASH_SPIKE: u64 = 0x271153b6466ce591;
-const HASH_CSP: u64 = 0x7d3eb177a298edff;
+const HASH_CSP: u64 = 0x6beb8f7318b7cb14;
