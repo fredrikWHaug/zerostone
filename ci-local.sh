@@ -30,6 +30,9 @@ mv Cargo.lock Cargo.lock.backup 2>/dev/null || true
 cargo +1.70.0 check
 mv Cargo.lock.backup Cargo.lock 2>/dev/null || true
 
+echo "Checking line budget..."
+bash sz.sh
+
 echo "Running all tests (lib, integration, doc)..."
 cargo test --all-targets
 cargo test --doc
