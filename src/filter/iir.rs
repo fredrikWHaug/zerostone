@@ -542,6 +542,34 @@ impl<const SECTIONS: usize> crate::pipeline::BlockProcessor<1> for IirFilter<SEC
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(2)]
+    fn iir_single_step_finite() {
+        let b0: f32 = kani::any();
+        let b1: f32 = kani::any();
+        let b2: f32 = kani::any();
+        let a1: f32 = kani::any();
+        let a2: f32 = kani::any();
+        let input: f32 = kani::any();
+
+        kani::assume(b0.is_finite() && b0 >= -2.0 && b0 <= 2.0);
+        kani::assume(b1.is_finite() && b1 >= -2.0 && b1 <= 2.0);
+        kani::assume(b2.is_finite() && b2 >= -2.0 && b2 <= 2.0);
+        kani::assume(a1.is_finite() && a1 >= -2.0 && a1 <= 2.0);
+        kani::assume(a2.is_finite() && a2 >= -2.0 && a2 <= 2.0);
+        kani::assume(input.is_finite() && input >= -1.0 && input <= 1.0);
+
+        let coeffs = BiquadCoeffs { b0, b1, b2, a1, a2 };
+        let mut filter: IirFilter<1> = IirFilter::new([coeffs]);
+        let output = filter.process_sample(input);
+        assert!(output.is_finite(), "IIR output must be finite");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -37,6 +37,15 @@ echo "Running all tests (lib, integration, doc)..."
 cargo test --all-targets
 cargo test --doc
 
+if command -v cargo-kani &> /dev/null; then
+    echo "Running Kani verification harnesses..."
+    cargo kani --harness iir_single_step_finite
+    cargo kani --harness online_stats_update_finite
+    cargo kani --harness threshold_detector_no_panic
+else
+    echo "Skipping Kani verification (cargo-kani not installed)"
+fi
+
 echo "Building Python bindings..."
 cd python
 PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin build --release
