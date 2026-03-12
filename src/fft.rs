@@ -308,6 +308,34 @@ impl BandPower {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn fft_butterfly_finite() {
+        let re0: f32 = kani::any();
+        let im0: f32 = kani::any();
+        let re1: f32 = kani::any();
+        let im1: f32 = kani::any();
+
+        kani::assume(re0.is_finite() && re0 >= -1.0 && re0 <= 1.0);
+        kani::assume(im0.is_finite() && im0 >= -1.0 && im0 <= 1.0);
+        kani::assume(re1.is_finite() && re1 >= -1.0 && re1 <= 1.0);
+        kani::assume(im1.is_finite() && im1 >= -1.0 && im1 <= 1.0);
+
+        let fft = Fft::<2>::new();
+        let mut data = [Complex::new(re0, im0), Complex::new(re1, im1)];
+        fft.forward(&mut data);
+
+        assert!(data[0].re.is_finite(), "FFT output[0].re finite");
+        assert!(data[0].im.is_finite(), "FFT output[0].im finite");
+        assert!(data[1].re.is_finite(), "FFT output[1].re finite");
+        assert!(data[1].im.is_finite(), "FFT output[1].im finite");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

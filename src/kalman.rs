@@ -350,6 +350,57 @@ fn symmetrize<const C: usize, const M: usize>(p: &mut Matrix<C, M>) {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+    use crate::linalg::Matrix;
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn kalman_predict_update_finite() {
+        let f_val: f64 = kani::any();
+        let h_val: f64 = kani::any();
+        let q_val: f64 = kani::any();
+        let r_val: f64 = kani::any();
+        let x0: f64 = kani::any();
+        let p0: f64 = kani::any();
+        let z: f64 = kani::any();
+
+        kani::assume(f_val.is_finite() && f_val >= -2.0 && f_val <= 2.0);
+        kani::assume(h_val.is_finite() && h_val >= -2.0 && h_val <= 2.0);
+        kani::assume(q_val.is_finite() && q_val >= 0.01 && q_val <= 10.0);
+        kani::assume(r_val.is_finite() && r_val >= 0.01 && r_val <= 10.0);
+        kani::assume(x0.is_finite() && x0 >= -100.0 && x0 <= 100.0);
+        kani::assume(p0.is_finite() && p0 >= 0.01 && p0 <= 100.0);
+        kani::assume(z.is_finite() && z >= -100.0 && z <= 100.0);
+
+        let mut kf = KalmanFilter::<1, 1, 1, 1, 1>::new(
+            Matrix::<1, 1>::new([f_val]),
+            [h_val],
+            Matrix::<1, 1>::new([q_val]),
+            Matrix::<1, 1>::new([r_val]),
+            [x0],
+            Matrix::<1, 1>::new([p0]),
+        );
+
+        kf.predict();
+        assert!(kf.state()[0].is_finite(), "state finite after predict");
+        assert!(
+            kf.covariance().get(0, 0).is_finite(),
+            "cov finite after predict"
+        );
+
+        if let Ok(innov) = kf.update(&[z]) {
+            assert!(innov[0].is_finite(), "innovation finite");
+            assert!(kf.state()[0].is_finite(), "state finite after update");
+            assert!(
+                kf.covariance().get(0, 0).is_finite(),
+                "cov finite after update"
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
