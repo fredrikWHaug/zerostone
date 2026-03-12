@@ -42,6 +42,7 @@ if command -v cargo-kani &> /dev/null; then
     cargo kani --harness iir_single_step_finite
     cargo kani --harness online_stats_update_finite
     cargo kani --harness threshold_detector_no_panic
+    cargo kani --harness fft_butterfly_finite
 else
     echo "Skipping Kani verification (cargo-kani not installed)"
 fi
