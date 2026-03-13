@@ -504,6 +504,51 @@ pub fn detect_spikes(
     count
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn detect_spikes_no_panic() {
+        let d0: f64 = kani::any();
+        let d1: f64 = kani::any();
+        let d2: f64 = kani::any();
+        let d3: f64 = kani::any();
+        let threshold: f64 = kani::any();
+        let refractory: usize = kani::any();
+
+        kani::assume(d0.is_finite() && d0 >= -1e6 && d0 <= 1e6);
+        kani::assume(d1.is_finite() && d1 >= -1e6 && d1 <= 1e6);
+        kani::assume(d2.is_finite() && d2 >= -1e6 && d2 <= 1e6);
+        kani::assume(d3.is_finite() && d3 >= -1e6 && d3 <= 1e6);
+        kani::assume(threshold.is_finite() && threshold >= 0.0 && threshold <= 1e6);
+        kani::assume(refractory >= 1 && refractory <= 4);
+
+        let data = [d0, d1, d2, d3];
+        let mut spike_times = [0usize; 4];
+        let count = detect_spikes(&data, threshold, refractory, &mut spike_times);
+        assert!(count <= 4, "count must not exceed buffer length");
+    }
+
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn mad_noise_finite() {
+        let a: f64 = kani::any();
+        let b: f64 = kani::any();
+        let c: f64 = kani::any();
+
+        kani::assume(a.is_finite() && a >= -1e6 && a <= 1e6);
+        kani::assume(b.is_finite() && b >= -1e6 && b <= 1e6);
+        kani::assume(c.is_finite() && c >= -1e6 && c <= 1e6);
+
+        let data = [a, b, c];
+        let mut scratch = [0.0f64; 3];
+        let result = estimate_noise_mad(&data, &mut scratch);
+        assert!(result.is_finite(), "MAD result must be finite");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
