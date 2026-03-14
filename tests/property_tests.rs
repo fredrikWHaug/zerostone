@@ -284,7 +284,7 @@ proptest! {
         let mut hist = isi::IsiHistogram::<200>::new(0.001);
         hist.add_train(&spike_times);
         let bi = hist.burst_index(threshold);
-        prop_assert!(bi >= 0.0 && bi <= 1.0, "burst index {bi} out of [0,1]");
+        prop_assert!((0.0..=1.0).contains(&bi), "burst index {bi} out of [0,1]");
     }
 
     /// Local variation of perfectly regular firing is zero.
