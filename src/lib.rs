@@ -92,6 +92,7 @@ mod filter;
 pub mod hilbert;
 pub mod ica;
 mod interpolate;
+pub mod isi;
 pub mod kalman;
 pub mod lda;
 pub mod linalg;
@@ -140,6 +141,7 @@ pub use filter::{
 pub use hilbert::HilbertTransform;
 pub use ica::{ContrastFunction, Ica, IcaError};
 pub use interpolate::{InterpolationMethod, Interpolator};
+pub use isi::{autocorrelogram, isi_cv, local_variation, IsiHistogram};
 pub use kalman::{KalmanError, KalmanFilter};
 pub use lda::{Lda, LdaError};
 pub use notch::NotchFilter;
