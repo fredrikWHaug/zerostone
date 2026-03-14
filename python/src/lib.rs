@@ -17,6 +17,7 @@ mod erp;
 mod ersp;
 mod filters;
 mod ica;
+mod isi;
 mod kalman;
 mod lda;
 mod notch;
@@ -426,6 +427,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Online k-means clustering
     m.add_class::<OnlineKMeans>()?;
     online_kmeans::register(m)?;
+
+    // ISI analysis
+    isi::register(m)?;
 
     // EDF file reader
     m.add_class::<EdfRecording>()?;

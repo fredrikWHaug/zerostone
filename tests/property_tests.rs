@@ -1,6 +1,7 @@
 use proptest::prelude::*;
 use zerostone::connectivity;
 use zerostone::entropy;
+use zerostone::isi;
 use zerostone::kalman::KalmanFilter;
 use zerostone::linalg::Matrix;
 use zerostone::pac;
@@ -253,5 +254,47 @@ proptest! {
         let var = stats.variance()[0];
         prop_assert!((mean - value).abs() < 1e-10, "mean of {n} copies of {value} = {mean}");
         prop_assert!(var.abs() < 1e-10, "variance of constant signal = {var}");
+    }
+
+    /// ISI CV of constant intervals is zero.
+    #[test]
+    fn isi_cv_constant_intervals(
+        interval in 0.001f64..1.0,
+        n in 5usize..50,
+    ) {
+        let spike_times: Vec<f64> = (0..n).map(|i| i as f64 * interval).collect();
+        let cv = isi::isi_cv(&spike_times);
+        prop_assert!(cv < 1e-6, "CV of constant intervals should be ~0, got {cv}");
+    }
+
+    /// Burst index is always in [0, 1].
+    #[test]
+    fn burst_index_in_range(
+        intervals in prop::collection::vec(0.001f64..1.0, 5..50),
+        threshold in 0.001f64..0.5,
+    ) {
+        // Build spike times from intervals
+        let mut spike_times = Vec::with_capacity(intervals.len() + 1);
+        spike_times.push(0.0);
+        let mut t = 0.0;
+        for &isi in &intervals {
+            t += isi;
+            spike_times.push(t);
+        }
+        let mut hist = isi::IsiHistogram::<200>::new(0.001);
+        hist.add_train(&spike_times);
+        let bi = hist.burst_index(threshold);
+        prop_assert!(bi >= 0.0 && bi <= 1.0, "burst index {bi} out of [0,1]");
+    }
+
+    /// Local variation of perfectly regular firing is zero.
+    #[test]
+    fn local_variation_regular_is_zero(
+        interval in 0.001f64..1.0,
+        n in 5usize..50,
+    ) {
+        let spike_times: Vec<f64> = (0..n).map(|i| i as f64 * interval).collect();
+        let lv = isi::local_variation(&spike_times);
+        prop_assert!(lv < 1e-6, "Lv of regular firing should be ~0, got {lv}");
     }
 }
