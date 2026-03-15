@@ -252,6 +252,66 @@ impl ProbeLayout {
     }
 }
 
+impl ProbeLayout {
+    /// Get the number of channels (accessible from other modules in the crate).
+    pub(crate) fn n_channels_inner(&self) -> usize {
+        match &self.inner {
+            ProbeInner::C4(p) => p.n_channels(),
+            ProbeInner::C8(p) => p.n_channels(),
+            ProbeInner::C16(p) => p.n_channels(),
+            ProbeInner::C32(p) => p.n_channels(),
+            ProbeInner::C64(p) => p.n_channels(),
+            ProbeInner::C128(p) => p.n_channels(),
+        }
+    }
+}
+
+/// Access the inner `ZsProbeLayout<C>` reference for a given const-generic C.
+///
+/// Returns `Err` if the probe's channel count does not match `C`.
+pub fn with_probe_ref<const C: usize, F, R>(probe: &ProbeLayout, f: F) -> PyResult<R>
+where
+    F: FnOnce(&ZsProbeLayout<C>) -> R,
+{
+    // We need to match the const-generic C against the stored variant.
+    // Since Rust doesn't allow runtime matching on const generics, we check
+    // the stored channel count and transmute only when it matches.
+    let n = probe.n_channels();
+    if n != C {
+        return Err(PyValueError::new_err(format!(
+            "Probe has {} channels but operation expects {}",
+            n, C
+        )));
+    }
+
+    // Extract the reference based on the enum variant.
+    // We only reach the matching branch because we checked n == C above.
+    macro_rules! try_extract {
+        ($variant:ident, $inner_field:expr, $expected_c:expr) => {
+            if C == $expected_c {
+                if let ProbeInner::$variant(ref p) = probe.inner {
+                    // SAFETY: C == $expected_c is guaranteed by the if-guard,
+                    // so ZsProbeLayout<$expected_c> has the same type as ZsProbeLayout<C>.
+                    let ptr = &p.0 as *const ZsProbeLayout<$expected_c> as *const ZsProbeLayout<C>;
+                    return Ok(f(unsafe { &*ptr }));
+                }
+            }
+        };
+    }
+
+    try_extract!(C4, inner, 4);
+    try_extract!(C8, inner, 8);
+    try_extract!(C16, inner, 16);
+    try_extract!(C32, inner, 32);
+    try_extract!(C64, inner, 64);
+    try_extract!(C128, inner, 128);
+
+    Err(PyValueError::new_err(format!(
+        "Unsupported probe channel count {}",
+        n
+    )))
+}
+
 /// Register probe geometry classes.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ProbeLayout>()?;
