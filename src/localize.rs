@@ -15,7 +15,7 @@
 //!
 //! A convenience wrapper ([`localize_spike`]) extracts per-channel peak
 //! amplitudes from a waveform snippet and calls center-of-mass using the
-//! probe geometry stored in [`ProbeLayout`](crate::probe::ProbeLayout).
+//! probe geometry stored in [`ProbeLayout`].
 //!
 //! # References
 //!
