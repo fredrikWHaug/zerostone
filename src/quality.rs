@@ -948,4 +948,67 @@ mod kani_proofs {
             assert!(snr >= 0.0, "SNR must be non-negative");
         }
     }
+
+    /// Prove that `contamination_rate` output is always in [0, 1] for valid inputs.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn contamination_rate_bounded() {
+        let s0: f64 = kani::any();
+        let s1: f64 = kani::any();
+        let s2: f64 = kani::any();
+        let rp: f64 = kani::any();
+        let dur: f64 = kani::any();
+
+        kani::assume(s0.is_finite() && s0 >= 0.0 && s0 <= 1e6);
+        kani::assume(s1.is_finite() && s1 >= s0 && s1 <= 1e6);
+        kani::assume(s2.is_finite() && s2 >= s1 && s2 <= 1e6);
+        kani::assume(rp.is_finite() && rp > 0.0 && rp <= 1.0);
+        kani::assume(dur.is_finite() && dur > 0.0 && dur <= 1e6);
+
+        let spikes = [s0, s1, s2];
+        if let Some(c) = contamination_rate(&spikes, rp, dur) {
+            assert!(c >= 0.0, "contamination must be >= 0");
+            assert!(c <= 1.0, "contamination must be <= 1 (clamped)");
+        }
+    }
+
+    /// Prove that `euclidean_distance` is non-negative and finite for finite inputs.
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn euclidean_distance_non_negative_finite() {
+        let a0: f64 = kani::any();
+        let a1: f64 = kani::any();
+        let b0: f64 = kani::any();
+        let b1: f64 = kani::any();
+
+        kani::assume(a0.is_finite() && a0 >= -1e6 && a0 <= 1e6);
+        kani::assume(a1.is_finite() && a1 >= -1e6 && a1 <= 1e6);
+        kani::assume(b0.is_finite() && b0 >= -1e6 && b0 <= 1e6);
+        kani::assume(b1.is_finite() && b1 >= -1e6 && b1 <= 1e6);
+
+        let d = euclidean_distance(&[a0, a1], &[b0, b1]);
+        assert!(d >= 0.0, "distance must be non-negative");
+        assert!(d.is_finite(), "distance must be finite for finite inputs");
+    }
+
+    /// Prove that `d_prime` is non-negative when it returns Some.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn d_prime_non_negative() {
+        let a0: f64 = kani::any();
+        let a1: f64 = kani::any();
+        let b0: f64 = kani::any();
+        let b1: f64 = kani::any();
+
+        kani::assume(a0.is_finite() && a0 >= -1e3 && a0 <= 1e3);
+        kani::assume(a1.is_finite() && a1 >= -1e3 && a1 <= 1e3);
+        kani::assume(b0.is_finite() && b0 >= -1e3 && b0 <= 1e3);
+        kani::assume(b1.is_finite() && b1 >= -1e3 && b1 <= 1e3);
+
+        let ca = [a0, a1];
+        let cb = [b0, b1];
+        if let Some(dp) = d_prime(&ca, &cb) {
+            assert!(dp >= 0.0, "d-prime must be non-negative");
+        }
+    }
 }

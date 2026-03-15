@@ -5,7 +5,10 @@ use zerostone::isi;
 use zerostone::kalman::KalmanFilter;
 use zerostone::linalg::Matrix;
 use zerostone::pac;
+use zerostone::probe::ProbeLayout;
+use zerostone::quality;
 use zerostone::riemannian;
+use zerostone::whitening::{WhiteningMatrix, WhiteningMode};
 use zerostone::{BiquadCoeffs, Complex, Fft, HilbertTransform, IirFilter, OnlineStats, WindowType};
 
 /// Construct a 3x3 SPD matrix from 9 arbitrary values: A^T * A + 0.1 * I.
@@ -296,5 +299,155 @@ proptest! {
         let spike_times: Vec<f64> = (0..n).map(|i| i as f64 * interval).collect();
         let lv = isi::local_variation(&spike_times);
         prop_assert!(lv < 1e-6, "Lv of regular firing should be ~0, got {lv}");
+    }
+
+    // =========================================================================
+    // Probe geometry properties
+    // =========================================================================
+
+    /// channel_distance is symmetric: d(a, b) == d(b, a).
+    #[test]
+    fn probe_distance_symmetric(
+        pitch in 1.0f64..100.0,
+        a in 0usize..8,
+        b in 0usize..8,
+    ) {
+        let probe = ProbeLayout::<8>::linear(pitch);
+        let d_ab = probe.channel_distance(a, b);
+        let d_ba = probe.channel_distance(b, a);
+        if d_ab.is_nan() {
+            prop_assert!(d_ba.is_nan());
+        } else {
+            prop_assert!((d_ab - d_ba).abs() < 1e-12, "d({a},{b})={d_ab} != d({b},{a})={d_ba}");
+        }
+    }
+
+    /// channel_distance satisfies triangle inequality: d(a,c) <= d(a,b) + d(b,c).
+    #[test]
+    fn probe_distance_triangle_inequality(
+        pitch in 1.0f64..100.0,
+        a in 0usize..8,
+        b in 0usize..8,
+        c in 0usize..8,
+    ) {
+        let probe = ProbeLayout::<8>::linear(pitch);
+        let d_ab = probe.channel_distance(a, b);
+        let d_bc = probe.channel_distance(b, c);
+        let d_ac = probe.channel_distance(a, c);
+        if d_ab.is_finite() && d_bc.is_finite() && d_ac.is_finite() {
+            prop_assert!(
+                d_ac <= d_ab + d_bc + 1e-10,
+                "triangle inequality violated: d({a},{c})={d_ac} > d({a},{b})+d({b},{c})={}",
+                d_ab + d_bc
+            );
+        }
+    }
+
+    /// spatial_extent is non-negative for any probe.
+    #[test]
+    fn probe_spatial_extent_non_negative(
+        pitch in 1.0f64..200.0,
+        columns in 1usize..4,
+    ) {
+        let probe = ProbeLayout::<8>::polytrode(columns, pitch, pitch);
+        let (xr, yr) = probe.spatial_extent();
+        prop_assert!(xr >= 0.0, "x range = {xr} < 0");
+        prop_assert!(yr >= 0.0, "y range = {yr} < 0");
+    }
+
+    // =========================================================================
+    // Quality metrics properties
+    // =========================================================================
+
+    /// ISI violation rate is always in [0, 1] for sorted spike trains.
+    #[test]
+    fn isi_violation_rate_bounded(
+        intervals in prop::collection::vec(0.0001f64..1.0, 4..20),
+        rp in 0.0001f64..0.1,
+    ) {
+        let mut spike_times = Vec::with_capacity(intervals.len() + 1);
+        spike_times.push(0.0);
+        let mut t = 0.0;
+        for &isi in &intervals {
+            t += isi;
+            spike_times.push(t);
+        }
+        if let Some(rate) = quality::isi_violation_rate(&spike_times, rp) {
+            prop_assert!((0.0..=1.0).contains(&rate), "ISI violation rate = {rate} outside [0, 1]");
+        }
+    }
+
+    /// Silhouette score is always in [-1, 1].
+    #[test]
+    fn silhouette_score_bounded(
+        intra in prop::collection::vec(0.0f64..100.0, 2..10),
+        inter in prop::collection::vec(0.01f64..100.0, 1..5),
+    ) {
+        if let Some(s) = quality::silhouette_score(&intra, &inter) {
+            prop_assert!((-1.0 - 1e-10..=1.0 + 1e-10).contains(&s), "silhouette = {s} outside [-1, 1]");
+        }
+    }
+
+    /// d_prime is symmetric: d'(A, B) == d'(B, A).
+    #[test]
+    fn d_prime_symmetric(
+        a in prop::collection::vec(-100.0f64..100.0, 5..20),
+        b in prop::collection::vec(-100.0f64..100.0, 5..20),
+    ) {
+        if let (Some(dp_ab), Some(dp_ba)) = (quality::d_prime(&a, &b), quality::d_prime(&b, &a)) {
+            let diff = (dp_ab - dp_ba).abs();
+            prop_assert!(diff < 1e-10, "d'(A,B)={dp_ab} != d'(B,A)={dp_ba}");
+        }
+    }
+
+    /// Euclidean distance is symmetric: d(a,b) == d(b,a).
+    #[test]
+    fn euclidean_distance_symmetric(
+        a in prop::collection::vec(-1000.0f64..1000.0, 3..=3),
+        b in prop::collection::vec(-1000.0f64..1000.0, 3..=3),
+    ) {
+        let d_ab = quality::euclidean_distance(&a, &b);
+        let d_ba = quality::euclidean_distance(&b, &a);
+        prop_assert!((d_ab - d_ba).abs() < 1e-10, "d(a,b)={d_ab} != d(b,a)={d_ba}");
+    }
+
+    // =========================================================================
+    // Whitening properties
+    // =========================================================================
+
+    /// ZCA whitening of identity covariance approximately preserves input.
+    #[test]
+    fn whitening_identity_cov_preserves_signal(
+        x0 in -100.0f64..100.0,
+        x1 in -100.0f64..100.0,
+    ) {
+        let cov = [[1.0, 0.0], [0.0, 1.0]];
+        let wm = WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, 1e-10).unwrap();
+        let out = wm.apply(&[x0, x1]);
+        prop_assert!((out[0] - x0).abs() < 0.01, "ch0: {x0} -> {}", out[0]);
+        prop_assert!((out[1] - x1).abs() < 0.01, "ch1: {x1} -> {}", out[1]);
+    }
+
+    /// ZCA whitening matrix is symmetric.
+    #[test]
+    fn whitening_zca_symmetric(
+        a in 0.1f64..10.0,
+        b in -5.0f64..5.0,
+        c in 0.1f64..10.0,
+    ) {
+        // Build a valid positive semi-definite covariance: [[a, b], [b, c]]
+        // Ensure positive semi-definite: a*c >= b^2
+        let b_clamped = if b * b > a * c {
+            let max_b = libm::sqrt(a * c) * 0.99;
+            if b > 0.0 { max_b } else { -max_b }
+        } else {
+            b
+        };
+        let cov = [[a, b_clamped], [b_clamped, c]];
+        if let Ok(wm) = WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, 1e-6) {
+            let m = wm.matrix();
+            let diff = (m.get(0, 1) - m.get(1, 0)).abs();
+            prop_assert!(diff < 1e-8, "ZCA matrix not symmetric: W01={}, W10={}", m.get(0, 1), m.get(1, 0));
+        }
     }
 }
