@@ -159,12 +159,7 @@ impl<const C: usize> ProbeLayout<C> {
     /// // Channels 2 and 4 are within 15 um of channel 3 (distance 10 each)
     /// assert_eq!(n, 2);
     /// ```
-    pub fn neighbor_channels(
-        &self,
-        channel: usize,
-        radius: f64,
-        output: &mut [usize],
-    ) -> usize {
+    pub fn neighbor_channels(&self, channel: usize, radius: f64, output: &mut [usize]) -> usize {
         if channel >= C {
             return 0;
         }
@@ -207,17 +202,16 @@ impl<const C: usize> ProbeLayout<C> {
     /// // Nearest to channel 3: channels 2 and 4 (dist 10), then 1 or 5 (dist 20)
     /// assert!(nearest[0] == 2 || nearest[0] == 4);
     /// ```
-    pub fn nearest_channels(
-        &self,
-        channel: usize,
-        k: usize,
-        output: &mut [usize],
-    ) -> usize {
+    pub fn nearest_channels(&self, channel: usize, k: usize, output: &mut [usize]) -> usize {
         if channel >= C || k == 0 {
             return 0;
         }
         let max_k = if k < C - 1 { k } else { C - 1 };
-        let max_k = if max_k < output.len() { max_k } else { output.len() };
+        let max_k = if max_k < output.len() {
+            max_k
+        } else {
+            output.len()
+        };
 
         // Collect (distance_sq, index) for all other channels.
         // We store up to C-1 candidates. Since C is const-generic and small
@@ -350,12 +344,7 @@ impl<const C: usize> ProbeLayout<C> {
 /// ```
 pub fn tetrode(pitch: f64) -> ProbeLayout<4> {
     let half = pitch * 0.5;
-    ProbeLayout::new([
-        [-half, -half],
-        [half, -half],
-        [-half, half],
-        [half, half],
-    ])
+    ProbeLayout::new([[-half, -half], [half, -half], [-half, half], [half, half]])
 }
 
 #[cfg(kani)]

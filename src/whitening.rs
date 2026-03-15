@@ -337,6 +337,7 @@ mod kani_proofs {
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;
 
@@ -352,22 +353,22 @@ mod tests {
                 mean[c] += sample[c];
             }
         }
-        for c in 0..C {
-            mean[c] /= n as f64;
+        for m in mean.iter_mut() {
+            *m /= n as f64;
         }
 
         // Compute covariance
         let mut cov = [[0.0f64; C]; C];
         for sample in data.iter() {
-            for i in 0..C {
-                for j in 0..C {
-                    cov[i][j] += (sample[i] - mean[i]) * (sample[j] - mean[j]);
+            for (i, row) in cov.iter_mut().enumerate() {
+                for (j, val) in row.iter_mut().enumerate() {
+                    *val += (sample[i] - mean[i]) * (sample[j] - mean[j]);
                 }
             }
         }
-        for i in 0..C {
-            for j in 0..C {
-                cov[i][j] /= (n - 1) as f64;
+        for row in cov.iter_mut() {
+            for val in row.iter_mut() {
+                *val /= (n - 1) as f64;
             }
         }
         cov
@@ -388,8 +389,7 @@ mod tests {
         fn gaussian(&mut self, mean: f64, std: f64) -> f64 {
             let u1 = (self.next_u64() % 1_000_000 + 1) as f64 / 1_000_001.0;
             let u2 = (self.next_u64() % 1_000_000) as f64 / 1_000_000.0;
-            let z = libm::sqrt(-2.0 * libm::log(u1))
-                * libm::cos(2.0 * core::f64::consts::PI * u2);
+            let z = libm::sqrt(-2.0 * libm::log(u1)) * libm::cos(2.0 * core::f64::consts::PI * u2);
             mean + z * std
         }
     }
@@ -398,8 +398,7 @@ mod tests {
     fn test_zca_identity_covariance() {
         // Identity covariance -> whitening matrix should be near identity
         let cov = [[1.0, 0.0], [0.0, 1.0]];
-        let wm =
-            WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, 1e-10).unwrap();
+        let wm = WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, 1e-10).unwrap();
 
         let m = wm.matrix();
         assert!((m.get(0, 0) - 1.0).abs() < 1e-4);
@@ -413,8 +412,7 @@ mod tests {
         // Identity covariance -> PCA whitening should also be near identity
         // (eigenvectors of I are the standard basis)
         let cov = [[1.0, 0.0], [0.0, 1.0]];
-        let wm =
-            WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Pca, 1e-10).unwrap();
+        let wm = WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Pca, 1e-10).unwrap();
 
         let sample = [3.0, 7.0];
         let out = wm.apply(&sample);
@@ -432,20 +430,11 @@ mod tests {
         // Diagonal covariance [4, 0; 0, 9]
         // ZCA whitening: W = diag(1/sqrt(4), 1/sqrt(9)) = diag(0.5, 1/3)
         let cov = [[4.0, 0.0], [0.0, 9.0]];
-        let wm =
-            WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, 1e-10).unwrap();
+        let wm = WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, 1e-10).unwrap();
 
         let out = wm.apply(&[2.0, 3.0]);
-        assert!(
-            (out[0] - 1.0).abs() < 0.01,
-            "Expected ~1.0, got {}",
-            out[0]
-        );
-        assert!(
-            (out[1] - 1.0).abs() < 0.01,
-            "Expected ~1.0, got {}",
-            out[1]
-        );
+        assert!((out[0] - 1.0).abs() < 0.01, "Expected ~1.0, got {}", out[0]);
+        assert!((out[1] - 1.0).abs() < 0.01, "Expected ~1.0, got {}", out[1]);
     }
 
     #[test]
@@ -470,8 +459,8 @@ mod tests {
 
         // Compute empirical covariance and whiten
         let emp_cov = sample_covariance(&data);
-        let wm = WhiteningMatrix::<2, 4>::from_covariance(&emp_cov, WhiteningMode::Zca, 1e-10)
-            .unwrap();
+        let wm =
+            WhiteningMatrix::<2, 4>::from_covariance(&emp_cov, WhiteningMode::Zca, 1e-10).unwrap();
 
         // Whiten all samples
         let mut whitened = [[0.0f64; 2]; 2000];
@@ -514,8 +503,8 @@ mod tests {
         }
 
         let emp_cov = sample_covariance(&data);
-        let wm = WhiteningMatrix::<2, 4>::from_covariance(&emp_cov, WhiteningMode::Pca, 1e-10)
-            .unwrap();
+        let wm =
+            WhiteningMatrix::<2, 4>::from_covariance(&emp_cov, WhiteningMode::Pca, 1e-10).unwrap();
 
         let mut whitened = [[0.0f64; 2]; 2000];
         for i in 0..n {
@@ -545,8 +534,7 @@ mod tests {
         // Rank-1 covariance: all channels identical
         // Without regularization this would be singular
         let cov = [[1.0, 1.0], [1.0, 1.0]];
-        let result =
-            WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, 1e-3);
+        let result = WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, 1e-3);
         assert!(result.is_ok(), "Regularization should handle singular cov");
 
         let wm = result.unwrap();
@@ -560,8 +548,7 @@ mod tests {
         // If data is already white (identity covariance), whitening
         // should barely change the signal
         let cov = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        let wm =
-            WhiteningMatrix::<3, 9>::from_covariance(&cov, WhiteningMode::Zca, 1e-10).unwrap();
+        let wm = WhiteningMatrix::<3, 9>::from_covariance(&cov, WhiteningMode::Zca, 1e-10).unwrap();
 
         let sample = [1.5, -2.3, 0.7];
         let out = wm.apply(&sample);
@@ -585,8 +572,8 @@ mod tests {
             [0.0, 0.0, 9.0, 0.0],
             [0.0, 0.0, 0.0, 16.0],
         ];
-        let wm = WhiteningMatrix::<4, 16>::from_covariance(&cov, WhiteningMode::Zca, 1e-10)
-            .unwrap();
+        let wm =
+            WhiteningMatrix::<4, 16>::from_covariance(&cov, WhiteningMode::Zca, 1e-10).unwrap();
 
         let sample = [1.0, 2.0, 3.0, 4.0];
         let out = wm.apply(&sample);
@@ -620,8 +607,8 @@ mod tests {
         }
 
         let emp_cov = sample_covariance(&data);
-        let wm = WhiteningMatrix::<4, 16>::from_covariance(&emp_cov, WhiteningMode::Zca, 1e-10)
-            .unwrap();
+        let wm =
+            WhiteningMatrix::<4, 16>::from_covariance(&emp_cov, WhiteningMode::Zca, 1e-10).unwrap();
 
         let mut whitened = [[0.0f64; 4]; 3000];
         for i in 0..n {
@@ -663,16 +650,12 @@ mod tests {
             let z0 = rng.gaussian(0.0, 1.0);
             let z1 = rng.gaussian(0.0, 1.0);
             let z2 = rng.gaussian(0.0, 1.0);
-            data[i] = [
-                5.0 * z0 + z1,
-                z0 + 3.0 * z1 + 0.5 * z2,
-                0.5 * z1 + 2.0 * z2,
-            ];
+            data[i] = [5.0 * z0 + z1, z0 + 3.0 * z1 + 0.5 * z2, 0.5 * z1 + 2.0 * z2];
         }
 
         let emp_cov = sample_covariance(&data);
-        let wm = WhiteningMatrix::<3, 9>::from_covariance(&emp_cov, WhiteningMode::Zca, 1e-10)
-            .unwrap();
+        let wm =
+            WhiteningMatrix::<3, 9>::from_covariance(&emp_cov, WhiteningMode::Zca, 1e-10).unwrap();
 
         let mut whitened = [[0.0f64; 3]; 5000];
         for i in 0..n {
@@ -705,8 +688,7 @@ mod tests {
     fn test_zca_symmetry() {
         // ZCA whitening matrix should be symmetric
         let cov = [[4.0, 2.0], [2.0, 3.0]];
-        let wm =
-            WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, 1e-10).unwrap();
+        let wm = WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, 1e-10).unwrap();
 
         let m = wm.matrix();
         assert!(
@@ -718,8 +700,7 @@ mod tests {
     #[test]
     fn test_apply_whitening_free_function() {
         let cov = [[4.0, 0.0], [0.0, 9.0]];
-        let wm =
-            WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, 1e-10).unwrap();
+        let wm = WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, 1e-10).unwrap();
 
         let out1 = wm.apply(&[2.0, 3.0]);
         let out2 = apply_whitening(&wm, &[2.0, 3.0]);
@@ -733,8 +714,7 @@ mod tests {
         // so W ≈ (1/sqrt(eps)) * I
         let cov = [[100.0, 50.0], [50.0, 100.0]];
         let eps = 1e6;
-        let wm =
-            WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, eps).unwrap();
+        let wm = WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, eps).unwrap();
 
         let m = wm.matrix();
         let expected = 1.0 / libm::sqrt(eps);
