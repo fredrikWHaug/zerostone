@@ -334,6 +334,67 @@ mod kani_proofs {
         assert!(result[0].is_finite(), "output channel 0 must be finite");
         assert!(result[1].is_finite(), "output channel 1 must be finite");
     }
+
+    /// Prove that ZCA `reconstruct_symmetric` produces a symmetric matrix.
+    /// The ZCA whitening matrix W = E * diag(d) * E^T is symmetric by construction.
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn zca_matrix_is_symmetric() {
+        let e00: f64 = kani::any();
+        let e01: f64 = kani::any();
+        let e10: f64 = kani::any();
+        let e11: f64 = kani::any();
+        let d0: f64 = kani::any();
+        let d1: f64 = kani::any();
+
+        kani::assume(e00.is_finite() && e00 >= -10.0 && e00 <= 10.0);
+        kani::assume(e01.is_finite() && e01 >= -10.0 && e01 <= 10.0);
+        kani::assume(e10.is_finite() && e10 >= -10.0 && e10 <= 10.0);
+        kani::assume(e11.is_finite() && e11 >= -10.0 && e11 <= 10.0);
+        kani::assume(d0.is_finite() && d0 >= -10.0 && d0 <= 10.0);
+        kani::assume(d1.is_finite() && d1 >= -10.0 && d1 <= 10.0);
+
+        let eigvecs = Matrix::<2, 4>::new([e00, e01, e10, e11]);
+        let d = [d0, d1];
+        let result = WhiteningMatrix::<2, 4>::reconstruct_symmetric(&eigvecs, &d);
+
+        // W[0,1] must equal W[1,0] (symmetry)
+        let w01 = result.get(0, 1);
+        let w10 = result.get(1, 0);
+        let diff = if w01 >= w10 { w01 - w10 } else { w10 - w01 };
+        assert!(diff < 1e-10, "ZCA matrix must be symmetric");
+    }
+
+    /// Prove that `apply_whitening` free function produces the same result
+    /// as the method call (structural equivalence, not just a trivial wrapper
+    /// at runtime but verified at the verification level).
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn apply_free_fn_matches_method() {
+        let w00: f64 = kani::any();
+        let w01: f64 = kani::any();
+        let w10: f64 = kani::any();
+        let w11: f64 = kani::any();
+        let x0: f64 = kani::any();
+        let x1: f64 = kani::any();
+
+        kani::assume(w00.is_finite() && w00 >= -1e3 && w00 <= 1e3);
+        kani::assume(w01.is_finite() && w01 >= -1e3 && w01 <= 1e3);
+        kani::assume(w10.is_finite() && w10 >= -1e3 && w10 <= 1e3);
+        kani::assume(w11.is_finite() && w11 >= -1e3 && w11 <= 1e3);
+        kani::assume(x0.is_finite() && x0 >= -1e3 && x0 <= 1e3);
+        kani::assume(x1.is_finite() && x1 >= -1e3 && x1 <= 1e3);
+
+        let mat = Matrix::<2, 4>::new([w00, w01, w10, w11]);
+        let wm = WhiteningMatrix { matrix: mat };
+        let sample = [x0, x1];
+
+        let r1 = wm.apply(&sample);
+        let r2 = apply_whitening(&wm, &sample);
+
+        assert!(r1[0] == r2[0], "free fn must match method for ch 0");
+        assert!(r1[1] == r2[1], "free fn must match method for ch 1");
+    }
 }
 
 #[cfg(test)]

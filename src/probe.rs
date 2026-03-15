@@ -389,6 +389,60 @@ mod kani_proofs {
             i += 1;
         }
     }
+
+    /// Prove that `nearest_channels` returns valid, in-bounds indices
+    /// and never exceeds the requested count or buffer size.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn nearest_channels_valid_indices() {
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let ch: usize = kani::any();
+        let k: usize = kani::any();
+        kani::assume(ch <= 8);
+        kani::assume(k <= 8);
+
+        let mut output = [0usize; 4];
+        let n = probe.nearest_channels(ch, k, &mut output);
+
+        // Return count bounded by min(k, C-1, output.len())
+        if ch >= 4 || k == 0 {
+            assert!(n == 0, "must return 0 for invalid channel or k=0");
+        } else {
+            let max_expected = if k < 3 { k } else { 3 }; // min(k, C-1=3)
+            let max_expected = if max_expected < 4 { max_expected } else { 4 }; // min with output.len()
+            assert!(n <= max_expected, "returned too many neighbors");
+        }
+
+        // All returned indices are valid channels and not the query channel
+        let mut i = 0;
+        while i < n {
+            assert!(output[i] < 4, "nearest index must be < C");
+            assert!(output[i] != ch, "nearest must not be the query channel");
+            i += 1;
+        }
+    }
+
+    /// Prove that `spatial_extent` returns non-negative values for any
+    /// probe with finite positions.
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn spatial_extent_non_negative() {
+        let x0: f64 = kani::any();
+        let y0: f64 = kani::any();
+        let x1: f64 = kani::any();
+        let y1: f64 = kani::any();
+        kani::assume(x0.is_finite() && x0 >= -1e6 && x0 <= 1e6);
+        kani::assume(y0.is_finite() && y0 >= -1e6 && y0 <= 1e6);
+        kani::assume(x1.is_finite() && x1 >= -1e6 && x1 <= 1e6);
+        kani::assume(y1.is_finite() && y1 >= -1e6 && y1 <= 1e6);
+
+        let probe = ProbeLayout::<2>::new([[x0, y0], [x1, y1]]);
+        let (xr, yr) = probe.spatial_extent();
+        assert!(xr >= 0.0, "x range must be non-negative");
+        assert!(yr >= 0.0, "y range must be non-negative");
+        assert!(xr.is_finite(), "x range must be finite");
+        assert!(yr.is_finite(), "y range must be finite");
+    }
 }
 
 #[cfg(test)]
