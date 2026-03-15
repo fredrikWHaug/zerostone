@@ -453,8 +453,7 @@ pub fn isolation_distance(n_cluster: usize, other_mahal_sq: &mut [f64]) -> Optio
         return None;
     }
 
-    other_mahal_sq
-        .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+    other_mahal_sq.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
 
     Some(other_mahal_sq[n_cluster - 1])
 }
@@ -570,7 +569,11 @@ mod tests {
         // Many violations relative to total -- should clamp to 1.0
         let spikes = [0.0, 0.0001, 0.0002, 0.0003, 0.0004];
         let c = contamination_rate(&spikes, 0.001, 0.001).unwrap();
-        assert!(c <= 1.0, "Contamination should be clamped to 1.0, got {}", c);
+        assert!(
+            c <= 1.0,
+            "Contamination should be clamped to 1.0, got {}",
+            c
+        );
     }
 
     #[test]
@@ -609,7 +612,11 @@ mod tests {
         let intra = [0.0, 0.0, 0.0];
         let inter = [5.0];
         let s = silhouette_score(&intra, &inter).unwrap();
-        assert!((s - 1.0).abs() < 1e-10, "Perfect separation should give 1.0, got {}", s);
+        assert!(
+            (s - 1.0).abs() < 1e-10,
+            "Perfect separation should give 1.0, got {}",
+            s
+        );
     }
 
     #[test]
@@ -618,7 +625,11 @@ mod tests {
         let intra = [1.0, 2.0, 3.0];
         let inter = [2.5];
         let s = silhouette_score(&intra, &inter).unwrap();
-        assert!(s >= -1.0 && s <= 1.0, "Silhouette must be in [-1,1], got {}", s);
+        assert!(
+            (-1.0..=1.0).contains(&s),
+            "Silhouette must be in [-1,1], got {}",
+            s
+        );
     }
 
     #[test]
@@ -661,7 +672,11 @@ mod tests {
     fn test_snr_flat_waveform() {
         let wf = [3.0; 10];
         let snr = waveform_snr(&wf, 1.0).unwrap();
-        assert!(snr < 1e-10, "Flat waveform should have SNR = 0, got {}", snr);
+        assert!(
+            snr < 1e-10,
+            "Flat waveform should have SNR = 0, got {}",
+            snr
+        );
     }
 
     #[test]
@@ -697,7 +712,11 @@ mod tests {
         let a = [1.0, 1.1, 0.9, 1.05, 0.95];
         let b = [5.0, 5.1, 4.9, 5.05, 4.95];
         let dp = d_prime(&a, &b).unwrap();
-        assert!(dp > 10.0, "Well-separated clusters should have high d', got {}", dp);
+        assert!(
+            dp > 10.0,
+            "Well-separated clusters should have high d', got {}",
+            dp
+        );
     }
 
     #[test]
@@ -705,7 +724,11 @@ mod tests {
         let a = [1.0, 2.0, 3.0, 4.0, 5.0];
         let b = [3.0, 4.0, 5.0, 6.0, 7.0];
         let dp = d_prime(&a, &b).unwrap();
-        assert!(dp > 0.0 && dp < 3.0, "Overlapping clusters d' should be moderate, got {}", dp);
+        assert!(
+            dp > 0.0 && dp < 3.0,
+            "Overlapping clusters d' should be moderate, got {}",
+            dp
+        );
     }
 
     #[test]
@@ -713,7 +736,11 @@ mod tests {
         let a = [1.0, 2.0, 3.0, 4.0, 5.0];
         let b = [1.0, 2.0, 3.0, 4.0, 5.0];
         let dp = d_prime(&a, &b).unwrap();
-        assert!(dp < 1e-10, "Identical clusters should have d' = 0, got {}", dp);
+        assert!(
+            dp < 1e-10,
+            "Identical clusters should have d' = 0, got {}",
+            dp
+        );
     }
 
     #[test]
@@ -743,7 +770,10 @@ mod tests {
         let a = [3.0, 3.0, 3.0];
         let b = [7.0, 7.0, 7.0];
         let dp = d_prime(&a, &b).unwrap();
-        assert!(dp.is_infinite(), "Zero-variance different means should give infinity");
+        assert!(
+            dp.is_infinite(),
+            "Zero-variance different means should give infinity"
+        );
     }
 
     // =========================================================================
@@ -826,7 +856,10 @@ mod tests {
         // Two spikes at the same time -- ISI = 0, which is < any positive refractory
         let spikes = [0.1, 0.1];
         let rate = isi_violation_rate(&spikes, 0.001).unwrap();
-        assert!((rate - 1.0).abs() < 1e-10, "Identical times should give 100% violations");
+        assert!(
+            (rate - 1.0).abs() < 1e-10,
+            "Identical times should give 100% violations"
+        );
     }
 
     #[test]
@@ -837,8 +870,8 @@ mod tests {
         // C = sqrt(5 * 10 / (2 * 0.001 * 100^2)) = sqrt(50 / 20) = sqrt(2.5) ~ 1.58
         // Should be clamped to 1.0
         let mut spikes = [0.0f64; 100];
-        for i in 0..100 {
-            spikes[i] = i as f64 * 0.1; // 10 Hz, regular
+        for (i, spike) in spikes.iter_mut().enumerate() {
+            *spike = i as f64 * 0.1; // 10 Hz, regular
         }
         // Inject 5 violations by placing spikes close together
         spikes[10] = spikes[9] + 0.0005; // violation

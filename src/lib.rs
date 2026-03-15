@@ -100,8 +100,9 @@ mod notch;
 pub mod online_kmeans;
 pub mod pac;
 mod percentile;
-pub mod quality;
 mod pipeline;
+pub mod probe;
+pub mod quality;
 pub mod riemannian;
 mod rms;
 mod router;
@@ -113,7 +114,6 @@ pub mod wavelet;
 mod welch;
 pub mod whitening;
 mod window;
-pub mod probe;
 pub mod xcorr;
 pub mod xdf;
 
@@ -151,11 +151,11 @@ pub use notch::NotchFilter;
 pub use online_kmeans::{KMeansError, KMeansResult, OnlineKMeans};
 pub use pac::{mean_vector_length, modulation_index, phase_amplitude_distribution};
 pub use percentile::StreamingPercentile;
+pub use pipeline::{BlockProcessor, CloneableProcessor, Pipeline, RateChangingProcessor, Terminal};
 pub use quality::{
-    contamination_rate, d_prime, euclidean_distance, isolation_distance, isi_violation_rate,
+    contamination_rate, d_prime, euclidean_distance, isi_violation_rate, isolation_distance,
     mean_silhouette, silhouette_score, waveform_snr,
 };
-pub use pipeline::{BlockProcessor, CloneableProcessor, Pipeline, RateChangingProcessor, Terminal};
 pub use riemannian::{
     frechet_mean, matrix_exp, matrix_inv_sqrt, matrix_log, matrix_sqrt, mdm_classify, recenter,
     reconstruct_from_eigen, riemannian_distance, TangentSpace,
