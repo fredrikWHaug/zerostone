@@ -10,13 +10,14 @@ use zerostone::NotchFilter as ZsNotchFilter;
 // Channel-count dispatch enum (SECTIONS hardcoded to 4)
 // ============================================================================
 
+#[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
 enum NotchFilterInner {
     Ch1(ZsNotchFilter<1, 4>),
     Ch4(ZsNotchFilter<4, 4>),
     Ch8(ZsNotchFilter<8, 4>),
     Ch16(ZsNotchFilter<16, 4>),
     Ch32(ZsNotchFilter<32, 4>),
-    Ch64(ZsNotchFilter<64, 4>),
+    Ch64(Box<ZsNotchFilter<64, 4>>),
 }
 
 impl NotchFilterInner {
@@ -130,11 +131,11 @@ fn make_inner_powerline(
         } else {
             ZsNotchFilter::powerline_50hz(sample_rate)
         }),
-        64 => NotchFilterInner::Ch64(if fundamental == 60.0 {
+        64 => NotchFilterInner::Ch64(Box::new(if fundamental == 60.0 {
             ZsNotchFilter::powerline_60hz(sample_rate)
         } else {
             ZsNotchFilter::powerline_50hz(sample_rate)
-        }),
+        })),
         _ => {
             return Err(PyValueError::new_err(format!(
                 "channels must be one of {{1, 4, 8, 16, 32, 64}}, got {}",
@@ -156,7 +157,7 @@ fn make_inner_custom(
         8 => NotchFilterInner::Ch8(ZsNotchFilter::custom(sample_rate, freqs, q)),
         16 => NotchFilterInner::Ch16(ZsNotchFilter::custom(sample_rate, freqs, q)),
         32 => NotchFilterInner::Ch32(ZsNotchFilter::custom(sample_rate, freqs, q)),
-        64 => NotchFilterInner::Ch64(ZsNotchFilter::custom(sample_rate, freqs, q)),
+        64 => NotchFilterInner::Ch64(Box::new(ZsNotchFilter::custom(sample_rate, freqs, q))),
         _ => {
             return Err(PyValueError::new_err(format!(
                 "channels must be one of {{1, 4, 8, 16, 32, 64}}, got {}",

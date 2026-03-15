@@ -6,12 +6,13 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use zerostone::ica::{ContrastFunction, Ica as ZsIca, IcaError};
 
+#[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
 enum IcaInner {
     C4(ZsIca<4, 16>),
     C8(ZsIca<8, 64>),
     C16(ZsIca<16, 256>),
-    C32(ZsIca<32, 1024>),
-    C64(ZsIca<64, 4096>),
+    C32(Box<ZsIca<32, 1024>>),
+    C64(Box<ZsIca<64, 4096>>),
 }
 
 fn parse_contrast(s: &str) -> PyResult<ContrastFunction> {
@@ -94,8 +95,8 @@ impl Ica {
             4 => IcaInner::C4(ZsIca::new(cf)),
             8 => IcaInner::C8(ZsIca::new(cf)),
             16 => IcaInner::C16(ZsIca::new(cf)),
-            32 => IcaInner::C32(ZsIca::new(cf)),
-            64 => IcaInner::C64(ZsIca::new(cf)),
+            32 => IcaInner::C32(Box::new(ZsIca::new(cf))),
+            64 => IcaInner::C64(Box::new(ZsIca::new(cf))),
             _ => {
                 return Err(PyValueError::new_err(
                     "channels must be 4, 8, 16, 32, or 64",

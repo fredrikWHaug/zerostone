@@ -17,7 +17,7 @@ enum FirFilterInner {
     Taps8(ZsFirFilter<8>),
     Taps16(ZsFirFilter<16>),
     Taps32(ZsFirFilter<32>),
-    Taps64(ZsFirFilter<64>),
+    Taps64(Box<ZsFirFilter<64>>),
     /// Dynamic implementation for non-standard tap counts
     Dynamic {
         coeffs: Vec<f32>,
@@ -87,7 +87,7 @@ impl FirFilter {
             }
             64 => {
                 let arr: [f32; 64] = taps.try_into().unwrap();
-                FirFilterInner::Taps64(ZsFirFilter::new(arr))
+                FirFilterInner::Taps64(Box::new(ZsFirFilter::new(arr)))
             }
             _ => FirFilterInner::Dynamic {
                 coeffs: taps,
@@ -479,7 +479,7 @@ enum LmsFilterInner {
     Taps8(ZsLmsFilter<8>),
     Taps16(ZsLmsFilter<16>),
     Taps32(ZsLmsFilter<32>),
-    Taps64(ZsLmsFilter<64>),
+    Taps64(Box<ZsLmsFilter<64>>),
     /// Dynamic implementation for non-standard tap counts
     Dynamic {
         weights: Vec<f32>,
@@ -540,7 +540,7 @@ impl LmsFilter {
             8 => LmsFilterInner::Taps8(ZsLmsFilter::new(mu)),
             16 => LmsFilterInner::Taps16(ZsLmsFilter::new(mu)),
             32 => LmsFilterInner::Taps32(ZsLmsFilter::new(mu)),
-            64 => LmsFilterInner::Taps64(ZsLmsFilter::new(mu)),
+            64 => LmsFilterInner::Taps64(Box::new(ZsLmsFilter::new(mu))),
             _ => LmsFilterInner::Dynamic {
                 weights: vec![0.0; taps],
                 delay_line: vec![0.0; taps],
@@ -569,6 +569,7 @@ impl LmsFilter {
     ///
     /// Example:
     ///     >>> output, error = lms.process(reference, desired)
+    #[allow(clippy::type_complexity)] // PyO3 return type with two numpy arrays
     fn process<'py>(
         &mut self,
         py: Python<'py>,
@@ -732,7 +733,7 @@ enum NlmsFilterInner {
     Taps8(ZsNlmsFilter<8>),
     Taps16(ZsNlmsFilter<16>),
     Taps32(ZsNlmsFilter<32>),
-    Taps64(ZsNlmsFilter<64>),
+    Taps64(Box<ZsNlmsFilter<64>>),
     /// Dynamic implementation for non-standard tap counts
     Dynamic {
         weights: Vec<f32>,
@@ -799,7 +800,7 @@ impl NlmsFilter {
             8 => NlmsFilterInner::Taps8(ZsNlmsFilter::new(mu, epsilon)),
             16 => NlmsFilterInner::Taps16(ZsNlmsFilter::new(mu, epsilon)),
             32 => NlmsFilterInner::Taps32(ZsNlmsFilter::new(mu, epsilon)),
-            64 => NlmsFilterInner::Taps64(ZsNlmsFilter::new(mu, epsilon)),
+            64 => NlmsFilterInner::Taps64(Box::new(ZsNlmsFilter::new(mu, epsilon))),
             _ => NlmsFilterInner::Dynamic {
                 weights: vec![0.0; taps],
                 delay_line: vec![0.0; taps],
@@ -828,6 +829,7 @@ impl NlmsFilter {
     ///
     /// Example:
     ///     >>> output, error = nlms.process(reference, desired)
+    #[allow(clippy::type_complexity)] // PyO3 return type with two numpy arrays
     fn process<'py>(
         &mut self,
         py: Python<'py>,

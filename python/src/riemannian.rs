@@ -7,11 +7,12 @@ use pyo3::prelude::*;
 use zerostone::linalg::Matrix;
 use zerostone::TangentSpace as ZsTangentSpace;
 
+#[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
 enum TangentSpaceInner {
     C4(ZsTangentSpace<4, 16, 10>),
     C8(ZsTangentSpace<8, 64, 36>),
-    C16(ZsTangentSpace<16, 256, 136>),
-    C32(ZsTangentSpace<32, 1024, 528>),
+    C16(Box<ZsTangentSpace<16, 256, 136>>),
+    C32(Box<ZsTangentSpace<32, 1024, 528>>),
 }
 
 /// Tangent space projection for symmetric positive definite matrices.
@@ -47,8 +48,8 @@ impl TangentSpace {
         let inner = match channels {
             4 => TangentSpaceInner::C4(ZsTangentSpace::new()),
             8 => TangentSpaceInner::C8(ZsTangentSpace::new()),
-            16 => TangentSpaceInner::C16(ZsTangentSpace::new()),
-            32 => TangentSpaceInner::C32(ZsTangentSpace::new()),
+            16 => TangentSpaceInner::C16(Box::new(ZsTangentSpace::new())),
+            32 => TangentSpaceInner::C32(Box::new(ZsTangentSpace::new())),
             _ => return Err(PyValueError::new_err("channels must be 4, 8, 16, or 32")),
         };
         Ok(Self { inner, channels })
