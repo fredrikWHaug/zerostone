@@ -363,3 +363,195 @@ class TestEndToEnd:
         wf = zbci.extract_waveforms(filtered_f64, spike_times, window=64)
         assert wf.shape[0] > 0
         assert wf.shape[1] == 64
+
+
+# ---- Multi-channel detection tests ----
+
+
+class TestDetectSpikesMultichannel:
+    def test_known_locations(self):
+        """Detect spikes at known positions on different channels."""
+        data = np.zeros((100, 4), dtype=np.float64)
+        data[20, 0] = -6.0
+        data[50, 1] = -8.0
+        data[80, 2] = -5.0
+
+        noise = np.ones(4, dtype=np.float64)
+        events = zbci.detect_spikes_multichannel(data, threshold=4.0, noise=noise, refractory=10)
+        assert len(events) == 3
+        samples = [e["sample"] for e in events]
+        channels = [e["channel"] for e in events]
+        assert 20 in samples
+        assert 50 in samples
+        assert 80 in samples
+        assert 0 in channels
+        assert 1 in channels
+        assert 2 in channels
+
+    def test_no_spikes(self):
+        """All values below threshold: no events."""
+        data = np.full((50, 2), 0.5, dtype=np.float64)
+        noise = np.ones(2, dtype=np.float64)
+        events = zbci.detect_spikes_multichannel(data, threshold=4.0, noise=noise)
+        assert len(events) == 0
+
+    def test_amplitude_correct(self):
+        data = np.zeros((20, 2), dtype=np.float64)
+        data[10, 0] = -7.5
+        noise = np.ones(2, dtype=np.float64)
+        events = zbci.detect_spikes_multichannel(data, threshold=4.0, noise=noise, refractory=5)
+        assert len(events) == 1
+        assert abs(events[0]["amplitude"] - 7.5) < 1e-12
+
+    def test_simultaneous_all_channels(self):
+        data = np.zeros((50, 4), dtype=np.float64)
+        for ch in range(4):
+            data[25, ch] = -10.0
+        noise = np.ones(4, dtype=np.float64)
+        events = zbci.detect_spikes_multichannel(data, threshold=4.0, noise=noise, refractory=5)
+        assert len(events) == 4
+        for e in events:
+            assert e["sample"] == 25
+
+    def test_invalid_noise_length(self):
+        data = np.zeros((50, 4), dtype=np.float64)
+        noise = np.ones(3, dtype=np.float64)  # wrong length
+        with pytest.raises(ValueError, match="expected 4"):
+            zbci.detect_spikes_multichannel(data, threshold=4.0, noise=noise)
+
+    def test_invalid_channel_count(self):
+        data = np.zeros((50, 3), dtype=np.float64)
+        noise = np.ones(3, dtype=np.float64)
+        with pytest.raises(ValueError, match="n_channels"):
+            zbci.detect_spikes_multichannel(data, threshold=4.0, noise=noise)
+
+
+class TestDeduplicateEvents:
+    def test_removes_neighbor_duplicate(self):
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        events = [
+            {"sample": 100, "channel": 1, "amplitude": 5.0},
+            {"sample": 102, "channel": 2, "amplitude": 7.0},
+        ]
+        deduped = zbci.deduplicate_events(events, probe, temporal_radius=5, spatial_radius=30.0)
+        assert len(deduped) == 1
+        assert deduped[0]["channel"] == 2
+        assert abs(deduped[0]["amplitude"] - 7.0) < 1e-12
+
+    def test_keeps_distant_events(self):
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        events = [
+            {"sample": 100, "channel": 0, "amplitude": 5.0},
+            {"sample": 500, "channel": 1, "amplitude": 6.0},
+        ]
+        deduped = zbci.deduplicate_events(events, probe)
+        assert len(deduped) == 2
+
+    def test_keeps_spatially_distant(self):
+        probe = zbci.ProbeLayout.linear(8, 50.0)
+        events = [
+            {"sample": 100, "channel": 0, "amplitude": 5.0},
+            {"sample": 101, "channel": 7, "amplitude": 6.0},
+        ]
+        deduped = zbci.deduplicate_events(events, probe, temporal_radius=5, spatial_radius=60.0)
+        assert len(deduped) == 2
+
+    def test_no_events(self):
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        deduped = zbci.deduplicate_events([], probe)
+        assert len(deduped) == 0
+
+    def test_three_events_cluster(self):
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        events = [
+            {"sample": 100, "channel": 0, "amplitude": 3.0},
+            {"sample": 101, "channel": 1, "amplitude": 8.0},
+            {"sample": 102, "channel": 2, "amplitude": 5.0},
+        ]
+        deduped = zbci.deduplicate_events(events, probe, temporal_radius=5, spatial_radius=30.0)
+        assert len(deduped) == 1
+        assert deduped[0]["channel"] == 1
+
+
+class TestAlignToPeak:
+    def test_improves_timing(self):
+        data = np.zeros((30, 2), dtype=np.float64)
+        data[10, 0] = -5.0
+        data[11, 0] = -7.0
+        data[12, 0] = -9.0  # true peak
+        data[13, 0] = -6.0
+
+        events = [{"sample": 10, "channel": 0, "amplitude": 5.0}]
+        aligned = zbci.align_to_peak(events, data, half_window=5)
+        assert aligned[0]["sample"] == 12
+        assert abs(aligned[0]["amplitude"] - 9.0) < 1e-12
+
+    def test_already_aligned(self):
+        data = np.zeros((20, 1), dtype=np.float64)
+        data[10, 0] = -8.0
+        events = [{"sample": 10, "channel": 0, "amplitude": 8.0}]
+        aligned = zbci.align_to_peak(events, data, half_window=5)
+        assert aligned[0]["sample"] == 10
+
+    def test_no_events(self):
+        data = np.zeros((20, 2), dtype=np.float64)
+        aligned = zbci.align_to_peak([], data)
+        assert len(aligned) == 0
+
+    def test_multichannel_correct_channel(self):
+        data = np.zeros((30, 2), dtype=np.float64)
+        data[10, 0] = -3.0
+        data[12, 0] = -8.0  # ch0 peak
+        data[10, 1] = -2.0
+        data[11, 1] = -6.0  # ch1 peak
+
+        events = [
+            {"sample": 10, "channel": 0, "amplitude": 3.0},
+            {"sample": 10, "channel": 1, "amplitude": 2.0},
+        ]
+        aligned = zbci.align_to_peak(events, data, half_window=5)
+        assert aligned[0]["sample"] == 12
+        assert aligned[1]["sample"] == 11
+
+
+class TestMultichannelEndToEnd:
+    def test_detect_dedup_align_pipeline(self):
+        """Full pipeline: detect -> align -> dedup."""
+        rng = np.random.default_rng(77)
+        n_samples = 1000
+        n_channels = 4
+
+        data = rng.standard_normal((n_samples, n_channels))
+
+        # Spike 1 at t=200, largest on ch1
+        data[200, 0] += -6.0
+        data[200, 1] += -10.0
+        data[200, 2] += -5.0
+
+        # Spike 2 at t=600, largest on ch3
+        data[600, 2] += -4.5
+        data[600, 3] += -9.0
+
+        noise = np.ones(n_channels, dtype=np.float64)
+
+        # Detect
+        events = zbci.detect_spikes_multichannel(data, threshold=4.0, noise=noise, refractory=10)
+        assert len(events) >= 4
+
+        # Align
+        aligned = zbci.align_to_peak(events, data, half_window=3)
+        assert len(aligned) == len(events)
+
+        # Dedup
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        deduped = zbci.deduplicate_events(aligned, probe, temporal_radius=5, spatial_radius=30.0)
+
+        assert len(deduped) >= 2
+        assert len(deduped) < len(events)
+
+        # Verify the two main spikes are present
+        samples = [e["sample"] for e in deduped]
+        spike1_found = any(197 <= s <= 203 for s in samples)
+        spike2_found = any(597 <= s <= 603 for s in samples)
+        assert spike1_found, f"Spike 1 near t=200 not found in {samples}"
+        assert spike2_found, f"Spike 2 near t=600 not found in {samples}"

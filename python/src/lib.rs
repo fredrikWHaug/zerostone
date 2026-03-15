@@ -37,6 +37,7 @@ mod sync;
 mod utils;
 mod wavelet;
 mod welch;
+mod whitening;
 mod window;
 mod xcorr;
 mod xdf;
@@ -474,6 +475,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Probe geometry
     probe::register(m)?;
+
+    // Whitening
+    whitening::register(m)?;
 
     // Cluster quality metrics
     quality::register(m)?;
