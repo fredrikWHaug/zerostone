@@ -111,6 +111,7 @@ mod stft;
 mod sync;
 pub mod wavelet;
 mod welch;
+pub mod whitening;
 mod window;
 pub mod probe;
 pub mod xcorr;
@@ -170,6 +171,7 @@ pub use stft::Stft;
 pub use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
 pub use wavelet::{morlet_coefficient, wavelet_half_width, Cwt, MultiChannelCwt, WaveletType};
 pub use welch::WelchPsd;
+pub use whitening::{apply_whitening, WhiteningMatrix, WhiteningMode};
 pub use window::{
     apply_window, apply_window_f64, coherent_gain, equivalent_noise_bandwidth, window_coefficient,
     WindowType,
