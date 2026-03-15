@@ -972,11 +972,285 @@ fn spike_sort<'py>(
     Ok(dict)
 }
 
+// --- Multi-channel detection bindings ---
+
+use zerostone::probe::ProbeLayout as ZsProbeLayout;
+use zerostone::spike_sort::MultiChannelEvent;
+
+/// Helper: convert a list of Python dicts to a Vec of MultiChannelEvent.
+fn dicts_to_events(
+    _py: Python<'_>,
+    events: &Bound<'_, pyo3::types::PyList>,
+) -> PyResult<Vec<MultiChannelEvent>> {
+    let mut result = Vec::with_capacity(events.len());
+    for item in events.iter() {
+        let dict = item.downcast::<pyo3::types::PyDict>()?;
+        let sample: usize = dict
+            .get_item("sample")?
+            .ok_or_else(|| PyValueError::new_err("event missing 'sample' key"))?
+            .extract()?;
+        let channel: usize = dict
+            .get_item("channel")?
+            .ok_or_else(|| PyValueError::new_err("event missing 'channel' key"))?
+            .extract()?;
+        let amplitude: f64 = dict
+            .get_item("amplitude")?
+            .ok_or_else(|| PyValueError::new_err("event missing 'amplitude' key"))?
+            .extract()?;
+        result.push(MultiChannelEvent {
+            sample,
+            channel,
+            amplitude,
+        });
+    }
+    Ok(result)
+}
+
+/// Helper: convert a slice of MultiChannelEvent to a list of Python dicts.
+fn events_to_dicts<'py>(
+    py: Python<'py>,
+    events: &[MultiChannelEvent],
+) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+    let list = pyo3::types::PyList::empty(py);
+    for e in events {
+        let dict = pyo3::types::PyDict::new(py);
+        dict.set_item("sample", e.sample)?;
+        dict.set_item("channel", e.channel)?;
+        dict.set_item("amplitude", e.amplitude)?;
+        list.append(dict)?;
+    }
+    Ok(list)
+}
+
+/// Detect spikes across multiple channels with per-channel noise thresholds.
+///
+/// Each channel is thresholded independently at `threshold * noise[ch]`.
+/// Within the refractory window, only the sample with the largest negative
+/// deflection is kept. Events are returned sorted by sample time.
+///
+/// Args:
+///     data (np.ndarray): 2D float64 array of shape (n_samples, n_channels).
+///         n_channels must be 2, 4, 8, 16, 32, or 64.
+///     threshold (float): Threshold multiplier applied to per-channel noise.
+///     noise (np.ndarray): 1D float64 array of per-channel noise estimates.
+///     refractory (int): Refractory period in samples. Default: 30.
+///
+/// Returns:
+///     list[dict]: List of ``{"sample": int, "channel": int, "amplitude": float}``.
+#[pyfunction]
+#[pyo3(signature = (data, threshold, noise, refractory=30))]
+fn detect_spikes_multichannel<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray2<f64>,
+    threshold: f64,
+    noise: PyReadonlyArray1<f64>,
+    refractory: usize,
+) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+    let shape = data.shape();
+    let n_samples = shape[0];
+    let n_channels = shape[1];
+    let noise_slice = noise.as_slice()?;
+    if noise_slice.len() != n_channels {
+        return Err(PyValueError::new_err(format!(
+            "noise has {} elements, expected {}",
+            noise_slice.len(),
+            n_channels
+        )));
+    }
+    let data_slice = data.as_slice()?;
+
+    // Allocate output buffer: generous upper bound
+    let max_events = n_samples * n_channels / refractory.max(1) + n_channels;
+
+    macro_rules! do_detect {
+        ($c:expr) => {{
+            // Convert flat row-major [n_samples * C] to &[[f64; C]]
+            let mut noise_arr = [0.0f64; $c];
+            noise_arr.copy_from_slice(noise_slice);
+            // Safety: reinterpret flat slice as &[[f64; C]]
+            // The data is n_samples rows of C f64s each, contiguous in memory
+            let typed_data: &[[f64; $c]] = {
+                assert!(data_slice.len() == n_samples * $c);
+                // SAFETY: [f64; C] has the same layout as C contiguous f64s,
+                // and data_slice has exactly n_samples * C elements.
+                unsafe {
+                    core::slice::from_raw_parts(data_slice.as_ptr() as *const [f64; $c], n_samples)
+                }
+            };
+            let mut events = vec![
+                MultiChannelEvent {
+                    sample: 0,
+                    channel: 0,
+                    amplitude: 0.0
+                };
+                max_events
+            ];
+            let n = zs::detect_spikes_multichannel::<$c>(
+                typed_data,
+                threshold,
+                &noise_arr,
+                refractory,
+                &mut events,
+            );
+            events_to_dicts(py, &events[..n])
+        }};
+    }
+
+    match n_channels {
+        2 => do_detect!(2),
+        4 => do_detect!(4),
+        8 => do_detect!(8),
+        16 => do_detect!(16),
+        32 => do_detect!(32),
+        64 => do_detect!(64),
+        _ => Err(PyValueError::new_err(
+            "n_channels must be 2, 4, 8, 16, 32, or 64",
+        )),
+    }
+}
+
+/// Remove duplicate spike detections across neighboring channels.
+///
+/// When a neuron fires, its waveform appears on multiple nearby channels.
+/// This function keeps only the event with the largest amplitude within
+/// each spatiotemporal neighborhood.
+///
+/// Args:
+///     events (list[dict]): List of ``{"sample": int, "channel": int, "amplitude": float}``.
+///     probe (ProbeLayout): Probe geometry for spatial neighbor queries.
+///     temporal_radius (int): Maximum sample offset for duplicates. Default: 5.
+///     spatial_radius (float): Maximum channel distance in micrometers. Default: 30.0.
+///
+/// Returns:
+///     list[dict]: Deduplicated events.
+#[pyfunction]
+#[pyo3(signature = (events, probe, temporal_radius=5, spatial_radius=30.0))]
+fn deduplicate_events<'py>(
+    py: Python<'py>,
+    events: Bound<'py, pyo3::types::PyList>,
+    probe: &super::probe::ProbeLayout,
+    temporal_radius: usize,
+    spatial_radius: f64,
+) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+    let mut ev = dicts_to_events(py, &events)?;
+    let n_events = ev.len();
+    let n_channels = probe.n_channels_inner();
+
+    macro_rules! do_dedup {
+        ($c:expr) => {{
+            let probe_inner = ZsProbeLayout::<$c>::linear(1.0); // placeholder
+            // We need the actual probe. Extract from the binding.
+            // The probe binding stores a ProbeInner enum; we can use
+            // its channel_distance method through a constructed local probe.
+            // Instead, build a ProbeLayout from the Python probe's distances.
+            // Actually, the cleanest approach: construct from positions.
+            // We'll build a local probe by querying all channel distances.
+            let _ = probe_inner; // suppress warning
+            // Build positions by querying the probe -- unfortunately the Python
+            // ProbeLayout doesn't expose positions. Use a different approach:
+            // call deduplicate on each pair using the Python probe's distance.
+            //
+            // Better approach: reconstruct a Rust probe from the Python binding.
+            // The probe binding stores ProbeInner which wraps ZsProbeLayout.
+            // We need to extract the inner. Let's use a helper on ProbeLayout.
+            //
+            // Actually the simplest approach: implement dedup manually using
+            // the Python probe's channel_distance method. But that's wasteful.
+            //
+            // The real simplest approach: accept that we need to build positions.
+            // Use the Python probe to query distances and reconstruct positions.
+            // For a linear probe, position[i] = (0, i * pitch).
+            //
+            // Wait -- we can just use the dedup function with a locally-constructed
+            // probe by querying all pairwise distances from the Python probe.
+            // But that defeats the purpose.
+            //
+            // Actually, let's add a helper method to the probe binding that
+            // returns the inner reference. Or better: duplicate the approach used
+            // in the Rust tests -- just dispatch on the ProbeInner enum variant.
+            let n = super::probe::with_probe_ref::<$c, _, _>(&probe, |zs_probe| {
+                zs::deduplicate_events::<$c>(&mut ev, n_events, zs_probe, spatial_radius, temporal_radius)
+            })?;
+            events_to_dicts(py, &ev[..n])
+        }};
+    }
+
+    match n_channels {
+        4 => do_dedup!(4),
+        8 => do_dedup!(8),
+        16 => do_dedup!(16),
+        32 => do_dedup!(32),
+        64 => do_dedup!(64),
+        128 => do_dedup!(128),
+        _ => Err(PyValueError::new_err(
+            "probe n_channels must be 4, 8, 16, 32, 64, or 128",
+        )),
+    }
+}
+
+/// Fine-align spike event times to the nearest negative peak.
+///
+/// For each event, searches the data on the event's channel within
+/// ``+/- half_window`` samples for the most negative value, then
+/// updates the event's sample and amplitude.
+///
+/// Args:
+///     events (list[dict]): List of ``{"sample": int, "channel": int, "amplitude": float}``.
+///     data (np.ndarray): 2D float64 array of shape (n_samples, n_channels).
+///     half_window (int): Search radius in samples. Default: 5.
+///
+/// Returns:
+///     list[dict]: Events with aligned sample times and updated amplitudes.
+#[pyfunction]
+#[pyo3(signature = (events, data, half_window=5))]
+fn align_to_peak<'py>(
+    py: Python<'py>,
+    events: Bound<'py, pyo3::types::PyList>,
+    data: PyReadonlyArray2<f64>,
+    half_window: usize,
+) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+    let mut ev = dicts_to_events(py, &events)?;
+    let n_events = ev.len();
+    let shape = data.shape();
+    let n_samples = shape[0];
+    let n_channels = shape[1];
+    let data_slice = data.as_slice()?;
+
+    macro_rules! do_align {
+        ($c:expr) => {{
+            let typed_data: &[[f64; $c]] = {
+                assert!(data_slice.len() == n_samples * $c);
+                unsafe {
+                    core::slice::from_raw_parts(data_slice.as_ptr() as *const [f64; $c], n_samples)
+                }
+            };
+            zs::align_to_peak::<$c>(typed_data, &mut ev, n_events, half_window);
+            events_to_dicts(py, &ev[..n_events])
+        }};
+    }
+
+    match n_channels {
+        1 => do_align!(1),
+        2 => do_align!(2),
+        4 => do_align!(4),
+        8 => do_align!(8),
+        16 => do_align!(16),
+        32 => do_align!(32),
+        64 => do_align!(64),
+        _ => Err(PyValueError::new_err(
+            "n_channels must be 1, 2, 4, 8, 16, 32, or 64",
+        )),
+    }
+}
+
 /// Register spike sorting functions and classes.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_waveforms, m)?)?;
     m.add_function(wrap_pyfunction!(estimate_noise_mad, m)?)?;
     m.add_function(wrap_pyfunction!(detect_spikes, m)?)?;
     m.add_function(wrap_pyfunction!(spike_sort, m)?)?;
+    m.add_function(wrap_pyfunction!(detect_spikes_multichannel, m)?)?;
+    m.add_function(wrap_pyfunction!(deduplicate_events, m)?)?;
+    m.add_function(wrap_pyfunction!(align_to_peak, m)?)?;
     Ok(())
 }
