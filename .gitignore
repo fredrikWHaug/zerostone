@@ -7,6 +7,9 @@ Cargo.lock
 # Claude Code settings and context (user-specific)
 .claude/
 
+# Git worktrees for parallel development
+worktrees/
+
 # Generated output from examples (plots, CSV files)
 /output/
 
