@@ -85,6 +85,7 @@ make_lda_inner!(LdaC16, 16, 256);
 make_lda_inner!(LdaC32, 32, 1024);
 make_lda_inner!(LdaC64, 64, 4096);
 
+#[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
 enum LdaInner {
     C2(LdaC2),
     C4(LdaC4),
@@ -93,7 +94,7 @@ enum LdaInner {
     C12(LdaC12),
     C16(LdaC16),
     C32(LdaC32),
-    C64(LdaC64),
+    C64(Box<LdaC64>),
 }
 
 /// Fisher's Linear Discriminant Analysis for binary classification.
@@ -145,7 +146,7 @@ impl Lda {
             12 => LdaInner::C12(LdaC12::new(shrinkage)),
             16 => LdaInner::C16(LdaC16::new(shrinkage)),
             32 => LdaInner::C32(LdaC32::new(shrinkage)),
-            64 => LdaInner::C64(LdaC64::new(shrinkage)),
+            64 => LdaInner::C64(Box::new(LdaC64::new(shrinkage))),
             _ => {
                 return Err(PyValueError::new_err(
                     "features must be 2, 4, 6, 8, 12, 16, 32, or 64",

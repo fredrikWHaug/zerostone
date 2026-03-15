@@ -219,8 +219,8 @@ enum LaplacianInner {
     Ch4N2(ZsSurfaceLaplacian<4, 2>),
     Ch8N2(ZsSurfaceLaplacian<8, 2>),
     Ch16N2(ZsSurfaceLaplacian<16, 2>),
-    Ch32N2(ZsSurfaceLaplacian<32, 2>),
-    Ch64N2(ZsSurfaceLaplacian<64, 2>),
+    Ch32N2(Box<ZsSurfaceLaplacian<32, 2>>),
+    Ch64N2(Box<ZsSurfaceLaplacian<64, 2>>),
     /// Dynamic implementation for non-standard configurations
     Dynamic {
         #[allow(dead_code)]
@@ -291,11 +291,11 @@ impl SurfaceLaplacian {
             }
             32 => {
                 let neighbors = build_linear_neighbors_32();
-                LaplacianInner::Ch32N2(ZsSurfaceLaplacian::unweighted(neighbors))
+                LaplacianInner::Ch32N2(Box::new(ZsSurfaceLaplacian::unweighted(neighbors)))
             }
             64 => {
                 let neighbors = build_linear_neighbors_64();
-                LaplacianInner::Ch64N2(ZsSurfaceLaplacian::unweighted(neighbors))
+                LaplacianInner::Ch64N2(Box::new(ZsSurfaceLaplacian::unweighted(neighbors)))
             }
             _ => {
                 // Build dynamic neighbor list
@@ -598,7 +598,7 @@ enum RouterInner {
     R16to16(ZsChannelRouter<16, 16>),
     R16to8(ZsChannelRouter<16, 8>),
     R32to32(ZsChannelRouter<32, 32>),
-    R64to64(ZsChannelRouter<64, 64>),
+    R64to64(Box<ZsChannelRouter<64, 64>>),
     /// Dynamic implementation for non-standard configurations
     Dynamic {
         #[allow(dead_code)]
@@ -944,7 +944,7 @@ impl ChannelRouter {
             }
             (64, 64) => {
                 let arr: [usize; 64] = indices.try_into().unwrap();
-                RouterInner::R64to64(ZsChannelRouter::new(arr))
+                RouterInner::R64to64(Box::new(ZsChannelRouter::new(arr)))
             }
             _ => RouterInner::Dynamic {
                 in_channels,

@@ -221,8 +221,8 @@ enum AdaptiveThresholdDetectorInner {
     Ch4(ZsAdaptiveThresholdDetector<4>),
     Ch8(ZsAdaptiveThresholdDetector<8>),
     Ch16(ZsAdaptiveThresholdDetector<16>),
-    Ch32(ZsAdaptiveThresholdDetector<32>),
-    Ch64(ZsAdaptiveThresholdDetector<64>),
+    Ch32(Box<ZsAdaptiveThresholdDetector<32>>),
+    Ch64(Box<ZsAdaptiveThresholdDetector<64>>),
 }
 
 /// Adaptive multi-channel threshold detector using N×σ detection.
@@ -289,16 +289,16 @@ impl AdaptiveThresholdDetector {
                 refractory,
                 min_samples,
             )),
-            32 => AdaptiveThresholdDetectorInner::Ch32(ZsAdaptiveThresholdDetector::new(
+            32 => AdaptiveThresholdDetectorInner::Ch32(Box::new(ZsAdaptiveThresholdDetector::new(
                 multiplier,
                 refractory,
                 min_samples,
-            )),
-            64 => AdaptiveThresholdDetectorInner::Ch64(ZsAdaptiveThresholdDetector::new(
+            ))),
+            64 => AdaptiveThresholdDetectorInner::Ch64(Box::new(ZsAdaptiveThresholdDetector::new(
                 multiplier,
                 refractory,
                 min_samples,
-            )),
+            ))),
             _ => {
                 return Err(PyValueError::new_err(
                     "channels must be 1, 4, 8, 16, 32, or 64 for AdaptiveThresholdDetector",

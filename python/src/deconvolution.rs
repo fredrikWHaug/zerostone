@@ -5,13 +5,14 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use zerostone::OasisDeconvolution as ZsOasis;
 
+#[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
 enum OasisInner {
     C1(ZsOasis<1, 256>),
     C4(ZsOasis<4, 256>),
     C8(ZsOasis<8, 256>),
     C16(ZsOasis<16, 256>),
-    C32(ZsOasis<32, 256>),
-    C64(ZsOasis<64, 256>),
+    C32(Box<ZsOasis<32, 256>>),
+    C64(Box<ZsOasis<64, 256>>),
 }
 
 /// Online OASIS deconvolution for calcium imaging.
@@ -51,8 +52,8 @@ impl OasisDeconvolution {
             4 => OasisInner::C4(ZsOasis::new(gamma, lambda_)),
             8 => OasisInner::C8(ZsOasis::new(gamma, lambda_)),
             16 => OasisInner::C16(ZsOasis::new(gamma, lambda_)),
-            32 => OasisInner::C32(ZsOasis::new(gamma, lambda_)),
-            64 => OasisInner::C64(ZsOasis::new(gamma, lambda_)),
+            32 => OasisInner::C32(Box::new(ZsOasis::new(gamma, lambda_))),
+            64 => OasisInner::C64(Box::new(ZsOasis::new(gamma, lambda_))),
             _ => {
                 return Err(PyValueError::new_err(
                     "channels must be 1, 4, 8, 16, 32, or 64",
@@ -77,8 +78,8 @@ impl OasisDeconvolution {
             4 => OasisInner::C4(ZsOasis::from_tau(sample_rate, tau, lambda_)),
             8 => OasisInner::C8(ZsOasis::from_tau(sample_rate, tau, lambda_)),
             16 => OasisInner::C16(ZsOasis::from_tau(sample_rate, tau, lambda_)),
-            32 => OasisInner::C32(ZsOasis::from_tau(sample_rate, tau, lambda_)),
-            64 => OasisInner::C64(ZsOasis::from_tau(sample_rate, tau, lambda_)),
+            32 => OasisInner::C32(Box::new(ZsOasis::from_tau(sample_rate, tau, lambda_))),
+            64 => OasisInner::C64(Box::new(ZsOasis::from_tau(sample_rate, tau, lambda_))),
             _ => {
                 return Err(PyValueError::new_err(
                     "channels must be 1, 4, 8, 16, 32, or 64",
@@ -96,6 +97,7 @@ impl OasisDeconvolution {
     ///
     /// Returns:
     ///     tuple: (calcium, spike) as 1D float32 arrays.
+    #[allow(clippy::type_complexity)] // PyO3 return type with two numpy arrays
     fn update<'py>(
         &mut self,
         py: Python<'py>,

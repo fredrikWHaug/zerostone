@@ -104,6 +104,7 @@ impl WelchPsd {
     /// Example:
     ///     >>> freqs, psd = welch.estimate(signal, sample_rate=250.0)
     ///     >>> print(f"Frequency resolution: {freqs[1] - freqs[0]:.2f} Hz")
+    #[allow(clippy::type_complexity)] // PyO3 return type with two numpy arrays
     fn estimate<'py>(
         &self,
         py: Python<'py>,
