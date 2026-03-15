@@ -8,6 +8,9 @@ use zerostone::pac;
 use zerostone::probe::ProbeLayout;
 use zerostone::quality;
 use zerostone::riemannian;
+use zerostone::spike_sort::{
+    align_to_peak, deduplicate_events, detect_spikes_multichannel, MultiChannelEvent,
+};
 use zerostone::whitening::{WhiteningMatrix, WhiteningMode};
 use zerostone::{BiquadCoeffs, Complex, Fft, HilbertTransform, IirFilter, OnlineStats, WindowType};
 
@@ -448,6 +451,181 @@ proptest! {
             let m = wm.matrix();
             let diff = (m.get(0, 1) - m.get(1, 0)).abs();
             prop_assert!(diff < 1e-8, "ZCA matrix not symmetric: W01={}, W10={}", m.get(0, 1), m.get(1, 0));
+        }
+    }
+
+    // =========================================================================
+    // Multi-channel spike detection properties
+    // =========================================================================
+
+    /// detect_spikes_multichannel returns count <= buffer size.
+    #[test]
+    fn multichannel_detect_count_bounded(
+        vals in prop::collection::vec(-10.0f64..10.0, 200..=200),
+    ) {
+        // 4 channels, 50 time steps
+        let mut data = [[0.0f64; 4]; 50];
+        for (i, chunk) in vals.chunks_exact(4).enumerate() {
+            for (ch, &v) in chunk.iter().enumerate() {
+                data[i][ch] = v;
+            }
+        }
+        let noise = [1.0, 1.0, 1.0, 1.0];
+        let mut events = [MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; 64];
+        let n = detect_spikes_multichannel::<4>(&data, 3.0, &noise, 3, &mut events);
+        prop_assert!(n <= 64, "count {n} exceeds buffer size 64");
+        prop_assert!(n <= 50 * 4, "count {n} exceeds T*C = 200");
+    }
+
+    /// All returned events have valid channel indices (< C) and sample indices (< T).
+    #[test]
+    fn multichannel_detect_valid_indices(
+        vals in prop::collection::vec(-10.0f64..10.0, 200..=200),
+    ) {
+        let mut data = [[0.0f64; 4]; 50];
+        for (i, chunk) in vals.chunks_exact(4).enumerate() {
+            for (ch, &v) in chunk.iter().enumerate() {
+                data[i][ch] = v;
+            }
+        }
+        let noise = [1.0, 1.0, 1.0, 1.0];
+        let mut events = [MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; 64];
+        let n = detect_spikes_multichannel::<4>(&data, 3.0, &noise, 3, &mut events);
+        for e in &events[..n] {
+            prop_assert!(e.channel < 4, "channel {} >= C=4", e.channel);
+            prop_assert!(e.sample < 50, "sample {} >= T=50", e.sample);
+        }
+    }
+
+    /// Detection count is monotonically non-decreasing as threshold decreases.
+    #[test]
+    fn multichannel_detect_monotone_in_threshold(
+        vals in prop::collection::vec(-10.0f64..10.0, 200..=200),
+        high_mult in 4.0f64..8.0,
+        low_mult in 1.0f64..4.0,
+    ) {
+        let mut data = [[0.0f64; 4]; 50];
+        for (i, chunk) in vals.chunks_exact(4).enumerate() {
+            for (ch, &v) in chunk.iter().enumerate() {
+                data[i][ch] = v;
+            }
+        }
+        let noise = [1.0, 1.0, 1.0, 1.0];
+        let mut ev_high = [MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; 64];
+        let mut ev_low = [MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; 64];
+        let n_high = detect_spikes_multichannel::<4>(&data, high_mult, &noise, 3, &mut ev_high);
+        let n_low = detect_spikes_multichannel::<4>(&data, low_mult, &noise, 3, &mut ev_low);
+        prop_assert!(
+            n_low >= n_high,
+            "lower threshold ({low_mult}) detected {n_low} < {n_high} from higher threshold ({high_mult})"
+        );
+    }
+
+    // =========================================================================
+    // Deduplication properties
+    // =========================================================================
+
+    /// deduplicate_events output count <= input count.
+    #[test]
+    fn dedup_count_le_input(
+        samples in prop::collection::vec(0usize..100, 2..10),
+        channels in prop::collection::vec(0usize..4, 2..10),
+        amplitudes in prop::collection::vec(0.1f64..20.0, 2..10),
+    ) {
+        let n_in = samples.len().min(channels.len()).min(amplitudes.len());
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let mut events: Vec<MultiChannelEvent> = (0..n_in)
+            .map(|i| MultiChannelEvent {
+                sample: samples[i],
+                channel: channels[i] % 4,
+                amplitude: amplitudes[i],
+            })
+            .collect();
+        // Sort by sample to match precondition
+        events.sort_by_key(|e| e.sample);
+        let n_out = deduplicate_events::<4>(&mut events, n_in, &probe, 30.0, 5);
+        prop_assert!(n_out <= n_in, "dedup output {n_out} > input {n_in}");
+    }
+
+    /// Deduplication is idempotent: dedup(dedup(x)) == dedup(x).
+    #[test]
+    fn dedup_idempotent(
+        samples in prop::collection::vec(0usize..100, 2..8),
+        channels in prop::collection::vec(0usize..4, 2..8),
+        amplitudes in prop::collection::vec(0.1f64..20.0, 2..8),
+    ) {
+        let n_in = samples.len().min(channels.len()).min(amplitudes.len());
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let mut events: Vec<MultiChannelEvent> = (0..n_in)
+            .map(|i| MultiChannelEvent {
+                sample: samples[i],
+                channel: channels[i] % 4,
+                amplitude: amplitudes[i],
+            })
+            .collect();
+        events.sort_by_key(|e| e.sample);
+
+        // First dedup
+        let n1 = deduplicate_events::<4>(&mut events, n_in, &probe, 30.0, 5);
+        let snapshot: Vec<MultiChannelEvent> = events[..n1].to_vec();
+
+        // Second dedup
+        let n2 = deduplicate_events::<4>(&mut events, n1, &probe, 30.0, 5);
+        prop_assert!(n1 == n2, "dedup not idempotent: first={}, second={}", n1, n2);
+        for i in 0..n2 {
+            prop_assert!(events[i].sample == snapshot[i].sample, "event {} sample changed", i);
+            prop_assert!(events[i].channel == snapshot[i].channel, "event {} channel changed", i);
+        }
+    }
+
+    /// Events with zero temporal overlap are all preserved.
+    #[test]
+    fn dedup_preserves_distant_events(
+        n_events in 2usize..6,
+    ) {
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let temporal_radius = 5usize;
+        // Place events far apart in time so no pair overlaps
+        let mut events: Vec<MultiChannelEvent> = (0..n_events)
+            .map(|i| MultiChannelEvent {
+                sample: i * (temporal_radius + 10),
+                channel: i % 4,
+                amplitude: 5.0 + i as f64,
+            })
+            .collect();
+        let n_out = deduplicate_events::<4>(&mut events, n_events, &probe, 30.0, temporal_radius);
+        prop_assert!(n_out == n_events, "distant events should all survive: got {}, expected {}", n_out, n_events);
+    }
+
+    // =========================================================================
+    // Alignment properties
+    // =========================================================================
+
+    /// align_to_peak preserves event count.
+    #[test]
+    fn align_preserves_count(
+        vals in prop::collection::vec(-10.0f64..10.0, 200..=200),
+    ) {
+        let mut data = [[0.0f64; 4]; 50];
+        for (i, chunk) in vals.chunks_exact(4).enumerate() {
+            for (ch, &v) in chunk.iter().enumerate() {
+                data[i][ch] = v;
+            }
+        }
+        let noise = [1.0, 1.0, 1.0, 1.0];
+        let mut events = [MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; 64];
+        let n = detect_spikes_multichannel::<4>(&data, 3.0, &noise, 3, &mut events);
+        let samples_before: Vec<usize> = events[..n].iter().map(|e| e.sample).collect();
+        align_to_peak::<4>(&data, &mut events, n, 3);
+        // Count unchanged -- align_to_peak does not add or remove events
+        // (it modifies in place). We verify the slice length is the same
+        // by checking the events are still valid.
+        for (idx, e) in events[..n].iter().enumerate() {
+            prop_assert!(e.channel < 4, "channel invalid after alignment at index {idx}");
+            prop_assert!(e.sample < 50, "sample invalid after alignment at index {idx}");
+            let orig = samples_before[idx];
+            let diff = e.sample.abs_diff(orig);
+            prop_assert!(diff <= 3, "aligned sample {} too far from original {} (half_window=3)", e.sample, orig);
         }
     }
 }
