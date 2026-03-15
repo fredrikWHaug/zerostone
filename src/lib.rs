@@ -100,6 +100,7 @@ mod notch;
 pub mod online_kmeans;
 pub mod pac;
 mod percentile;
+pub mod quality;
 mod pipeline;
 pub mod riemannian;
 mod rms;
@@ -149,6 +150,10 @@ pub use notch::NotchFilter;
 pub use online_kmeans::{KMeansError, KMeansResult, OnlineKMeans};
 pub use pac::{mean_vector_length, modulation_index, phase_amplitude_distribution};
 pub use percentile::StreamingPercentile;
+pub use quality::{
+    contamination_rate, d_prime, euclidean_distance, isolation_distance, isi_violation_rate,
+    mean_silhouette, silhouette_score, waveform_snr,
+};
 pub use pipeline::{BlockProcessor, CloneableProcessor, Pipeline, RateChangingProcessor, Terminal};
 pub use riemannian::{
     frechet_mean, matrix_exp, matrix_inv_sqrt, matrix_log, matrix_sqrt, mdm_classify, recenter,
