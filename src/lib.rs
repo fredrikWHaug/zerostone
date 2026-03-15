@@ -111,6 +111,7 @@ mod sync;
 pub mod wavelet;
 mod welch;
 mod window;
+pub mod probe;
 pub mod xcorr;
 pub mod xdf;
 
