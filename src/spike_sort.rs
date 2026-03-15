@@ -6,8 +6,12 @@
 //! - Peak alignment for consistent waveform representation
 //! - PCA for dimensionality reduction of spike waveforms
 //! - Template matching (Euclidean distance and NCC) for spike classification
+//! - Multi-channel spike detection with per-channel thresholds
+//! - Spatial deduplication of detected events using probe geometry
+//! - Fine peak alignment within a local window
 
 use crate::linalg::Matrix;
+use crate::probe::ProbeLayout;
 
 /// Errors that can occur during spike sorting operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -504,6 +508,361 @@ pub fn detect_spikes(
     count
 }
 
+/// A spike event detected on a multi-channel recording.
+///
+/// Stores the time index, channel, and absolute amplitude of a detected
+/// threshold crossing. Used as the output element for [`detect_spikes_multichannel`]
+/// and input to [`deduplicate_events`].
+///
+/// # Example
+///
+/// ```
+/// use zerostone::spike_sort::MultiChannelEvent;
+///
+/// let event = MultiChannelEvent { sample: 1000, channel: 3, amplitude: 5.2 };
+/// assert_eq!(event.sample, 1000);
+/// assert_eq!(event.channel, 3);
+/// assert!((event.amplitude - 5.2).abs() < 1e-12);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MultiChannelEvent {
+    /// Time index (sample offset) of the detected spike.
+    pub sample: usize,
+    /// Channel on which the spike was detected.
+    pub channel: usize,
+    /// Absolute amplitude at the peak (always positive).
+    pub amplitude: f64,
+}
+
+/// Detect spikes across multiple channels with per-channel noise thresholds.
+///
+/// Scans each channel of a `T`-sample, `C`-channel recording for negative
+/// threshold crossings, using the same refractory-window peak-finding logic
+/// as [`detect_spikes`]. The threshold for channel `ch` is
+/// `threshold_multiplier * noise_estimates[ch]`.
+///
+/// Detected events are written into `output` sorted by sample index (within
+/// each channel, events are naturally time-ordered; the final output
+/// interleaves channels by time). Returns the number of events written.
+///
+/// # Type Parameters
+///
+/// * `C` - Number of channels
+///
+/// # Arguments
+///
+/// * `data` - Multi-channel data as a slice of `[f64; C]` (one array per time step)
+/// * `threshold_multiplier` - Scalar multiplied by per-channel noise to get thresholds
+/// * `noise_estimates` - Per-channel noise standard deviation (e.g., from MAD)
+/// * `refractory` - Minimum samples between detections on the same channel
+/// * `output` - Caller-provided buffer for detected events
+///
+/// # Example
+///
+/// ```
+/// use zerostone::spike_sort::{detect_spikes_multichannel, MultiChannelEvent};
+///
+/// // 2 channels, 20 time steps
+/// let mut data = [[0.0f64; 2]; 20];
+/// data[5][0] = -6.0; // spike on channel 0
+/// data[15][1] = -8.0; // spike on channel 1
+///
+/// let noise = [1.0, 1.0];
+/// let mut events = [MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; 16];
+/// let n = detect_spikes_multichannel::<2>(&data, 4.0, &noise, 5, &mut events);
+/// assert_eq!(n, 2);
+/// assert_eq!(events[0].channel, 0);
+/// assert_eq!(events[0].sample, 5);
+/// assert_eq!(events[1].channel, 1);
+/// assert_eq!(events[1].sample, 15);
+/// ```
+pub fn detect_spikes_multichannel<const C: usize>(
+    data: &[[f64; C]],
+    threshold_multiplier: f64,
+    noise_estimates: &[f64; C],
+    refractory: usize,
+    output: &mut [MultiChannelEvent],
+) -> usize {
+    let t_len = data.len();
+    if t_len == 0 || refractory == 0 {
+        return 0;
+    }
+
+    // Phase 1: detect per-channel, collecting into output buffer.
+    // We process channels in order, appending events, then merge-sort by time.
+    // To avoid allocation we use a two-pass approach: first count per channel
+    // to partition the output buffer, but that requires scratch. Instead, we
+    // do a simple approach: detect all channels sequentially, then insertion-sort
+    // the result by sample index (stable sort preserves channel order for ties).
+
+    let mut total = 0usize;
+
+    let mut ch = 0;
+    while ch < C {
+        let thresh = threshold_multiplier * noise_estimates[ch];
+        let mut i = 0;
+        while i < t_len {
+            if data[i][ch] < -thresh {
+                // Found crossing: search refractory window for peak
+                let end = if i + refractory < t_len {
+                    i + refractory
+                } else {
+                    t_len
+                };
+                let mut min_idx = i;
+                let mut min_val = data[i][ch];
+                let mut j = i + 1;
+                while j < end {
+                    if data[j][ch] < min_val {
+                        min_val = data[j][ch];
+                        min_idx = j;
+                    }
+                    j += 1;
+                }
+                if total < output.len() {
+                    output[total] = MultiChannelEvent {
+                        sample: min_idx,
+                        channel: ch,
+                        amplitude: libm::fabs(min_val),
+                    };
+                    total += 1;
+                }
+                i = end;
+            } else {
+                i += 1;
+            }
+        }
+        ch += 1;
+    }
+
+    // Insertion sort by sample index (stable: preserves channel order for ties)
+    let mut k = 1;
+    while k < total {
+        let key = output[k];
+        let mut pos = k;
+        while pos > 0 && output[pos - 1].sample > key.sample {
+            output[pos] = output[pos - 1];
+            pos -= 1;
+        }
+        output[pos] = key;
+        k += 1;
+    }
+
+    total
+}
+
+/// Remove duplicate detections of the same spike across neighboring channels.
+///
+/// When a neuron fires, its extracellular waveform appears on multiple nearby
+/// channels. This function keeps only the event with the largest amplitude
+/// within each spatiotemporal neighborhood, following the "locally exclusive"
+/// strategy used by SpikeInterface and MountainSort5.
+///
+/// Two events are considered duplicates if:
+/// 1. Their sample indices differ by at most `temporal_radius` samples, AND
+/// 2. Their channels are neighbors on the probe (within `spatial_radius_um`).
+///
+/// The deduplication is performed in-place. Retained events are packed to the
+/// front of the slice; the function returns the number of retained events.
+///
+/// # Type Parameters
+///
+/// * `C` - Number of channels on the probe
+///
+/// # Arguments
+///
+/// * `events` - Mutable slice of detected events (modified in place)
+/// * `n_events` - Number of valid events in the slice
+/// * `probe` - Probe geometry for spatial neighbor queries
+/// * `spatial_radius_um` - Maximum distance (micrometers) for two channels to be neighbors
+/// * `temporal_radius` - Maximum sample offset for two events to be considered the same spike
+///
+/// # Returns
+///
+/// Number of retained (deduplicated) events. Always `<= n_events`.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::spike_sort::{deduplicate_events, MultiChannelEvent};
+/// use zerostone::probe::ProbeLayout;
+///
+/// let probe = ProbeLayout::<4>::linear(25.0);
+/// let mut events = [
+///     MultiChannelEvent { sample: 100, channel: 1, amplitude: 5.0 },
+///     MultiChannelEvent { sample: 101, channel: 2, amplitude: 7.0 }, // larger, wins
+///     MultiChannelEvent { sample: 500, channel: 0, amplitude: 3.0 }, // far away, kept
+///     MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 },
+/// ];
+/// let n = deduplicate_events::<4>(&mut events, 3, &probe, 30.0, 5);
+/// assert_eq!(n, 2);
+/// assert_eq!(events[0].sample, 101); // winner from first group
+/// assert_eq!(events[1].sample, 500); // isolated event
+/// ```
+pub fn deduplicate_events<const C: usize>(
+    events: &mut [MultiChannelEvent],
+    n_events: usize,
+    probe: &ProbeLayout<C>,
+    spatial_radius_um: f64,
+    temporal_radius: usize,
+) -> usize {
+    let n = if n_events < events.len() {
+        n_events
+    } else {
+        events.len()
+    };
+    if n == 0 {
+        return 0;
+    }
+
+    // Mark events for removal: use amplitude = -1.0 as a tombstone.
+    // For each event, check if a later event in the temporal window on a
+    // neighboring channel has larger amplitude. If so, mark the smaller one.
+    // This is O(n * n * C) worst case but n is typically small per buffer.
+
+    // We need neighbor lookup. Use the probe API with a stack buffer.
+    let mut i = 0;
+    while i < n {
+        if events[i].amplitude < 0.0 {
+            // Already removed
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        while j < n {
+            // Since events are sorted by sample, once we exceed temporal_radius
+            // we can break early.
+            if events[j].sample > events[i].sample + temporal_radius {
+                break;
+            }
+            if events[j].amplitude < 0.0 {
+                j += 1;
+                continue;
+            }
+
+            // Check temporal proximity (bidirectional, but since sorted,
+            // events[j].sample >= events[i].sample)
+            let dt = events[j].sample - events[i].sample;
+            if dt <= temporal_radius {
+                // Check spatial proximity
+                let dist = probe.channel_distance(events[i].channel, events[j].channel);
+                if dist <= spatial_radius_um {
+                    // Same spike: remove the one with smaller amplitude
+                    if events[i].amplitude >= events[j].amplitude {
+                        events[j].amplitude = -1.0; // tombstone
+                    } else {
+                        events[i].amplitude = -1.0; // tombstone
+                        break; // event i is dead, no need to compare further
+                    }
+                }
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+
+    // Compact: move surviving events to the front
+    let mut write = 0;
+    let mut read = 0;
+    while read < n {
+        if events[read].amplitude >= 0.0 {
+            if write != read {
+                events[write] = events[read];
+            }
+            write += 1;
+        }
+        read += 1;
+    }
+    write
+}
+
+/// Fine-align spike event times to the nearest negative peak within a window.
+///
+/// For each event in `events[..n_events]`, searches the data on the event's
+/// channel within `+/- half_window` samples of the current `event.sample` for
+/// the most negative value, and updates `event.sample` to that index. Also
+/// updates `event.amplitude` to reflect the new peak value.
+///
+/// This improves waveform extraction quality by centering the extraction
+/// window on the true peak rather than the threshold crossing point.
+///
+/// # Type Parameters
+///
+/// * `C` - Number of channels
+///
+/// # Arguments
+///
+/// * `data` - Multi-channel data `&[[f64; C]]` (time x channels)
+/// * `events` - Mutable slice of detected events
+/// * `n_events` - Number of valid events in `events`
+/// * `half_window` - Search radius in samples (e.g., 5 for +/- 5 samples)
+///
+/// # Example
+///
+/// ```
+/// use zerostone::spike_sort::{align_to_peak, MultiChannelEvent};
+///
+/// let mut data = [[0.0f64; 2]; 20];
+/// data[9][0] = -3.0;
+/// data[10][0] = -8.0; // true peak, 1 sample after detection
+/// data[11][0] = -2.0;
+///
+/// let mut events = [MultiChannelEvent { sample: 9, channel: 0, amplitude: 3.0 }];
+/// align_to_peak::<2>(&data, &mut events, 1, 5);
+/// assert_eq!(events[0].sample, 10);
+/// assert!((events[0].amplitude - 8.0).abs() < 1e-12);
+/// ```
+pub fn align_to_peak<const C: usize>(
+    data: &[[f64; C]],
+    events: &mut [MultiChannelEvent],
+    n_events: usize,
+    half_window: usize,
+) {
+    let t_len = data.len();
+    let n = if n_events < events.len() {
+        n_events
+    } else {
+        events.len()
+    };
+
+    let mut i = 0;
+    while i < n {
+        let ch = events[i].channel;
+        if ch >= C {
+            i += 1;
+            continue;
+        }
+
+        let center = events[i].sample;
+        let start = center.saturating_sub(half_window);
+        let end = if center + half_window + 1 < t_len {
+            center + half_window + 1
+        } else {
+            t_len
+        };
+
+        let mut best_idx = center;
+        let mut best_val = if center < t_len {
+            data[center][ch]
+        } else {
+            0.0
+        };
+
+        let mut j = start;
+        while j < end {
+            if data[j][ch] < best_val {
+                best_val = data[j][ch];
+                best_idx = j;
+            }
+            j += 1;
+        }
+
+        events[i].sample = best_idx;
+        events[i].amplitude = libm::fabs(best_val);
+        i += 1;
+    }
+}
+
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
@@ -546,6 +905,74 @@ mod kani_proofs {
         let mut scratch = [0.0f64; 3];
         let result = estimate_noise_mad(&data, &mut scratch);
         assert!(result.is_finite(), "MAD result must be finite");
+    }
+
+    /// Prove that `deduplicate_events` never panics and output <= input.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn dedup_no_panic_and_count_invariant() {
+        let probe = ProbeLayout::<2>::linear(25.0);
+
+        let s0: usize = kani::any();
+        let s1: usize = kani::any();
+        let c0: usize = kani::any();
+        let c1: usize = kani::any();
+        let a0: f64 = kani::any();
+        let a1: f64 = kani::any();
+        let tr: usize = kani::any();
+
+        kani::assume(s0 <= 100 && s1 <= 100);
+        kani::assume(c0 < 2 && c1 < 2);
+        kani::assume(a0.is_finite() && a0 >= 0.0 && a0 <= 1e6);
+        kani::assume(a1.is_finite() && a1 >= 0.0 && a1 <= 1e6);
+        kani::assume(tr >= 1 && tr <= 10);
+
+        let mut events = [
+            MultiChannelEvent {
+                sample: s0,
+                channel: c0,
+                amplitude: a0,
+            },
+            MultiChannelEvent {
+                sample: s1,
+                channel: c1,
+                amplitude: a1,
+            },
+        ];
+        let result = deduplicate_events::<2>(&mut events, 2, &probe, 30.0, tr);
+        assert!(result <= 2, "dedup output must be <= input count");
+    }
+
+    /// Prove that `detect_spikes_multichannel` returns valid channel indices.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn multichannel_detect_valid_channels() {
+        let d0: f64 = kani::any();
+        let d1: f64 = kani::any();
+        let d2: f64 = kani::any();
+        let d3: f64 = kani::any();
+
+        kani::assume(d0.is_finite() && d0 >= -1e6 && d0 <= 1e6);
+        kani::assume(d1.is_finite() && d1 >= -1e6 && d1 <= 1e6);
+        kani::assume(d2.is_finite() && d2 >= -1e6 && d2 <= 1e6);
+        kani::assume(d3.is_finite() && d3 >= -1e6 && d3 <= 1e6);
+
+        let data = [[d0, d1], [d2, d3]];
+        let noise = [1.0, 1.0];
+        let mut output = [MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0,
+        }; 4];
+
+        let n = detect_spikes_multichannel::<2>(&data, 3.0, &noise, 1, &mut output);
+        assert!(n <= 4, "count must not exceed buffer length");
+        let mut i = 0;
+        while i < n {
+            assert!(output[i].channel < 2, "channel index must be < C");
+            assert!(output[i].sample < 2, "sample index must be < data length");
+            i += 1;
+        }
     }
 }
 
@@ -878,5 +1305,439 @@ mod tests {
 
         let (idx, _dist) = tm.match_waveform(&waveforms[0]).unwrap();
         assert_eq!(idx, 0, "Waveform should match its own template");
+    }
+
+    // ---- Multi-channel detection tests ----
+
+    fn make_empty_event() -> MultiChannelEvent {
+        MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0,
+        }
+    }
+
+    #[test]
+    fn test_multichannel_detect_known_locations() {
+        // 4 channels, 100 time steps
+        let mut data = [[0.0f64; 4]; 100];
+        // Place spikes at known locations on different channels
+        data[20][0] = -6.0;
+        data[50][1] = -8.0;
+        data[80][2] = -5.0;
+
+        let noise = [1.0, 1.0, 1.0, 1.0];
+        let mut events = [make_empty_event(); 16];
+        let n = detect_spikes_multichannel::<4>(&data, 4.0, &noise, 10, &mut events);
+
+        assert_eq!(n, 3, "Should detect 3 spikes, got {}", n);
+        // Events should be sorted by sample time
+        assert_eq!(events[0].sample, 20);
+        assert_eq!(events[0].channel, 0);
+        assert_eq!(events[1].sample, 50);
+        assert_eq!(events[1].channel, 1);
+        assert_eq!(events[2].sample, 80);
+        assert_eq!(events[2].channel, 2);
+    }
+
+    #[test]
+    fn test_multichannel_detect_no_spikes() {
+        // All noise below threshold
+        let data = [[0.5f64; 2]; 50];
+        let noise = [1.0, 1.0];
+        let mut events = [make_empty_event(); 8];
+        let n = detect_spikes_multichannel::<2>(&data, 4.0, &noise, 5, &mut events);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn test_multichannel_detect_single_channel() {
+        let mut data = [[0.0f64; 1]; 50];
+        data[10][0] = -7.0;
+        data[30][0] = -5.0;
+
+        let noise = [1.0];
+        let mut events = [make_empty_event(); 8];
+        let n = detect_spikes_multichannel::<1>(&data, 4.0, &noise, 5, &mut events);
+
+        assert_eq!(n, 2);
+        assert_eq!(events[0].sample, 10);
+        assert_eq!(events[1].sample, 30);
+    }
+
+    #[test]
+    fn test_multichannel_detect_simultaneous_all_channels() {
+        // Same spike appears on all channels at the same time
+        let mut data = [[0.0f64; 4]; 50];
+        for ch in 0..4 {
+            data[25][ch] = -10.0;
+        }
+
+        let noise = [1.0; 4];
+        let mut events = [make_empty_event(); 16];
+        let n = detect_spikes_multichannel::<4>(&data, 4.0, &noise, 5, &mut events);
+
+        assert_eq!(n, 4, "Should detect on all 4 channels");
+        // All at sample 25
+        for e in events.iter().take(n) {
+            assert_eq!(e.sample, 25);
+        }
+    }
+
+    #[test]
+    fn test_multichannel_detect_amplitude_correct() {
+        let mut data = [[0.0f64; 2]; 20];
+        data[10][0] = -7.5;
+
+        let noise = [1.0, 1.0];
+        let mut events = [make_empty_event(); 4];
+        let n = detect_spikes_multichannel::<2>(&data, 4.0, &noise, 5, &mut events);
+
+        assert_eq!(n, 1);
+        assert!((events[0].amplitude - 7.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_multichannel_detect_empty_data() {
+        let data: &[[f64; 2]] = &[];
+        let noise = [1.0, 1.0];
+        let mut events = [make_empty_event(); 4];
+        let n = detect_spikes_multichannel::<2>(data, 4.0, &noise, 5, &mut events);
+        assert_eq!(n, 0);
+    }
+
+    // ---- Deduplication tests ----
+
+    #[test]
+    fn test_dedup_removes_neighbor_duplicate() {
+        let probe = ProbeLayout::<4>::linear(25.0);
+
+        // Two events at similar times on adjacent channels
+        let mut events = [
+            MultiChannelEvent {
+                sample: 100,
+                channel: 1,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 102,
+                channel: 2,
+                amplitude: 7.0,
+            }, // larger, should win
+        ];
+
+        let n = deduplicate_events::<4>(&mut events, 2, &probe, 30.0, 5);
+        assert_eq!(n, 1, "Should keep only the larger event");
+        assert_eq!(events[0].channel, 2);
+        assert!((events[0].amplitude - 7.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_dedup_keeps_distant_events() {
+        let probe = ProbeLayout::<4>::linear(25.0);
+
+        // Two events far apart in time
+        let mut events = [
+            MultiChannelEvent {
+                sample: 100,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 500,
+                channel: 1,
+                amplitude: 6.0,
+            },
+        ];
+
+        let n = deduplicate_events::<4>(&mut events, 2, &probe, 30.0, 5);
+        assert_eq!(n, 2, "Temporally distant events should both be kept");
+    }
+
+    #[test]
+    fn test_dedup_keeps_spatially_distant() {
+        let probe = ProbeLayout::<8>::linear(50.0);
+
+        // Two events at similar times but on channels far apart
+        let mut events = [
+            MultiChannelEvent {
+                sample: 100,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 101,
+                channel: 7,
+                amplitude: 6.0,
+            }, // 350 um away
+        ];
+
+        let n = deduplicate_events::<8>(&mut events, 2, &probe, 60.0, 5);
+        assert_eq!(
+            n, 2,
+            "Spatially distant events should both be kept (dist = 350 um)"
+        );
+    }
+
+    #[test]
+    fn test_dedup_no_events() {
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let mut events = [make_empty_event(); 4];
+        let n = deduplicate_events::<4>(&mut events, 0, &probe, 30.0, 5);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn test_dedup_single_event() {
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let mut events = [MultiChannelEvent {
+            sample: 50,
+            channel: 0,
+            amplitude: 4.0,
+        }];
+        let n = deduplicate_events::<4>(&mut events, 1, &probe, 30.0, 5);
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn test_dedup_three_events_cluster() {
+        // Three channels pick up the same spike
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let mut events = [
+            MultiChannelEvent {
+                sample: 100,
+                channel: 0,
+                amplitude: 3.0,
+            },
+            MultiChannelEvent {
+                sample: 101,
+                channel: 1,
+                amplitude: 8.0,
+            }, // winner
+            MultiChannelEvent {
+                sample: 102,
+                channel: 2,
+                amplitude: 5.0,
+            },
+            make_empty_event(),
+        ];
+
+        let n = deduplicate_events::<4>(&mut events, 3, &probe, 30.0, 5);
+        assert_eq!(n, 1, "Only the largest amplitude event should survive");
+        assert_eq!(events[0].channel, 1);
+        assert!((events[0].amplitude - 8.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_dedup_preserves_order() {
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let mut events = [
+            MultiChannelEvent {
+                sample: 50,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 51,
+                channel: 1,
+                amplitude: 3.0,
+            }, // dup of first
+            MultiChannelEvent {
+                sample: 200,
+                channel: 2,
+                amplitude: 7.0,
+            },
+            MultiChannelEvent {
+                sample: 201,
+                channel: 3,
+                amplitude: 4.0,
+            }, // dup of third
+        ];
+
+        let n = deduplicate_events::<4>(&mut events, 4, &probe, 30.0, 5);
+        assert_eq!(n, 2);
+        assert_eq!(events[0].sample, 50);
+        assert_eq!(events[1].sample, 200);
+    }
+
+    // ---- Peak alignment tests ----
+
+    #[test]
+    fn test_align_to_peak_improves_timing() {
+        // The spike's true peak is at sample 12 but was detected at 10
+        let mut data = [[0.0f64; 2]; 30];
+        data[10][0] = -5.0;
+        data[11][0] = -7.0;
+        data[12][0] = -9.0; // true peak
+        data[13][0] = -6.0;
+
+        let mut events = [MultiChannelEvent {
+            sample: 10,
+            channel: 0,
+            amplitude: 5.0,
+        }];
+
+        align_to_peak::<2>(&data, &mut events, 1, 5);
+        assert_eq!(events[0].sample, 12, "Should align to true peak at 12");
+        assert!((events[0].amplitude - 9.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_align_to_peak_already_aligned() {
+        let mut data = [[0.0f64; 1]; 20];
+        data[10][0] = -8.0; // already the peak
+
+        let mut events = [MultiChannelEvent {
+            sample: 10,
+            channel: 0,
+            amplitude: 8.0,
+        }];
+
+        align_to_peak::<1>(&data, &mut events, 1, 5);
+        assert_eq!(events[0].sample, 10, "Already aligned, should not move");
+    }
+
+    #[test]
+    fn test_align_to_peak_boundary_start() {
+        // Event near the start of data
+        let mut data = [[0.0f64; 1]; 20];
+        data[0][0] = -10.0;
+        data[2][0] = -3.0;
+
+        let mut events = [MultiChannelEvent {
+            sample: 2,
+            channel: 0,
+            amplitude: 3.0,
+        }];
+
+        align_to_peak::<1>(&data, &mut events, 1, 5);
+        assert_eq!(events[0].sample, 0, "Should find peak at boundary");
+        assert!((events[0].amplitude - 10.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_align_to_peak_boundary_end() {
+        // Event near the end of data
+        let mut data = [[0.0f64; 1]; 20];
+        data[18][0] = -4.0;
+        data[19][0] = -9.0; // peak at last sample
+
+        let mut events = [MultiChannelEvent {
+            sample: 18,
+            channel: 0,
+            amplitude: 4.0,
+        }];
+
+        align_to_peak::<1>(&data, &mut events, 1, 5);
+        assert_eq!(events[0].sample, 19);
+        assert!((events[0].amplitude - 9.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_align_no_events() {
+        let data = [[0.0f64; 2]; 20];
+        let mut events = [make_empty_event(); 4];
+        align_to_peak::<2>(&data, &mut events, 0, 5);
+        // Should be a no-op; no panic
+    }
+
+    #[test]
+    fn test_align_multichannel_correct_channel() {
+        // Spikes on different channels should align to peaks on their own channel
+        let mut data = [[0.0f64; 2]; 30];
+        data[10][0] = -3.0;
+        data[12][0] = -8.0; // true peak ch0
+        data[10][1] = -2.0;
+        data[11][1] = -6.0; // true peak ch1
+
+        let mut events = [
+            MultiChannelEvent {
+                sample: 10,
+                channel: 0,
+                amplitude: 3.0,
+            },
+            MultiChannelEvent {
+                sample: 10,
+                channel: 1,
+                amplitude: 2.0,
+            },
+        ];
+
+        align_to_peak::<2>(&data, &mut events, 2, 5);
+        assert_eq!(events[0].sample, 12, "Ch0 peak at 12");
+        assert_eq!(events[1].sample, 11, "Ch1 peak at 11");
+    }
+
+    // ---- End-to-end multi-channel test ----
+
+    #[test]
+    fn test_multichannel_end_to_end() {
+        use crate::probe::ProbeLayout;
+
+        // 4-channel linear probe, 25 um pitch
+        let probe = ProbeLayout::<4>::linear(25.0);
+
+        // Generate 1000-sample recording with noise and 2 distinct spikes
+        let mut rng = Rng::new(77);
+        let n_samples = 1000;
+        let mut data = vec![[0.0f64; 4]; n_samples];
+
+        // Add noise
+        for t in 0..n_samples {
+            for ch in 0..4 {
+                data[t][ch] = rng.gaussian(0.0, 1.0);
+            }
+        }
+
+        // Spike 1 at t=200, largest on channel 1, visible on channels 0,2
+        data[200][0] += -6.0;
+        data[200][1] += -10.0; // peak channel
+        data[200][2] += -5.0;
+
+        // Spike 2 at t=600, largest on channel 3, visible on channel 2
+        data[600][2] += -4.5;
+        data[600][3] += -9.0; // peak channel
+
+        // Step 1: estimate per-channel noise
+        let noise = [1.0f64; 4]; // We know it's unit gaussian
+
+        // Step 2: detect multi-channel
+        let mut events = [make_empty_event(); 64];
+        let n_det = detect_spikes_multichannel::<4>(&data, 4.0, &noise, 10, &mut events);
+        assert!(
+            n_det >= 4,
+            "Should detect spike on at least 4 channel-instances, got {}",
+            n_det
+        );
+
+        // Step 3: align to peak
+        align_to_peak::<4>(&data, &mut events, n_det, 3);
+
+        // Step 4: deduplicate
+        let n_dedup = deduplicate_events::<4>(&mut events, n_det, &probe, 30.0, 5);
+
+        // After dedup, we should have roughly 2 events (one per true spike)
+        // plus possibly some noise-triggered events
+        assert!(
+            n_dedup >= 2,
+            "Should retain at least 2 events after dedup, got {}",
+            n_dedup
+        );
+        assert!(
+            n_dedup < n_det,
+            "Dedup should remove some events: {} -> {}",
+            n_det,
+            n_dedup
+        );
+
+        // Verify the two main spikes are present (within alignment window)
+        let spike1_found = events[..n_dedup]
+            .iter()
+            .any(|e| e.sample >= 197 && e.sample <= 203);
+        let spike2_found = events[..n_dedup]
+            .iter()
+            .any(|e| e.sample >= 597 && e.sample <= 603);
+        assert!(spike1_found, "Spike 1 near t=200 should be detected");
+        assert!(spike2_found, "Spike 2 near t=600 should be detected");
     }
 }

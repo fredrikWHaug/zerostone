@@ -163,8 +163,9 @@ pub use riemannian::{
 pub use rms::WindowedRms;
 pub use router::ChannelRouter;
 pub use spike_sort::{
-    detect_spikes, estimate_noise_mad, SortError, SpikeCluster, TemplateMatch, WaveformExtractor,
-    WaveformPca,
+    align_to_peak, deduplicate_events, detect_spikes, detect_spikes_multichannel,
+    estimate_noise_mad, MultiChannelEvent, SortError, SpikeCluster, TemplateMatch,
+    WaveformExtractor, WaveformPca,
 };
 pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;
