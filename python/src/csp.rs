@@ -15,6 +15,7 @@ use zerostone::{AdaptiveCsp as ZsAdaptiveCsp, UpdateConfig as ZsUpdateConfig};
 /// Enum dispatch for different CSP configurations.
 /// Format: Channels_Filters (C channels, K filters)
 /// M = C*C, F = K*C
+#[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
 enum AdaptiveCspInner {
     // 4 channels (common for basic motor imagery)
     C4K2(ZsAdaptiveCsp<4, 16, 2, 8>),
@@ -37,8 +38,8 @@ enum AdaptiveCspInner {
 
     // 64 channels (high-density EEG)
     C64K2(ZsAdaptiveCsp<64, 4096, 2, 128>),
-    C64K4(ZsAdaptiveCsp<64, 4096, 4, 256>),
-    C64K6(ZsAdaptiveCsp<64, 4096, 6, 384>),
+    C64K4(Box<ZsAdaptiveCsp<64, 4096, 4, 256>>),
+    C64K6(Box<ZsAdaptiveCsp<64, 4096, 6, 384>>),
 }
 
 /// Common Spatial Patterns (CSP) for two-class motor imagery BCI.
@@ -128,8 +129,8 @@ impl AdaptiveCsp {
 
             // 64 channels
             (64, 2) => AdaptiveCspInner::C64K2(ZsAdaptiveCsp::new(config)),
-            (64, 4) => AdaptiveCspInner::C64K4(ZsAdaptiveCsp::new(config)),
-            (64, 6) => AdaptiveCspInner::C64K6(ZsAdaptiveCsp::new(config)),
+            (64, 4) => AdaptiveCspInner::C64K4(Box::new(ZsAdaptiveCsp::new(config))),
+            (64, 6) => AdaptiveCspInner::C64K6(Box::new(ZsAdaptiveCsp::new(config))),
 
             _ => {
                 return Err(PyValueError::new_err(format!(

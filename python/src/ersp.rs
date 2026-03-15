@@ -41,6 +41,7 @@ use crate::spectral::parse_window_type;
 ///     >>> assert ersp.shape[0] == 129  # n_freqs = 256/2 + 1
 #[pyfunction]
 #[pyo3(signature = (epochs, sample_rate, baseline_window, fft_size=256, hop_size=None, window="hann", mode="db", single_trial=false))]
+#[allow(clippy::too_many_arguments)] // PyO3 function with multiple user-facing parameters
 fn compute_ersp<'py>(
     py: Python<'py>,
     epochs: PyReadonlyArray2<f32>,
@@ -168,7 +169,7 @@ fn compute_ersp<'py>(
                 bl_end_frame,
                 bl_mode,
             )
-            .map_err(|e| ersp_error_to_py(e))?;
+            .map_err(ersp_error_to_py)?;
         }
 
         // Reshape to (n_epochs, n_freqs, n_frames) -- transpose each epoch from (frames, freqs)
@@ -190,7 +191,7 @@ fn compute_ersp<'py>(
         // Average across epochs
         let mut avg_power = vec![0.0f64; n_frames * n_freqs];
         zs_ersp::epoch_average(&all_power, n_epochs, n_frames, n_freqs, &mut avg_power)
-            .map_err(|e| ersp_error_to_py(e))?;
+            .map_err(ersp_error_to_py)?;
 
         // Baseline normalize
         zs_ersp::baseline_normalize(
@@ -201,7 +202,7 @@ fn compute_ersp<'py>(
             bl_end_frame,
             bl_mode,
         )
-        .map_err(|e| ersp_error_to_py(e))?;
+        .map_err(ersp_error_to_py)?;
 
         // Transpose from (n_frames, n_freqs) to (n_freqs, n_frames) for output
         let mut result = vec![0.0f64; n_freqs * n_frames];
@@ -271,7 +272,7 @@ fn baseline_normalize<'py>(
         baseline_end_frame,
         bl_mode,
     )
-    .map_err(|e| ersp_error_to_py(e))?;
+    .map_err(ersp_error_to_py)?;
 
     let result = Array2::from_shape_vec((n_frames, n_freqs), data)
         .map_err(|e| PyValueError::new_err(format!("reshape error: {}", e)))?;

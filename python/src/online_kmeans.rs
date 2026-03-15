@@ -131,6 +131,7 @@ make_kmeans_inner!(KM_D8K8, 8, 8);
 make_kmeans_inner!(KM_D8K16, 8, 16);
 make_kmeans_inner!(KM_D8K32, 8, 32);
 
+#[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
 enum KMeansInner {
     D2K4(KM_D2K4),
     D2K8(KM_D2K8),
@@ -147,7 +148,7 @@ enum KMeansInner {
     D8K4(KM_D8K4),
     D8K8(KM_D8K8),
     D8K16(KM_D8K16),
-    D8K32(KM_D8K32),
+    D8K32(Box<KM_D8K32>),
 }
 
 /// Online k-means clustering for spike sorting.
@@ -220,7 +221,16 @@ impl OnlineKMeans {
             (8, 4) => make_inner!(D8K4, KM_D8K4),
             (8, 8) => make_inner!(D8K8, KM_D8K8),
             (8, 16) => make_inner!(D8K16, KM_D8K16),
-            (8, 32) => make_inner!(D8K32, KM_D8K32),
+            (8, 32) => {
+                let mut km = KM_D8K32::new(max_count);
+                if let Some(t) = create_threshold {
+                    km.set_create_threshold(t);
+                }
+                if let Some(t) = merge_threshold {
+                    km.set_merge_threshold(t);
+                }
+                KMeansInner::D8K32(Box::new(km))
+            }
             _ => {
                 return Err(PyValueError::new_err(
                     "Unsupported (dimensions, max_clusters) combination. \
@@ -296,6 +306,7 @@ impl OnlineKMeans {
     ///
     /// Returns:
     ///     tuple: (labels, distances) - 1D int and 1D float arrays of length n_points.
+    #[allow(clippy::type_complexity)] // PyO3 return type with two numpy arrays
     fn update_batch<'py>(
         &mut self,
         py: Python<'py>,
@@ -355,6 +366,7 @@ impl OnlineKMeans {
     ///
     /// Returns:
     ///     tuple: (labels, distances) - 1D int and 1D float arrays of length n_points.
+    #[allow(clippy::type_complexity)] // PyO3 return type with two numpy arrays
     fn predict<'py>(
         &self,
         py: Python<'py>,

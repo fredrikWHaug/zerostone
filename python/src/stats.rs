@@ -133,12 +133,13 @@ impl OnlineStats {
 
 // --- OnlineCov enum dispatch ---
 
+#[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
 enum OnlineCovInner {
     C4(ZsOnlineCov<4, 16>),
     C8(ZsOnlineCov<8, 64>),
     C16(ZsOnlineCov<16, 256>),
-    C32(ZsOnlineCov<32, 1024>),
-    C64(ZsOnlineCov<64, 4096>),
+    C32(Box<ZsOnlineCov<32, 1024>>),
+    C64(Box<ZsOnlineCov<64, 4096>>),
 }
 
 /// Online covariance matrix estimator.
@@ -176,8 +177,8 @@ impl OnlineCov {
             4 => OnlineCovInner::C4(ZsOnlineCov::new()),
             8 => OnlineCovInner::C8(ZsOnlineCov::new()),
             16 => OnlineCovInner::C16(ZsOnlineCov::new()),
-            32 => OnlineCovInner::C32(ZsOnlineCov::new()),
-            64 => OnlineCovInner::C64(ZsOnlineCov::new()),
+            32 => OnlineCovInner::C32(Box::new(ZsOnlineCov::new())),
+            64 => OnlineCovInner::C64(Box::new(ZsOnlineCov::new())),
             _ => {
                 return Err(PyValueError::new_err(
                     "channels must be 4, 8, 16, 32, or 64",

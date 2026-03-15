@@ -50,7 +50,7 @@ fn modulation_index(
     if p_slice.is_empty() {
         return Err(PyValueError::new_err("Arrays must not be empty"));
     }
-    if n_bins < 2 || n_bins > 64 {
+    if !(2..=64).contains(&n_bins) {
         return Err(PyValueError::new_err(format!(
             "n_bins must be in [2, 64], got {}",
             n_bins
@@ -122,6 +122,7 @@ fn mean_vector_length(
 ///     >>> assert len(centers) == 18
 #[pyfunction]
 #[pyo3(signature = (phase, amplitude, n_bins=18))]
+#[allow(clippy::type_complexity)] // PyO3 return type with two numpy arrays
 fn phase_amplitude_distribution<'py>(
     py: Python<'py>,
     phase: PyReadonlyArray1<f32>,
@@ -144,7 +145,7 @@ fn phase_amplitude_distribution<'py>(
     if p_slice.is_empty() {
         return Err(PyValueError::new_err("Arrays must not be empty"));
     }
-    if n_bins < 2 || n_bins > 64 {
+    if !(2..=64).contains(&n_bins) {
         return Err(PyValueError::new_err(format!(
             "n_bins must be in [2, 64], got {}",
             n_bins
@@ -218,7 +219,7 @@ fn pac_comodulogram<'py>(
             "phase_freqs and amp_freqs must not be empty",
         ));
     }
-    if n_bins < 2 || n_bins > 64 {
+    if !(2..=64).contains(&n_bins) {
         return Err(PyValueError::new_err(format!(
             "n_bins must be in [2, 64], got {}",
             n_bins

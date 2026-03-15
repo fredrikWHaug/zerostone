@@ -245,12 +245,13 @@ impl LinearDrift {
 
 // --- OffsetBuffer enum dispatch ---
 
+#[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
 enum OffsetBufferInner {
     N8(ZsOffsetBuffer<8>),
     N16(ZsOffsetBuffer<16>),
     N32(ZsOffsetBuffer<32>),
-    N64(ZsOffsetBuffer<64>),
-    N128(ZsOffsetBuffer<128>),
+    N64(Box<ZsOffsetBuffer<64>>),
+    N128(Box<ZsOffsetBuffer<128>>),
 }
 
 /// Circular buffer of clock offset measurements for filtering.
@@ -286,8 +287,8 @@ impl OffsetBuffer {
             8 => OffsetBufferInner::N8(ZsOffsetBuffer::new()),
             16 => OffsetBufferInner::N16(ZsOffsetBuffer::new()),
             32 => OffsetBufferInner::N32(ZsOffsetBuffer::new()),
-            64 => OffsetBufferInner::N64(ZsOffsetBuffer::new()),
-            128 => OffsetBufferInner::N128(ZsOffsetBuffer::new()),
+            64 => OffsetBufferInner::N64(Box::new(ZsOffsetBuffer::new())),
+            128 => OffsetBufferInner::N128(Box::new(ZsOffsetBuffer::new())),
             _ => {
                 return Err(PyValueError::new_err(
                     "capacity must be 8, 16, 32, 64, or 128",

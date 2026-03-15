@@ -37,6 +37,7 @@ use crate::spectral::parse_window_type;
 ///     >>> assert coh[10] > 0.99  # identical signals
 #[pyfunction]
 #[pyo3(signature = (signal_a, signal_b, fft_size, window = "hann"))]
+#[allow(clippy::type_complexity)] // PyO3 return type with two numpy arrays
 fn coherence<'py>(
     py: Python<'py>,
     signal_a: PyReadonlyArray1<f32>,
@@ -130,6 +131,7 @@ fn coherence<'py>(
 ///     >>> assert coh[10] > 0.99
 #[pyfunction]
 #[pyo3(signature = (signal_a, signal_b, fft_size, sample_rate, overlap = 0.5, window = "hann"))]
+#[allow(clippy::type_complexity)] // PyO3 return type with two numpy arrays
 fn spectral_coherence<'py>(
     py: Python<'py>,
     signal_a: PyReadonlyArray1<f32>,

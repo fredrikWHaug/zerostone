@@ -99,6 +99,7 @@ make_kalman_inner!(KalmanS6O6, 6, 6, 36, 36, 36);
 make_kalman_inner!(KalmanS8O4, 8, 4, 64, 16, 32);
 make_kalman_inner!(KalmanS8O8, 8, 8, 64, 64, 64);
 
+#[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
 enum KalmanInner {
     S2O1(KalmanS2O1),
     S2O2(KalmanS2O2),
@@ -107,7 +108,7 @@ enum KalmanInner {
     S6O3(KalmanS6O3),
     S6O6(KalmanS6O6),
     S8O4(KalmanS8O4),
-    S8O8(KalmanS8O8),
+    S8O8(Box<KalmanS8O8>),
 }
 
 /// Kalman filter for state estimation and decoder output smoothing.
@@ -260,9 +261,9 @@ impl KalmanFilter {
             (8, 4) => KalmanInner::S8O4(KalmanS8O4::new(
                 f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec,
             )),
-            (8, 8) => KalmanInner::S8O8(KalmanS8O8::new(
+            (8, 8) => KalmanInner::S8O8(Box::new(KalmanS8O8::new(
                 f_flat, h_flat, q_flat, r_flat, &x0_vec, &p0_vec,
-            )),
+            ))),
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "Unsupported (state_dim, obs_dim) = ({}, {}). Supported: (2,1), (2,2), (4,2), (4,4), (6,3), (6,6), (8,4), (8,8)",

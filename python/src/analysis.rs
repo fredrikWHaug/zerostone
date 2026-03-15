@@ -363,7 +363,7 @@ enum WindowedRmsInner {
     C64W16(ZsWindowedRms<64, 16>),
     C64W32(ZsWindowedRms<64, 32>),
     C64W64(ZsWindowedRms<64, 64>),
-    C64W128(ZsWindowedRms<64, 128>),
+    C64W128(Box<ZsWindowedRms<64, 128>>),
 }
 
 /// Windowed RMS (root mean square) tracker.
@@ -430,7 +430,7 @@ impl WindowedRms {
             (64, 16) => WindowedRmsInner::C64W16(ZsWindowedRms::new()),
             (64, 32) => WindowedRmsInner::C64W32(ZsWindowedRms::new()),
             (64, 64) => WindowedRmsInner::C64W64(ZsWindowedRms::new()),
-            (64, 128) => WindowedRmsInner::C64W128(ZsWindowedRms::new()),
+            (64, 128) => WindowedRmsInner::C64W128(Box::new(ZsWindowedRms::new())),
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "Unsupported channels/window_size: ({}, {}). \

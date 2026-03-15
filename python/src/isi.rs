@@ -50,6 +50,7 @@ fn local_variation(spike_times: PyReadonlyArray1<f64>) -> PyResult<f64> {
 ///     tuple: (bins, overflow, mean, std, cv) where bins is a 1D uint64 array.
 #[pyfunction]
 #[pyo3(signature = (spike_times, bin_width, n_bins=100))]
+#[allow(clippy::type_complexity)] // PyO3 return type with numpy array and scalars
 fn isi_histogram<'py>(
     py: Python<'py>,
     spike_times: PyReadonlyArray1<f64>,

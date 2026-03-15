@@ -77,13 +77,14 @@ make_pca_inner!(PcaW48K5, 48, 5, 2304);
 make_pca_inner!(PcaW64K3, 64, 3, 4096);
 make_pca_inner!(PcaW64K5, 64, 5, 4096);
 
+#[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
 enum PcaInner {
     W32K3(PcaW32K3),
     W32K5(PcaW32K5),
     W48K3(PcaW48K3),
-    W48K5(PcaW48K5),
+    W48K5(Box<PcaW48K5>),
     W64K3(PcaW64K3),
-    W64K5(PcaW64K5),
+    W64K5(Box<PcaW64K5>),
 }
 
 /// PCA for spike waveform dimensionality reduction.
@@ -123,9 +124,9 @@ impl WaveformPca {
             (32, 3) => PcaInner::W32K3(PcaW32K3::new()),
             (32, 5) => PcaInner::W32K5(PcaW32K5::new()),
             (48, 3) => PcaInner::W48K3(PcaW48K3::new()),
-            (48, 5) => PcaInner::W48K5(PcaW48K5::new()),
+            (48, 5) => PcaInner::W48K5(Box::new(PcaW48K5::new())),
             (64, 3) => PcaInner::W64K3(PcaW64K3::new()),
-            (64, 5) => PcaInner::W64K5(PcaW64K5::new()),
+            (64, 5) => PcaInner::W64K5(Box::new(PcaW64K5::new())),
             _ => {
                 return Err(PyValueError::new_err(
                     "window must be 32, 48, or 64; n_components must be 3 or 5",
@@ -369,7 +370,7 @@ enum MatcherInner {
     C1W32N16(MatchC1W32N16),
     C1W64N4(MatchC1W64N4),
     C1W64N8(MatchC1W64N8),
-    C1W64N16(MatchC1W64N16),
+    C1W64N16(Box<MatchC1W64N16>),
     C4W32N8(MatchC4W32N8),
     C4W64N8(MatchC4W64N8),
     C8W32N8(MatchC8W32N8),
@@ -416,7 +417,7 @@ impl TemplateMatcher {
             (1, 32, 16) => MatcherInner::C1W32N16(MatchC1W32N16::new()),
             (1, 64, 4) => MatcherInner::C1W64N4(MatchC1W64N4::new()),
             (1, 64, 8) => MatcherInner::C1W64N8(MatchC1W64N8::new()),
-            (1, 64, 16) => MatcherInner::C1W64N16(MatchC1W64N16::new()),
+            (1, 64, 16) => MatcherInner::C1W64N16(Box::new(MatchC1W64N16::new())),
             (4, 32, 8) => MatcherInner::C4W32N8(MatchC4W32N8::new()),
             (4, 64, 8) => MatcherInner::C4W64N8(MatchC4W64N8::new()),
             (8, 32, 8) => MatcherInner::C8W32N8(MatchC8W32N8::new()),
@@ -482,6 +483,7 @@ impl TemplateMatcher {
     /// Returns:
     ///     tuple: (labels, distances) - 1D int and 1D float arrays of length n_spikes.
     #[pyo3(signature = (waveforms, method="euclidean"))]
+    #[allow(clippy::type_complexity)] // PyO3 return type with two numpy arrays
     fn match_waveforms<'py>(
         &self,
         py: Python<'py>,

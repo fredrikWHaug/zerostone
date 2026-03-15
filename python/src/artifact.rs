@@ -385,13 +385,14 @@ impl ArtifactDetector {
 // ============================================================================
 
 /// Internal enum for handling different channel counts.
+#[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
 enum ZscoreArtifactInner {
     C1(ZsZscoreArtifact<1>),
     C4(ZsZscoreArtifact<4>),
     C8(ZsZscoreArtifact<8>),
     C16(ZsZscoreArtifact<16>),
-    C32(ZsZscoreArtifact<32>),
-    C64(ZsZscoreArtifact<64>),
+    C32(Box<ZsZscoreArtifact<32>>),
+    C64(Box<ZsZscoreArtifact<64>>),
 }
 
 /// Adaptive artifact detection using z-score computation.
@@ -446,8 +447,8 @@ impl ZscoreArtifact {
             4 => ZscoreArtifactInner::C4(ZsZscoreArtifact::new(threshold, min_samples)),
             8 => ZscoreArtifactInner::C8(ZsZscoreArtifact::new(threshold, min_samples)),
             16 => ZscoreArtifactInner::C16(ZsZscoreArtifact::new(threshold, min_samples)),
-            32 => ZscoreArtifactInner::C32(ZsZscoreArtifact::new(threshold, min_samples)),
-            64 => ZscoreArtifactInner::C64(ZsZscoreArtifact::new(threshold, min_samples)),
+            32 => ZscoreArtifactInner::C32(Box::new(ZsZscoreArtifact::new(threshold, min_samples))),
+            64 => ZscoreArtifactInner::C64(Box::new(ZsZscoreArtifact::new(threshold, min_samples))),
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "channels must be 1, 4, 8, 16, 32, or 64, got {}",

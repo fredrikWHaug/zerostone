@@ -12,13 +12,14 @@ use zerostone::StreamingPercentile as ZsStreamingPercentile;
 // ============================================================================
 
 /// Internal enum for handling different channel counts.
+#[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
 enum StreamingPercentileInner {
     C1(ZsStreamingPercentile<1>),
     C4(ZsStreamingPercentile<4>),
     C8(ZsStreamingPercentile<8>),
     C16(ZsStreamingPercentile<16>),
-    C32(ZsStreamingPercentile<32>),
-    C64(ZsStreamingPercentile<64>),
+    C32(Box<ZsStreamingPercentile<32>>),
+    C64(Box<ZsStreamingPercentile<64>>),
 }
 
 /// Streaming percentile estimator using the P² algorithm.
@@ -79,8 +80,8 @@ impl StreamingPercentile {
             4 => StreamingPercentileInner::C4(ZsStreamingPercentile::new(percentile)),
             8 => StreamingPercentileInner::C8(ZsStreamingPercentile::new(percentile)),
             16 => StreamingPercentileInner::C16(ZsStreamingPercentile::new(percentile)),
-            32 => StreamingPercentileInner::C32(ZsStreamingPercentile::new(percentile)),
-            64 => StreamingPercentileInner::C64(ZsStreamingPercentile::new(percentile)),
+            32 => StreamingPercentileInner::C32(Box::new(ZsStreamingPercentile::new(percentile))),
+            64 => StreamingPercentileInner::C64(Box::new(ZsStreamingPercentile::new(percentile))),
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "channels must be 1, 4, 8, 16, 32, or 64, got {}",
