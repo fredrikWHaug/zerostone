@@ -25,6 +25,8 @@ mod online_kmeans;
 mod pac;
 mod percentile;
 mod pipeline;
+mod probe;
+mod quality;
 mod resampling;
 mod riemannian;
 mod spatial;
@@ -469,6 +471,12 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // ERSP
     ersp::register(m)?;
+
+    // Probe geometry
+    probe::register(m)?;
+
+    // Cluster quality metrics
+    quality::register(m)?;
 
     // Window functions
     window::register(m)?;
