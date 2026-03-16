@@ -393,6 +393,65 @@ mod kani_proofs {
         let n = sub.peel(&mut data, &times, 1, pre, &mut results);
         assert!(n <= 4, "result count must not exceed buffer");
     }
+
+    /// Prove that `add_template` never panics and returns valid index or error.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn add_template_no_panic() {
+        let mut sub = TemplateSubtractor::<4, 2>::new(10);
+
+        let t0: f64 = kani::any();
+        let t1: f64 = kani::any();
+        let t2: f64 = kani::any();
+        let t3: f64 = kani::any();
+        let amp_min: f64 = kani::any();
+        let amp_max: f64 = kani::any();
+
+        kani::assume(t0.is_finite() && t0 >= -10.0 && t0 <= 10.0);
+        kani::assume(t1.is_finite() && t1 >= -10.0 && t1 <= 10.0);
+        kani::assume(t2.is_finite() && t2 >= -10.0 && t2 <= 10.0);
+        kani::assume(t3.is_finite() && t3 >= -10.0 && t3 <= 10.0);
+        kani::assume(amp_min.is_finite() && amp_min >= 0.0 && amp_min <= 10.0);
+        kani::assume(amp_max.is_finite() && amp_max >= amp_min && amp_max <= 20.0);
+
+        let template = [t0, t1, t2, t3];
+        match sub.add_template(&template, amp_min, amp_max) {
+            Ok(idx) => assert!(idx < 2, "index must be within N"),
+            Err(_) => {} // TemplateFull is valid after N adds
+        }
+    }
+
+    /// Prove that `peel` output count never exceeds the output buffer length.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn peel_output_bounded() {
+        let mut sub = TemplateSubtractor::<4, 2>::new(3);
+        let _ = sub.add_template(&[-1.0, -3.0, -2.0, 0.0], 0.1, 5.0);
+
+        let d0: f64 = kani::any();
+        let d1: f64 = kani::any();
+        let d2: f64 = kani::any();
+        let d3: f64 = kani::any();
+        let d4: f64 = kani::any();
+        let d5: f64 = kani::any();
+
+        kani::assume(d0.is_finite() && d0 >= -100.0 && d0 <= 100.0);
+        kani::assume(d1.is_finite() && d1 >= -100.0 && d1 <= 100.0);
+        kani::assume(d2.is_finite() && d2 >= -100.0 && d2 <= 100.0);
+        kani::assume(d3.is_finite() && d3 >= -100.0 && d3 <= 100.0);
+        kani::assume(d4.is_finite() && d4 >= -100.0 && d4 <= 100.0);
+        kani::assume(d5.is_finite() && d5 >= -100.0 && d5 <= 100.0);
+
+        let mut data = [d0, d1, d2, d3, d4, d5];
+        let times = [2usize];
+        let mut results = [PeelResult {
+            sample: 0,
+            template_id: 0,
+            amplitude: 0.0,
+        }; 2];
+        let n = sub.peel(&mut data, &times, 1, 1, &mut results);
+        assert!(n <= 2, "output count must not exceed buffer length");
+    }
 }
 
 #[cfg(test)]
