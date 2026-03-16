@@ -1142,6 +1142,70 @@ mod kani_proofs {
             i += 1;
         }
     }
+
+    /// Prove that `align_to_peak` never panics for valid channel indices.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn align_to_peak_no_panic() {
+        let d0: f64 = kani::any();
+        let d1: f64 = kani::any();
+        let d2: f64 = kani::any();
+        let d3: f64 = kani::any();
+
+        kani::assume(d0.is_finite() && d0 >= -1e6 && d0 <= 1e6);
+        kani::assume(d1.is_finite() && d1 >= -1e6 && d1 <= 1e6);
+        kani::assume(d2.is_finite() && d2 >= -1e6 && d2 <= 1e6);
+        kani::assume(d3.is_finite() && d3 >= -1e6 && d3 <= 1e6);
+
+        let data = [[d0, d1], [d2, d3]];
+        let hw: usize = kani::any();
+        kani::assume(hw <= 1);
+
+        let mut events = [MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 5.0,
+        }];
+
+        align_to_peak::<2>(&data, &mut events, 1, hw);
+        assert!(events[0].sample < 2, "aligned sample must be in range");
+    }
+
+    /// Prove that `extract_peak_channel` output count never exceeds buffer.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn extract_peak_channel_bounded() {
+        let d0: f64 = kani::any();
+        let d1: f64 = kani::any();
+        let d2: f64 = kani::any();
+        let d3: f64 = kani::any();
+        let d4: f64 = kani::any();
+        let d5: f64 = kani::any();
+        let d6: f64 = kani::any();
+        let d7: f64 = kani::any();
+
+        kani::assume(d0.is_finite() && d0 >= -1e6 && d0 <= 1e6);
+        kani::assume(d1.is_finite() && d1 >= -1e6 && d1 <= 1e6);
+        kani::assume(d2.is_finite() && d2 >= -1e6 && d2 <= 1e6);
+        kani::assume(d3.is_finite() && d3 >= -1e6 && d3 <= 1e6);
+        kani::assume(d4.is_finite() && d4 >= -1e6 && d4 <= 1e6);
+        kani::assume(d5.is_finite() && d5 >= -1e6 && d5 <= 1e6);
+        kani::assume(d6.is_finite() && d6 >= -1e6 && d6 <= 1e6);
+        kani::assume(d7.is_finite() && d7 >= -1e6 && d7 <= 1e6);
+
+        let data = [[d0, d1], [d2, d3], [d4, d5], [d6, d7]];
+        let pre: usize = kani::any();
+        kani::assume(pre <= 2);
+
+        let events = [MultiChannelEvent {
+            sample: 1,
+            channel: 0,
+            amplitude: 5.0,
+        }];
+        let mut output = [[0.0f64; 4]; 2];
+        let n = extract_peak_channel::<2, 4>(&data, &events, 1, pre, &mut output);
+        assert!(n <= 2, "extracted count must not exceed output buffer");
+    }
 }
 
 #[cfg(test)]
