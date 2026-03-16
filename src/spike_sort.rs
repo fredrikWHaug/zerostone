@@ -863,6 +863,174 @@ pub fn align_to_peak<const C: usize>(
     }
 }
 
+/// Extract multi-channel waveform snippets around detected events.
+///
+/// For each event, extracts a W-sample window from ALL C channels centered
+/// on the event's sample time. Events too close to data edges are skipped.
+///
+/// # Type Parameters
+///
+/// * `C` - Number of channels
+/// * `W` - Window length in samples
+///
+/// # Arguments
+///
+/// * `data` - Multi-channel data as `&[[f64; C]]` (time x channels)
+/// * `events` - Detected multi-channel events
+/// * `n_events` - Number of valid events in `events`
+/// * `pre_samples` - Samples before the event's sample index
+/// * `output` - Buffer for extracted waveforms, `[[[f64; W]; C]]`
+///
+/// # Returns
+///
+/// Number of waveforms successfully extracted.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::spike_sort::{extract_multichannel, MultiChannelEvent};
+///
+/// let mut data = [[0.0f64; 2]; 20];
+/// data[10][0] = -5.0;
+/// data[10][1] = -3.0;
+///
+/// let events = [MultiChannelEvent { sample: 10, channel: 0, amplitude: 5.0 }];
+/// let mut output = [[[0.0f64; 4]; 2]; 4];
+/// let n = extract_multichannel::<2, 4>(&data, &events, 1, 1, &mut output);
+/// assert_eq!(n, 1);
+/// assert!((output[0][0][1] - (-5.0)).abs() < 1e-12); // channel 0, sample at peak
+/// assert!((output[0][1][1] - (-3.0)).abs() < 1e-12); // channel 1, same time
+/// ```
+pub fn extract_multichannel<const C: usize, const W: usize>(
+    data: &[[f64; C]],
+    events: &[MultiChannelEvent],
+    n_events: usize,
+    pre_samples: usize,
+    output: &mut [[[f64; W]; C]],
+) -> usize {
+    let t_len = data.len();
+    let n = if n_events < events.len() {
+        n_events
+    } else {
+        events.len()
+    };
+    let mut count = 0;
+
+    let mut i = 0;
+    while i < n {
+        if count >= output.len() {
+            break;
+        }
+        let t = events[i].sample;
+        if t < pre_samples {
+            i += 1;
+            continue;
+        }
+        let start = t - pre_samples;
+        let end = start + W;
+        if end > t_len {
+            i += 1;
+            continue;
+        }
+
+        // Copy all channels for this window
+        let mut ch = 0;
+        while ch < C {
+            let mut w = 0;
+            while w < W {
+                output[count][ch][w] = data[start + w][ch];
+                w += 1;
+            }
+            ch += 1;
+        }
+        count += 1;
+        i += 1;
+    }
+    count
+}
+
+/// Extract waveforms from each event's peak channel only.
+///
+/// Simpler than full multi-channel extraction. Returns single-channel
+/// waveforms suitable for PCA with the existing [`WaveformPca`].
+///
+/// # Type Parameters
+///
+/// * `C` - Number of channels in the data
+/// * `W` - Window length in samples
+///
+/// # Arguments
+///
+/// * `data` - Multi-channel data as `&[[f64; C]]` (time x channels)
+/// * `events` - Detected multi-channel events (each has a `.channel` field)
+/// * `n_events` - Number of valid events in `events`
+/// * `pre_samples` - Samples before the event's sample index
+/// * `output` - Buffer for extracted single-channel waveforms
+///
+/// # Returns
+///
+/// Number of waveforms successfully extracted.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::spike_sort::{extract_peak_channel, MultiChannelEvent};
+///
+/// let mut data = [[0.0f64; 3]; 20];
+/// data[8][1] = -7.0;
+/// data[9][1] = -10.0;
+/// data[10][1] = -6.0;
+///
+/// let events = [MultiChannelEvent { sample: 9, channel: 1, amplitude: 10.0 }];
+/// let mut output = [[0.0f64; 4]; 4];
+/// let n = extract_peak_channel::<3, 4>(&data, &events, 1, 1, &mut output);
+/// assert_eq!(n, 1);
+/// assert!((output[0][1] - (-10.0)).abs() < 1e-12); // peak at pre_samples offset
+/// ```
+pub fn extract_peak_channel<const C: usize, const W: usize>(
+    data: &[[f64; C]],
+    events: &[MultiChannelEvent],
+    n_events: usize,
+    pre_samples: usize,
+    output: &mut [[f64; W]],
+) -> usize {
+    let t_len = data.len();
+    let n = if n_events < events.len() {
+        n_events
+    } else {
+        events.len()
+    };
+    let mut count = 0;
+
+    let mut i = 0;
+    while i < n {
+        if count >= output.len() {
+            break;
+        }
+        let t = events[i].sample;
+        let ch = events[i].channel;
+        if t < pre_samples || ch >= C {
+            i += 1;
+            continue;
+        }
+        let start = t - pre_samples;
+        let end = start + W;
+        if end > t_len {
+            i += 1;
+            continue;
+        }
+
+        let mut w = 0;
+        while w < W {
+            output[count][w] = data[start + w][ch];
+            w += 1;
+        }
+        count += 1;
+        i += 1;
+    }
+    count
+}
+
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
@@ -1740,5 +1908,151 @@ mod tests {
             .any(|e| e.sample >= 597 && e.sample <= 603);
         assert!(spike1_found, "Spike 1 near t=200 should be detected");
         assert!(spike2_found, "Spike 2 near t=600 should be detected");
+    }
+
+    // =========================================================================
+    // Multi-channel waveform extraction tests
+    // =========================================================================
+
+    #[test]
+    fn test_extract_multichannel_basic() {
+        // 2-channel data, known values
+        let mut data = [[0.0f64; 2]; 20];
+        for t in 0..20 {
+            data[t][0] = t as f64;
+            data[t][1] = -(t as f64);
+        }
+
+        let events = [MultiChannelEvent {
+            sample: 10,
+            channel: 0,
+            amplitude: 10.0,
+        }];
+        let mut output = [[[0.0f64; 4]; 2]; 4];
+        let n = extract_multichannel::<2, 4>(&data, &events, 1, 1, &mut output);
+        assert_eq!(n, 1);
+        // Window starts at 10-1=9, ends at 9+4=13
+        assert!((output[0][0][0] - 9.0).abs() < 1e-12);
+        assert!((output[0][0][1] - 10.0).abs() < 1e-12);
+        assert!((output[0][0][2] - 11.0).abs() < 1e-12);
+        assert!((output[0][0][3] - 12.0).abs() < 1e-12);
+        // Channel 1 should be negative
+        assert!((output[0][1][0] - (-9.0)).abs() < 1e-12);
+        assert!((output[0][1][1] - (-10.0)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_extract_multichannel_boundary_skip() {
+        let data = [[1.0f64; 2]; 20];
+        let events = [
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 1.0,
+            }, // too close to start (pre=2, 0 < 2)
+            MultiChannelEvent {
+                sample: 18,
+                channel: 0,
+                amplitude: 1.0,
+            }, // too close to end (18-2+8=24 > 20)
+            MultiChannelEvent {
+                sample: 10,
+                channel: 0,
+                amplitude: 1.0,
+            }, // valid (10-2=8, 8+8=16 <= 20)
+        ];
+        let mut output = [[[0.0f64; 8]; 2]; 4];
+        let n = extract_multichannel::<2, 8>(&data, &events, 3, 2, &mut output);
+        assert_eq!(n, 1, "Only middle event should be extractable");
+    }
+
+    #[test]
+    fn test_extract_peak_channel_basic() {
+        let mut data = [[0.0f64; 3]; 20];
+        // Put a spike on channel 1
+        data[8][1] = -7.0;
+        data[9][1] = -10.0;
+        data[10][1] = -6.0;
+        // Channel 0 and 2 have different values
+        data[9][0] = 1.0;
+        data[9][2] = 2.0;
+
+        let events = [MultiChannelEvent {
+            sample: 9,
+            channel: 1,
+            amplitude: 10.0,
+        }];
+        let mut output = [[0.0f64; 4]; 4];
+        let n = extract_peak_channel::<3, 4>(&data, &events, 1, 1, &mut output);
+        assert_eq!(n, 1);
+        // Window: [8..12] on channel 1
+        assert!((output[0][0] - (-7.0)).abs() < 1e-12);
+        assert!((output[0][1] - (-10.0)).abs() < 1e-12);
+        assert!((output[0][2] - (-6.0)).abs() < 1e-12);
+        assert!((output[0][3] - 0.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_extract_peak_channel_boundary_skip() {
+        let data = [[0.0f64; 2]; 10];
+        let events = [
+            MultiChannelEvent {
+                sample: 1,
+                channel: 0,
+                amplitude: 1.0,
+            }, // pre=2, 1 < 2, skip
+            MultiChannelEvent {
+                sample: 5,
+                channel: 0,
+                amplitude: 1.0,
+            }, // valid: 5-2=3, 3+8=11 > 10, skip for W=8
+        ];
+        let mut output = [[0.0f64; 8]; 4];
+        let n = extract_peak_channel::<2, 8>(&data, &events, 2, 2, &mut output);
+        assert_eq!(n, 0, "Both events should be out of bounds");
+    }
+
+    #[test]
+    fn test_extract_multichannel_vs_peak_consistency() {
+        // Extract both ways and verify peak channel extraction matches
+        let mut data = [[0.0f64; 2]; 20];
+        for t in 0..20 {
+            data[t][0] = t as f64;
+            data[t][1] = 100.0 + t as f64;
+        }
+
+        let events = [MultiChannelEvent {
+            sample: 10,
+            channel: 1,
+            amplitude: 110.0,
+        }];
+        let mut mc_output = [[[0.0f64; 4]; 2]; 2];
+        let mut pc_output = [[0.0f64; 4]; 2];
+        let n_mc = extract_multichannel::<2, 4>(&data, &events, 1, 1, &mut mc_output);
+        let n_pc = extract_peak_channel::<2, 4>(&data, &events, 1, 1, &mut pc_output);
+        assert_eq!(n_mc, 1);
+        assert_eq!(n_pc, 1);
+
+        // Peak channel (1) from multichannel should match peak_channel output
+        for w in 0..4 {
+            assert!(
+                (mc_output[0][1][w] - pc_output[0][w]).abs() < 1e-12,
+                "Mismatch at sample {}: mc={}, pc={}",
+                w,
+                mc_output[0][1][w],
+                pc_output[0][w]
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_empty_events() {
+        let data = [[0.0f64; 2]; 20];
+        let mut mc_output = [[[0.0f64; 4]; 2]; 4];
+        let mut pc_output = [[0.0f64; 4]; 4];
+        let n_mc = extract_multichannel::<2, 4>(&data, &[], 0, 1, &mut mc_output);
+        let n_pc = extract_peak_channel::<2, 4>(&data, &[], 0, 1, &mut pc_output);
+        assert_eq!(n_mc, 0);
+        assert_eq!(n_pc, 0);
     }
 }

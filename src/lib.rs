@@ -107,10 +107,12 @@ pub mod quality;
 pub mod riemannian;
 mod rms;
 mod router;
+pub mod sorter;
 pub mod spike_sort;
 mod stats;
 mod stft;
 mod sync;
+pub mod template_subtract;
 pub mod wavelet;
 mod welch;
 pub mod whitening;
@@ -164,14 +166,18 @@ pub use riemannian::{
 };
 pub use rms::WindowedRms;
 pub use router::ChannelRouter;
+pub use sorter::{
+    estimate_noise_multichannel, sort_multichannel, ClusterInfo, SortConfig, SortResult,
+};
 pub use spike_sort::{
     align_to_peak, deduplicate_events, detect_spikes, detect_spikes_multichannel,
-    estimate_noise_mad, MultiChannelEvent, SortError, SpikeCluster, TemplateMatch,
-    WaveformExtractor, WaveformPca,
+    estimate_noise_mad, extract_multichannel, extract_peak_channel, MultiChannelEvent, SortError,
+    SpikeCluster, TemplateMatch, WaveformExtractor, WaveformPca,
 };
 pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;
 pub use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
+pub use template_subtract::{PeelResult, TemplateSubtractor};
 pub use wavelet::{morlet_coefficient, wavelet_half_width, Cwt, MultiChannelCwt, WaveletType};
 pub use welch::WelchPsd;
 pub use whitening::{apply_whitening, WhiteningMatrix, WhiteningMode};
