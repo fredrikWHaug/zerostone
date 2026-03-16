@@ -8,10 +8,24 @@
 //! All trig uses `libm` (pure Rust) instead of platform `sin()`/`cos()` to guarantee
 //! identical results on macOS ARM64, Linux x86_64, etc.
 
+use zerostone::probe::ProbeLayout;
+use zerostone::spike_sort::{deduplicate_events, detect_spikes_multichannel, MultiChannelEvent};
 use zerostone::{BiquadCoeffs, Complex, Fft, IirFilter, ThresholdDetector, WelchPsd, WindowType};
 
 /// FNV-1a hash of an f32 slice -- detects any bit-level change in output.
 fn hash_f32(data: &[f32]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &v in data {
+        for &b in &v.to_bits().to_le_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+    }
+    h
+}
+
+/// FNV-1a hash of an f64 slice.
+fn hash_f64(data: &[f64]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
     for &v in data {
         for &b in &v.to_bits().to_le_bytes() {
@@ -161,6 +175,70 @@ fn replay_csp_filters() {
     );
 }
 
+/// Replay 6: Multi-channel detection + deduplication pipeline.
+#[test]
+fn replay_multichannel_detect_dedup() {
+    // Deterministic 2-channel signal: 1000 samples at 250 Hz
+    let n = 1000;
+    let fs = 250.0f64;
+    let mut data = vec![[0.0f64; 2]; n];
+    for i in 0..n {
+        let t = i as f64 / fs;
+        data[i][0] = libm::sin(2.0 * std::f64::consts::PI * 8.0 * t);
+        data[i][1] = libm::sin(2.0 * std::f64::consts::PI * 12.0 * t);
+    }
+
+    // Inject deterministic spikes on channel 0
+    for &pos in &[100usize, 350, 600, 850] {
+        data[pos][0] = -12.0;
+        if pos + 1 < n {
+            data[pos + 1][0] = -8.0;
+        }
+        if pos + 2 < n {
+            data[pos + 2][0] = 4.0;
+        }
+    }
+    // Inject deterministic spikes on channel 1
+    for &pos in &[200usize, 450, 700] {
+        data[pos][1] = -15.0;
+        if pos + 1 < n {
+            data[pos + 1][1] = -10.0;
+        }
+        if pos + 2 < n {
+            data[pos + 2][1] = 5.0;
+        }
+    }
+
+    // Detect
+    let noise = [1.0f64; 2];
+    let mut events = vec![
+        MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0,
+        };
+        50
+    ];
+    let n_detected = detect_spikes_multichannel::<2>(&data, 5.0, &noise, 10, &mut events);
+
+    // Dedup
+    let probe = ProbeLayout::<2>::linear(25.0);
+    let n_dedup = deduplicate_events::<2>(&mut events, n_detected, &probe, 30.0, 5);
+
+    // Hash event data: flatten (sample, channel, amplitude) for each surviving event
+    let mut flat = Vec::new();
+    for i in 0..n_dedup {
+        flat.push(events[i].sample as f64);
+        flat.push(events[i].channel as f64);
+        flat.push(events[i].amplitude);
+    }
+    let h = hash_f64(&flat);
+    assert_eq!(
+        h, HASH_MULTICHANNEL_DETECT,
+        "multichannel detect+dedup replay changed: got {h:#018x}, expected {HASH_MULTICHANNEL_DETECT:#018x}"
+    );
+}
+
 // Canonical hashes -- regenerate by running tests and updating from failure messages.
 // Any change here means pipeline output changed. Commits tagged [refactor] must not change these.
 const HASH_BANDPASS: u64 = 0x2cfb75bb77f0f1ec;
@@ -168,3 +246,4 @@ const HASH_FFT: u64 = 0x536017a5e587159d;
 const HASH_WELCH: u64 = 0x22c723d86dad4098;
 const HASH_SPIKE: u64 = 0x271153b6466ce591;
 const HASH_CSP: u64 = 0x6beb8f7318b7cb14;
+const HASH_MULTICHANNEL_DETECT: u64 = 0x0b237a058d038e32;
