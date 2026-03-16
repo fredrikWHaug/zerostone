@@ -418,6 +418,52 @@ mod kani_proofs {
         assert!(result[0].is_finite(), "x must be finite");
         assert!(result[1].is_finite(), "y must be finite");
     }
+
+    /// Prove that `center_of_mass_threshold` never panics for finite inputs.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn center_of_mass_threshold_no_panic() {
+        let a0: f64 = kani::any();
+        let a1: f64 = kani::any();
+        let a2: f64 = kani::any();
+        let a3: f64 = kani::any();
+        let threshold: f64 = kani::any();
+
+        kani::assume(a0.is_finite() && a0 >= -1e6 && a0 <= 1e6);
+        kani::assume(a1.is_finite() && a1 >= -1e6 && a1 <= 1e6);
+        kani::assume(a2.is_finite() && a2 >= -1e6 && a2 <= 1e6);
+        kani::assume(a3.is_finite() && a3 >= -1e6 && a3 <= 1e6);
+        kani::assume(threshold.is_finite() && threshold >= 0.0 && threshold <= 1e6);
+
+        let amps = [a0, a1, a2, a3];
+        let pos = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
+        let result = center_of_mass_threshold(&amps, &pos, threshold);
+        if let Some(loc) = result {
+            assert!(loc[0].is_finite(), "x must be finite");
+            assert!(loc[1].is_finite(), "y must be finite");
+        }
+    }
+
+    /// Prove that `monopole_localize` never panics for bounded finite inputs.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn monopole_localize_no_panic() {
+        let a0: f64 = kani::any();
+        let a1: f64 = kani::any();
+        let z_offset: f64 = kani::any();
+
+        kani::assume(a0.is_finite() && a0 >= 0.0 && a0 <= 1e4);
+        kani::assume(a1.is_finite() && a1 >= 0.0 && a1 <= 1e4);
+        kani::assume(z_offset.is_finite() && z_offset >= 1.0 && z_offset <= 100.0);
+
+        let amps = [a0, a1];
+        let pos = [[0.0, 0.0], [0.0, 25.0]];
+        let result = monopole_localize(&amps, &pos, z_offset, 2);
+        if let Some(loc) = result {
+            assert!(loc[0].is_finite(), "x must be finite");
+            assert!(loc[1].is_finite(), "y must be finite");
+        }
+    }
 }
 
 #[cfg(test)]
