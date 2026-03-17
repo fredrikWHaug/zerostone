@@ -20,7 +20,6 @@ mod ica;
 mod isi;
 mod kalman;
 mod lda;
-mod localize;
 mod notch;
 mod online_kmeans;
 mod pac;
@@ -31,11 +30,11 @@ mod quality;
 mod resampling;
 mod riemannian;
 mod spatial;
+mod sorter;
 mod spectral;
 mod spike_sort;
 mod stats;
 mod sync;
-mod template_subtract;
 mod utils;
 mod wavelet;
 mod welch;
@@ -429,6 +428,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TemplateMatcher>()?;
     spike_sort::register(m)?;
 
+    // Sorting pipeline
+    sorter::register(m)?;
+
     // Online k-means clustering
     m.add_class::<OnlineKMeans>()?;
     online_kmeans::register(m)?;
@@ -483,12 +485,6 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Cluster quality metrics
     quality::register(m)?;
-
-    // Spike localization
-    localize::register(m)?;
-
-    // Template subtraction
-    template_subtract::register(m)?;
 
     // Window functions
     window::register(m)?;
