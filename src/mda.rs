@@ -686,8 +686,8 @@ mod tests {
         let n = read_mda_f64(&data, &mut out).unwrap();
         assert_eq!(n, 6);
         // Column-major order: elements read linearly
-        for i in 0..6 {
-            assert!((out[i] - (i as f64 + 1.0)).abs() < 1e-6);
+        for (i, val) in out.iter().enumerate() {
+            assert!((val - (i as f64 + 1.0)).abs() < 1e-6);
         }
     }
 
