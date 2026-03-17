@@ -182,10 +182,10 @@ fn replay_multichannel_detect_dedup() {
     let n = 1000;
     let fs = 250.0f64;
     let mut data = vec![[0.0f64; 2]; n];
-    for i in 0..n {
+    for (i, sample) in data.iter_mut().enumerate().take(n) {
         let t = i as f64 / fs;
-        data[i][0] = libm::sin(2.0 * std::f64::consts::PI * 8.0 * t);
-        data[i][1] = libm::sin(2.0 * std::f64::consts::PI * 12.0 * t);
+        sample[0] = libm::sin(2.0 * std::f64::consts::PI * 8.0 * t);
+        sample[1] = libm::sin(2.0 * std::f64::consts::PI * 12.0 * t);
     }
 
     // Inject deterministic spikes on channel 0
@@ -227,10 +227,10 @@ fn replay_multichannel_detect_dedup() {
 
     // Hash event data: flatten (sample, channel, amplitude) for each surviving event
     let mut flat = Vec::new();
-    for i in 0..n_dedup {
-        flat.push(events[i].sample as f64);
-        flat.push(events[i].channel as f64);
-        flat.push(events[i].amplitude);
+    for event in events.iter().take(n_dedup) {
+        flat.push(event.sample as f64);
+        flat.push(event.channel as f64);
+        flat.push(event.amplitude);
     }
     let h = hash_f64(&flat);
     assert_eq!(
