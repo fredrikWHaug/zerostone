@@ -20,6 +20,7 @@ mod ica;
 mod isi;
 mod kalman;
 mod lda;
+mod localize;
 mod notch;
 mod online_kmeans;
 mod pac;
@@ -35,6 +36,7 @@ mod spectral;
 mod spike_sort;
 mod stats;
 mod sync;
+mod template_subtract;
 mod utils;
 mod wavelet;
 mod welch;
@@ -485,6 +487,12 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Cluster quality metrics
     quality::register(m)?;
+
+    // Spike localization
+    localize::register(m)?;
+
+    // Template subtraction
+    template_subtract::register(m)?;
 
     // Window functions
     window::register(m)?;
