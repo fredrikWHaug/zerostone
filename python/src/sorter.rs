@@ -69,6 +69,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     cluster_max_count = 1000,
     whitening_epsilon = 1e-6,
 ))]
+#[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
     py: Python<'py>,
     data: PyReadonlyArray2<f64>,
