@@ -21,6 +21,7 @@ mod isi;
 mod kalman;
 mod lda;
 mod localize;
+mod mda;
 mod notch;
 mod online_kmeans;
 mod pac;
@@ -490,6 +491,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Spike localization
     localize::register(m)?;
+
+    // MDA file reader
+    mda::register(m)?;
 
     // Template subtraction
     template_subtract::register(m)?;
