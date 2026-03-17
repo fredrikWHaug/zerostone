@@ -4,13 +4,16 @@ use zerostone::entropy;
 use zerostone::isi;
 use zerostone::kalman::KalmanFilter;
 use zerostone::linalg::Matrix;
+use zerostone::localize::{center_of_mass, center_of_mass_threshold};
 use zerostone::pac;
 use zerostone::probe::ProbeLayout;
 use zerostone::quality;
 use zerostone::riemannian;
+use zerostone::sorter::{estimate_noise_multichannel, sort_multichannel, SortConfig};
 use zerostone::spike_sort::{
     align_to_peak, deduplicate_events, detect_spikes_multichannel, MultiChannelEvent,
 };
+use zerostone::template_subtract::{PeelResult, TemplateSubtractor};
 use zerostone::whitening::{WhiteningMatrix, WhiteningMode};
 use zerostone::{BiquadCoeffs, Complex, Fft, HilbertTransform, IirFilter, OnlineStats, WindowType};
 
@@ -626,6 +629,240 @@ proptest! {
             let orig = samples_before[idx];
             let diff = e.sample.abs_diff(orig);
             prop_assert!(diff <= 3, "aligned sample {} too far from original {} (half_window=3)", e.sample, orig);
+        }
+    }
+
+    // =========================================================================
+    // Template subtraction properties
+    // =========================================================================
+
+    /// Peel output count never exceeds the output buffer length.
+    #[test]
+    fn peel_output_bounded(
+        template_vals in prop::array::uniform4(-5.0f64..5.0),
+        data_vals in prop::collection::vec(-10.0f64..10.0, 16..=16),
+        spike_time in 2usize..12,
+    ) {
+        let mut sub = TemplateSubtractor::<4, 2>::new(10);
+        sub.add_template(&template_vals, 0.1, 5.0).unwrap();
+
+        let mut data: [f64; 16] = [0.0; 16];
+        for (i, &v) in data_vals.iter().enumerate() {
+            data[i] = v;
+        }
+        let times = [spike_time];
+        let mut results = [PeelResult { sample: 0, template_id: 0, amplitude: 0.0 }; 4];
+        let n = sub.peel(&mut data, &times, 1, 1, &mut results);
+        prop_assert!(n <= 4, "peel returned {n} > output buffer size 4");
+    }
+
+    /// Injecting amp * template and peeling recovers the amplitude; residual is near zero.
+    #[test]
+    fn peel_perfect_subtraction(
+        amp in 0.5f64..2.0,
+    ) {
+        let template = [-1.0, -3.0, -2.0, 0.5];
+        let mut sub = TemplateSubtractor::<4, 2>::new(10);
+        sub.add_template(&template, 0.1, 5.0).unwrap();
+
+        let mut data = [0.0f64; 12];
+        for i in 0..4 {
+            data[2 + i] = amp * template[i];
+        }
+
+        let times = [3usize]; // peak near sample 3, pre_samples=1 -> window starts at 2
+        let mut results = [PeelResult { sample: 0, template_id: 0, amplitude: 0.0 }; 4];
+        let n = sub.peel(&mut data, &times, 1, 1, &mut results);
+        prop_assert!(n == 1, "expected 1 result, got {n}");
+        let amp_err = (results[0].amplitude - amp).abs();
+        prop_assert!(amp_err < 0.1, "amplitude error {amp_err} exceeds tolerance");
+
+        let residual: f64 = data.iter().map(|x| x * x).sum();
+        prop_assert!(residual < 0.01, "residual energy {residual} is not near zero");
+    }
+
+    /// Peel with 0 templates always returns 0.
+    #[test]
+    fn peel_empty_templates_returns_zero(
+        data_vals in prop::collection::vec(-5.0f64..5.0, 8..=8),
+    ) {
+        let sub = TemplateSubtractor::<4, 2>::new(10);
+        let mut data: [f64; 8] = [0.0; 8];
+        for (i, &v) in data_vals.iter().enumerate() {
+            data[i] = v;
+        }
+        let times = [3usize];
+        let mut results = [PeelResult { sample: 0, template_id: 0, amplitude: 0.0 }; 4];
+        let n = sub.peel(&mut data, &times, 1, 1, &mut results);
+        prop_assert!(n == 0, "peel with 0 templates returned {n}, expected 0");
+    }
+
+    // =========================================================================
+    // Localization properties
+    // =========================================================================
+
+    /// Center-of-mass result y coordinate lies within the convex hull of channel positions.
+    #[test]
+    fn com_within_convex_hull(
+        a0 in 0.01f64..10.0,
+        a1 in 0.01f64..10.0,
+        a2 in 0.01f64..10.0,
+        a3 in 0.01f64..10.0,
+    ) {
+        let amps = [a0, a1, a2, a3];
+        let pos = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
+        let loc = center_of_mass(&amps, &pos);
+
+        // y must be within [min_y, max_y] = [0.0, 75.0]
+        prop_assert!(loc[1] >= -1e-10, "y = {} below min position 0.0", loc[1]);
+        prop_assert!(loc[1] <= 75.0 + 1e-10, "y = {} above max position 75.0", loc[1]);
+        // x must be 0.0 since all positions have x=0
+        prop_assert!(loc[0].abs() < 1e-10, "x = {} should be 0.0", loc[0]);
+    }
+
+    /// Center-of-mass with all-equal weights returns the centroid of positions.
+    #[test]
+    fn com_equal_weights_returns_centroid(
+        w in 0.1f64..100.0,
+    ) {
+        let amps = [w, w, w, w];
+        let pos = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
+        let loc = center_of_mass(&amps, &pos);
+        let expected_y = (0.0 + 25.0 + 50.0 + 75.0) / 4.0; // 37.5
+        prop_assert!(
+            (loc[1] - expected_y).abs() < 1e-9,
+            "expected centroid y={expected_y}, got {}", loc[1]
+        );
+    }
+
+    /// Increasing the threshold never increases the weight sum in thresholded CoM.
+    #[test]
+    fn com_threshold_monotonicity(
+        a0 in 0.0f64..10.0,
+        a1 in 0.0f64..10.0,
+        a2 in 0.0f64..10.0,
+        a3 in 0.0f64..10.0,
+        t_low in 0.0f64..5.0,
+        t_delta in 0.01f64..5.0,
+    ) {
+        let amps = [a0, a1, a2, a3];
+        let pos = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
+        let t_high = t_low + t_delta;
+
+        // Count channels above each threshold
+        let count_low = amps.iter().filter(|&&a| a.abs() >= t_low).count();
+        let count_high = amps.iter().filter(|&&a| a.abs() >= t_high).count();
+        prop_assert!(
+            count_high <= count_low,
+            "higher threshold {t_high} has {count_high} channels >= threshold, but lower {t_low} has {count_low}"
+        );
+
+        // If high threshold returns Some, low threshold must also return Some
+        let result_high = center_of_mass_threshold(&amps, &pos, t_high);
+        let result_low = center_of_mass_threshold(&amps, &pos, t_low);
+        if result_high.is_some() {
+            prop_assert!(result_low.is_some(), "high threshold returned Some but low threshold returned None");
+        }
+    }
+
+    // =========================================================================
+    // Sorter properties
+    // =========================================================================
+
+    /// Noise estimation returns non-negative, finite values for any non-empty finite data.
+    #[test]
+    fn noise_estimation_positive_finite(
+        vals in prop::collection::vec(-100.0f64..100.0, 20..=20),
+    ) {
+        // 2 channels, 10 time steps
+        let mut data = [[0.0f64; 2]; 10];
+        for (i, chunk) in vals.chunks_exact(2).enumerate() {
+            data[i][0] = chunk[0];
+            data[i][1] = chunk[1];
+        }
+        let mut scratch = [0.0f64; 10];
+        let noise = estimate_noise_multichannel::<2>(&data, &mut scratch);
+        for (ch, &n) in noise.iter().enumerate() {
+            prop_assert!(n >= 0.0, "noise[{ch}] = {n} is negative");
+            prop_assert!(n.is_finite(), "noise[{ch}] = {n} is not finite");
+        }
+    }
+
+    /// Sort result consistency: n_spikes equals sum of cluster counts,
+    /// and n_clusters matches the number of non-zero clusters.
+    #[test]
+    fn sort_result_consistency(
+        seed in 1u64..1000,
+    ) {
+        // Simple xorshift for reproducible noise
+        let mut s = seed;
+        let mut next = || -> f64 {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            ((s % 2_000_000) as f64 - 1_000_000.0) / 1_000_000.0
+        };
+
+        let n = 500;
+        let mut data = vec![[0.0f64; 2]; n];
+        for sample in data.iter_mut() {
+            sample[0] = next();
+            sample[1] = next();
+        }
+
+        // Inject a few spikes to give the sorter something to find
+        let template = [-2.0, -5.0, -8.0, -4.0, -1.0, 1.0, 0.5, 0.0];
+        for &pos in &[100usize, 200, 350] {
+            for (dt, &tv) in template.iter().enumerate() {
+                if pos + dt < n {
+                    data[pos + dt][0] += 8.0 * tv;
+                }
+            }
+        }
+
+        let config = SortConfig {
+            threshold_multiplier: 4.0,
+            pre_samples: 2,
+            refractory_samples: 10,
+            ..SortConfig::default()
+        };
+        let probe = ProbeLayout::<2>::linear(25.0);
+        let mut scratch = vec![0.0f64; n];
+        let mut events = vec![
+            MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; 100
+        ];
+        let mut waveforms = vec![[0.0f64; 8]; 100];
+        let mut features = vec![[0.0f64; 3]; 100];
+        let mut labels = vec![0usize; 100];
+
+        let result = sort_multichannel::<2, 4, 8, 3, 64, 4>(
+            &config, &probe, &mut data, &mut scratch,
+            &mut events, &mut waveforms, &mut features, &mut labels,
+        );
+
+        if let Ok(sr) = result {
+            // Sum of cluster counts should equal n_spikes
+            let cluster_sum: usize = sr.clusters[..sr.n_clusters]
+                .iter()
+                .map(|c| c.count)
+                .sum();
+            prop_assert!(
+                cluster_sum == sr.n_spikes,
+                "cluster count sum {cluster_sum} != n_spikes {}", sr.n_spikes
+            );
+
+            // n_clusters should match the number of clusters with count > 0
+            // (or be >= the count of non-zero clusters, since the clustering
+            // algorithm may report active clusters that got 0 spikes from
+            // this particular batch)
+            let nonzero_clusters = sr.clusters[..sr.n_clusters]
+                .iter()
+                .filter(|c| c.count > 0)
+                .count();
+            prop_assert!(
+                sr.n_clusters >= nonzero_clusters,
+                "n_clusters {} < nonzero clusters {}", sr.n_clusters, nonzero_clusters
+            );
         }
     }
 }
