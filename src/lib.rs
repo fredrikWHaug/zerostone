@@ -97,6 +97,7 @@ pub mod kalman;
 pub mod lda;
 pub mod linalg;
 pub mod localize;
+pub mod mda;
 mod notch;
 pub mod online_kmeans;
 pub mod pac;
@@ -151,6 +152,10 @@ pub use isi::{autocorrelogram, isi_cv, local_variation, IsiHistogram};
 pub use kalman::{KalmanError, KalmanFilter};
 pub use lda::{Lda, LdaError};
 pub use localize::{center_of_mass, center_of_mass_threshold, localize_spike, monopole_localize};
+pub use mda::{
+    mda_element_size, mda_num_elements, parse_mda_header, read_mda_f32, read_mda_f64, MdaDataType,
+    MdaHeader, MAX_DIMS,
+};
 pub use notch::NotchFilter;
 pub use online_kmeans::{KMeansError, KMeansResult, OnlineKMeans};
 pub use pac::{mean_vector_length, modulation_index, phase_amplitude_distribution};
