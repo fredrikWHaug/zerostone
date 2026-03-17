@@ -98,6 +98,7 @@ pub mod lda;
 pub mod linalg;
 pub mod localize;
 pub mod mda;
+pub mod metrics;
 mod notch;
 pub mod online_kmeans;
 pub mod pac;
@@ -156,6 +157,7 @@ pub use mda::{
     mda_element_size, mda_num_elements, parse_mda_header, read_mda_f32, read_mda_f64, MdaDataType,
     MdaHeader, MAX_DIMS,
 };
+pub use metrics::{compare_sorting, compare_spike_trains, UnitMatch};
 pub use notch::NotchFilter;
 pub use online_kmeans::{KMeansError, KMeansResult, OnlineKMeans};
 pub use pac::{mean_vector_length, modulation_index, phase_amplitude_distribution};
