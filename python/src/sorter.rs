@@ -99,6 +99,7 @@ fn sort_multichannel<'py>(
         cluster_threshold,
         cluster_max_count,
         whitening_epsilon,
+        ..SortConfig::default()
     };
 
     // W=32, K=3, WM=1024, N=16
