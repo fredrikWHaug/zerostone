@@ -615,4 +615,162 @@ mod kani_proofs {
         assert!(m.precision >= 0.0 && m.precision <= 1.0);
         assert!(m.recall >= 0.0 && m.recall <= 1.0);
     }
+
+    /// Prove that `compare_spike_trains` with empty inputs never panics
+    /// and produces correct degenerate outputs.
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn compare_spike_trains_empty_no_panic() {
+        let s0: usize = kani::any();
+        let tol: usize = kani::any();
+
+        kani::assume(s0 <= 10000);
+        kani::assume(tol <= 1000);
+
+        // Empty GT, non-empty sorted
+        let sorted = [s0];
+        let m1 = compare_spike_trains(&[], &sorted, tol);
+        assert!(m1.true_positives == 0);
+        assert!(m1.false_positives == 1);
+        assert!(m1.false_negatives == 0);
+        assert!(m1.accuracy == 0.0);
+
+        // Non-empty GT, empty sorted
+        let gt = [s0];
+        let m2 = compare_spike_trains(&gt, &[], tol);
+        assert!(m2.true_positives == 0);
+        assert!(m2.false_positives == 0);
+        assert!(m2.false_negatives == 1);
+        assert!(m2.accuracy == 0.0);
+
+        // Both empty
+        let m3 = compare_spike_trains(&[], &[], tol);
+        assert!(m3.true_positives == 0);
+        assert!(m3.false_positives == 0);
+        assert!(m3.false_negatives == 0);
+    }
+
+    /// Prove that `compare_spike_trains` metrics are finite and consistent.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn compare_spike_trains_metrics_finite() {
+        let t0: usize = kani::any();
+        let t1: usize = kani::any();
+        let t2: usize = kani::any();
+        let s0: usize = kani::any();
+        let s1: usize = kani::any();
+        let tol: usize = kani::any();
+
+        kani::assume(t0 <= 5000);
+        kani::assume(t1 >= t0 && t1 <= 5000);
+        kani::assume(t2 >= t1 && t2 <= 5000);
+        kani::assume(s0 <= 5000);
+        kani::assume(s1 >= s0 && s1 <= 5000);
+        kani::assume(tol <= 500);
+
+        let gt = [t0, t1, t2];
+        let sorted = [s0, s1];
+        let m = compare_spike_trains(&gt, &sorted, tol);
+
+        // All metrics must be finite
+        assert!(m.accuracy.is_finite());
+        assert!(m.precision.is_finite());
+        assert!(m.recall.is_finite());
+
+        // Count invariants: TP + FN == gt.len(), TP + FP == sorted.len()
+        assert!(m.true_positives + m.false_negatives == 3);
+        assert!(m.true_positives + m.false_positives == 2);
+
+        // TP <= min(gt.len(), sorted.len())
+        assert!(m.true_positives <= 2);
+    }
+
+    /// Prove that `compare_sorting` never panics for small inputs and
+    /// output metrics are in valid ranges.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn compare_sorting_no_panic() {
+        let g0: usize = kani::any();
+        let g1: usize = kani::any();
+        let s0: usize = kani::any();
+        let s1: usize = kani::any();
+        let tol: usize = kani::any();
+
+        kani::assume(g0 <= 5000);
+        kani::assume(g1 <= 5000);
+        kani::assume(s0 <= 5000);
+        kani::assume(s1 <= 5000);
+        kani::assume(tol <= 500);
+
+        let gt0: &[usize] = &[g0];
+        let gt1: &[usize] = &[g1];
+        let s_train0: &[usize] = &[s0];
+        let s_train1: &[usize] = &[s1];
+
+        let gt_trains = [gt0, gt1];
+        let sorted_trains = [s_train0, s_train1];
+        let mut out = [UnitMatch::empty(); 2];
+        let matched = compare_sorting(&gt_trains, &sorted_trains, tol, &mut out);
+
+        // matched <= number of GT units
+        assert!(matched <= 2);
+
+        // Each output must have valid metrics
+        for i in 0..2 {
+            assert!(out[i].accuracy >= 0.0 && out[i].accuracy <= 1.0);
+            assert!(out[i].precision >= 0.0 && out[i].precision <= 1.0);
+            assert!(out[i].recall >= 0.0 && out[i].recall <= 1.0);
+            assert!(out[i].accuracy.is_finite());
+            assert!(out[i].precision.is_finite());
+            assert!(out[i].recall.is_finite());
+        }
+    }
+
+    /// Prove that `compare_sorting` handles empty inputs without panic.
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn compare_sorting_empty_no_panic() {
+        let tol: usize = kani::any();
+        kani::assume(tol <= 1000);
+
+        // Empty GT trains
+        let sorted: &[&[usize]] = &[&[100]];
+        let gt_empty: &[&[usize]] = &[];
+        let mut out0: [UnitMatch; 0] = [];
+        let m0 = compare_sorting(gt_empty, sorted, tol, &mut out0);
+        assert!(m0 == 0);
+
+        // Empty sorted trains
+        let gt: &[&[usize]] = &[&[100]];
+        let sorted_empty: &[&[usize]] = &[];
+        let mut out1 = [UnitMatch::empty(); 1];
+        let m1 = compare_sorting(gt, sorted_empty, tol, &mut out1);
+        assert!(m1 == 0);
+    }
+
+    /// Prove that `compare_sorting` with undersized output buffer
+    /// returns 0 and fills output with empty matches.
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn compare_sorting_short_output_no_panic() {
+        let gt: &[&[usize]] = &[&[100], &[200]];
+        let sorted: &[&[usize]] = &[&[101]];
+        // Output buffer too small (1 < 2 GT units)
+        let mut out = [UnitMatch::empty(); 1];
+        let matched = compare_sorting(gt, sorted, 5, &mut out);
+        assert!(matched == 0);
+        assert!(out[0].true_positives == 0);
+    }
+
+    /// Prove `UnitMatch::empty()` produces all-zero fields.
+    #[kani::proof]
+    fn unit_match_empty_zeroed() {
+        let m = UnitMatch::empty();
+        assert!(m.true_positives == 0);
+        assert!(m.false_positives == 0);
+        assert!(m.false_negatives == 0);
+        assert!(m.accuracy == 0.0);
+        assert!(m.precision == 0.0);
+        assert!(m.recall == 0.0);
+    }
 }

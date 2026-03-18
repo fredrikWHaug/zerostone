@@ -170,3 +170,90 @@ class TestApplyValidation:
         r = repr(wm)
         assert "WhiteningMatrix" in r
         assert "8" in r
+
+
+class TestEstimateNoiseCovariance:
+    def test_all_quiet(self):
+        """When all data is below threshold, result equals full covariance."""
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal((200, 2)) * 0.1
+        noise_std = np.ones(2, dtype=np.float64)
+        cov = zbci.estimate_noise_covariance(
+            data, noise_std, threshold_multiplier=3.0, min_quiet_samples=10
+        )
+        assert cov.shape == (2, 2)
+        full_cov = np.cov(data.T, bias=False)
+        np.testing.assert_allclose(cov, full_cov, atol=1e-10)
+
+    def test_with_spikes(self):
+        """Noise covariance should be smaller than full covariance when spikes present."""
+        rng = np.random.default_rng(123)
+        data = rng.standard_normal((500, 2))
+        # Inject large spikes
+        data[50] = [50.0, 50.0]
+        data[100] = [-40.0, 60.0]
+        data[200] = [45.0, -55.0]
+
+        noise_std = np.ones(2, dtype=np.float64)
+        noise_cov = zbci.estimate_noise_covariance(
+            data, noise_std, threshold_multiplier=5.0, min_quiet_samples=10
+        )
+        full_cov = np.cov(data.T, bias=False)
+        # Noise variance should be smaller than full variance
+        assert noise_cov[0, 0] < full_cov[0, 0]
+        assert noise_cov[1, 1] < full_cov[1, 1]
+
+    def test_symmetry(self):
+        """Covariance must be symmetric."""
+        rng = np.random.default_rng(555)
+        data = rng.standard_normal((300, 4))
+        noise_std = np.ones(4, dtype=np.float64)
+        cov = zbci.estimate_noise_covariance(data, noise_std)
+        np.testing.assert_allclose(cov, cov.T, atol=1e-12)
+
+    def test_fallback_to_full(self):
+        """When all samples exceed threshold, falls back to full covariance."""
+        data = np.array([
+            [10.0, 10.0],
+            [11.0, 9.0],
+            [-10.0, 10.0],
+            [9.0, -11.0],
+            [-11.0, -9.0],
+        ], dtype=np.float64)
+        noise_std = np.ones(2, dtype=np.float64)
+        noise_cov = zbci.estimate_noise_covariance(
+            data, noise_std, threshold_multiplier=3.0, min_quiet_samples=2
+        )
+        full_cov = np.cov(data.T, bias=False)
+        np.testing.assert_allclose(noise_cov, full_cov, atol=1e-10)
+
+    def test_wrong_noise_length(self):
+        data = np.zeros((50, 4), dtype=np.float64)
+        noise_std = np.ones(3, dtype=np.float64)
+        with pytest.raises(ValueError, match="expected 4"):
+            zbci.estimate_noise_covariance(data, noise_std)
+
+    def test_invalid_channel_count(self):
+        data = np.zeros((50, 3), dtype=np.float64)
+        noise_std = np.ones(3, dtype=np.float64)
+        with pytest.raises(ValueError, match="n_channels"):
+            zbci.estimate_noise_covariance(data, noise_std)
+
+    def test_default_params(self):
+        """Should work with default threshold_multiplier and min_quiet_samples."""
+        rng = np.random.default_rng(77)
+        data = rng.standard_normal((200, 2))
+        noise_std = np.ones(2, dtype=np.float64)
+        cov = zbci.estimate_noise_covariance(data, noise_std)
+        assert cov.shape == (2, 2)
+        assert np.all(np.isfinite(cov))
+
+    def test_4_channels(self):
+        rng = np.random.default_rng(88)
+        data = rng.standard_normal((300, 4))
+        noise_std = np.ones(4, dtype=np.float64)
+        cov = zbci.estimate_noise_covariance(data, noise_std, threshold_multiplier=3.0)
+        assert cov.shape == (4, 4)
+        # Diagonal should be positive
+        for i in range(4):
+            assert cov[i, i] > 0
