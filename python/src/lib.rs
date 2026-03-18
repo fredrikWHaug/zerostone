@@ -22,6 +22,7 @@ mod kalman;
 mod lda;
 mod localize;
 mod mda;
+mod metrics;
 mod notch;
 mod online_kmeans;
 mod pac;
@@ -494,6 +495,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // MDA file reader
     mda::register(m)?;
+
+    // Comparison metrics
+    metrics::register(m)?;
 
     // Template subtraction
     template_subtract::register(m)?;
