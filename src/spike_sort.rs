@@ -1031,6 +1031,146 @@ pub fn extract_peak_channel<const C: usize, const W: usize>(
     count
 }
 
+/// Combine PCA features with spatial position features.
+///
+/// Appends scaled spatial coordinates to PCA feature vectors.
+/// The spatial features are scaled by `spatial_weight` to balance
+/// their contribution relative to PCA components.
+///
+/// # Type Parameters
+/// * `K` - Number of PCA components
+/// * `S` - Number of spatial features (typically 2 for x,y)
+/// * `T` - Total features (must equal K + S)
+///
+/// # Panics
+///
+/// Panics at compile time if `T != K + S`.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::spike_sort::combine_features;
+///
+/// let pca = [[1.0, 2.0], [-0.5, 0.3]];
+/// let spatial = [[10.0, 50.0], [20.0, 60.0]];
+/// let mut output = [[0.0f64; 4]; 2];
+/// combine_features::<2, 2, 4>(&pca, &spatial, 0.5, &mut output, 2);
+/// assert!((output[0][0] - 1.0).abs() < 1e-12);
+/// assert!((output[0][1] - 2.0).abs() < 1e-12);
+/// assert!((output[0][2] - 5.0).abs() < 1e-12);  // 10.0 * 0.5
+/// assert!((output[0][3] - 25.0).abs() < 1e-12); // 50.0 * 0.5
+/// ```
+pub fn combine_features<const K: usize, const S: usize, const T: usize>(
+    pca_features: &[[f64; K]],
+    spatial_features: &[[f64; S]],
+    spatial_weight: f64,
+    output: &mut [[f64; T]],
+    n: usize,
+) {
+    // Compile-time assertion: T must equal K + S
+    const { assert!(T == K + S, "T must equal K + S") };
+
+    let mut i = 0;
+    while i < n {
+        // Copy PCA features
+        let mut k = 0;
+        while k < K {
+            output[i][k] = pca_features[i][k];
+            k += 1;
+        }
+        // Append scaled spatial features
+        let mut s = 0;
+        while s < S {
+            output[i][K + s] = spatial_features[i][s] * spatial_weight;
+            s += 1;
+        }
+        i += 1;
+    }
+}
+
+/// Extract spatial position features for each spike from multi-channel waveforms.
+///
+/// For each detected event, extracts the peak amplitude on each channel
+/// and computes center-of-mass position using the probe geometry.
+///
+/// Returns the number of events processed (min of `n_events` and `output.len()`).
+///
+/// # Type Parameters
+/// * `C` - Number of channels
+///
+/// # Example
+///
+/// ```
+/// use zerostone::spike_sort::{extract_spatial_features, MultiChannelEvent};
+///
+/// // 4-channel data, 20 time steps
+/// let mut data = [[0.0f64; 4]; 20];
+/// // Spike on channel 2 at sample 10
+/// data[10][2] = -10.0;
+/// data[10][1] = -3.0;
+///
+/// let positions = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
+/// let events = [MultiChannelEvent { sample: 10, channel: 2, amplitude: 10.0 }];
+/// let mut output = [[0.0f64; 2]; 4];
+/// let n = extract_spatial_features::<4>(&data, &events, 1, &positions, &mut output);
+/// assert_eq!(n, 1);
+/// // Dominated by channel 2 (amplitude 10 at y=50) with some pull from ch1 (amplitude 3 at y=25)
+/// assert!(output[0][1] > 40.0);
+/// ```
+pub fn extract_spatial_features<const C: usize>(
+    data: &[[f64; C]],
+    events: &[MultiChannelEvent],
+    n_events: usize,
+    positions: &[[f64; 2]; C],
+    output: &mut [[f64; 2]],
+) -> usize {
+    let t_len = data.len();
+    let max_out = if n_events < output.len() {
+        n_events
+    } else {
+        output.len()
+    };
+
+    let mut count = 0;
+    let mut i = 0;
+    while i < max_out {
+        let sample = events[i].sample;
+        if sample >= t_len {
+            i += 1;
+            continue;
+        }
+
+        // Extract peak absolute amplitude on each channel in a small window
+        // around the event sample (use a +-2 sample window for robustness)
+        let mut amps = [0.0f64; C];
+        let mut ch = 0;
+        while ch < C {
+            let start = sample.saturating_sub(2);
+            let end = if sample + 3 <= t_len {
+                sample + 3
+            } else {
+                t_len
+            };
+            let mut max_abs = 0.0;
+            let mut t = start;
+            while t < end {
+                let a = libm::fabs(data[t][ch]);
+                if a > max_abs {
+                    max_abs = a;
+                }
+                t += 1;
+            }
+            amps[ch] = max_abs;
+            ch += 1;
+        }
+
+        output[count] = crate::localize::center_of_mass(&amps, positions);
+        count += 1;
+        i += 1;
+    }
+    count
+}
+
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
@@ -1205,6 +1345,35 @@ mod kani_proofs {
         let mut output = [[0.0f64; 4]; 2];
         let n = extract_peak_channel::<2, 4>(&data, &events, 1, pre, &mut output);
         assert!(n <= 2, "extracted count must not exceed output buffer");
+    }
+
+    /// Prove that `combine_features` never panics for bounded finite inputs.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn combine_features_no_panic() {
+        let p0: f64 = kani::any();
+        let p1: f64 = kani::any();
+        let s0: f64 = kani::any();
+        let s1: f64 = kani::any();
+        let w: f64 = kani::any();
+
+        kani::assume(p0.is_finite() && p0 >= -1e6 && p0 <= 1e6);
+        kani::assume(p1.is_finite() && p1 >= -1e6 && p1 <= 1e6);
+        kani::assume(s0.is_finite() && s0 >= -1e6 && s0 <= 1e6);
+        kani::assume(s1.is_finite() && s1 >= -1e6 && s1 <= 1e6);
+        kani::assume(w.is_finite() && w >= 0.0 && w <= 10.0);
+
+        let pca = [[p0, p1]];
+        let spatial = [[s0, s1]];
+        let mut output = [[0.0f64; 4]; 1];
+        combine_features::<2, 2, 4>(&pca, &spatial, w, &mut output, 1);
+
+        // All outputs must be finite
+        let mut i = 0;
+        while i < 4 {
+            assert!(output[0][i].is_finite(), "output must be finite");
+            i += 1;
+        }
     }
 }
 
@@ -2118,5 +2287,183 @@ mod tests {
         let n_pc = extract_peak_channel::<2, 4>(&data, &[], 0, 1, &mut pc_output);
         assert_eq!(n_mc, 0);
         assert_eq!(n_pc, 0);
+    }
+
+    // =========================================================================
+    // Feature combination tests
+    // =========================================================================
+
+    #[test]
+    fn test_combine_features_basic() {
+        let pca = [[1.0, 2.0], [-0.5, 0.3]];
+        let spatial = [[10.0, 50.0], [20.0, 60.0]];
+        let mut output = [[0.0f64; 4]; 2];
+        combine_features::<2, 2, 4>(&pca, &spatial, 0.5, &mut output, 2);
+
+        // First spike
+        assert!((output[0][0] - 1.0).abs() < 1e-12);
+        assert!((output[0][1] - 2.0).abs() < 1e-12);
+        assert!((output[0][2] - 5.0).abs() < 1e-12); // 10.0 * 0.5
+        assert!((output[0][3] - 25.0).abs() < 1e-12); // 50.0 * 0.5
+
+        // Second spike
+        assert!((output[1][0] - (-0.5)).abs() < 1e-12);
+        assert!((output[1][1] - 0.3).abs() < 1e-12);
+        assert!((output[1][2] - 10.0).abs() < 1e-12); // 20.0 * 0.5
+        assert!((output[1][3] - 30.0).abs() < 1e-12); // 60.0 * 0.5
+    }
+
+    #[test]
+    fn test_combine_features_zero_weight() {
+        let pca = [[3.0, 4.0]];
+        let spatial = [[100.0, 200.0]];
+        let mut output = [[0.0f64; 4]; 1];
+        combine_features::<2, 2, 4>(&pca, &spatial, 0.0, &mut output, 1);
+
+        assert!((output[0][0] - 3.0).abs() < 1e-12);
+        assert!((output[0][1] - 4.0).abs() < 1e-12);
+        assert!((output[0][2]).abs() < 1e-12); // 100.0 * 0.0
+        assert!((output[0][3]).abs() < 1e-12); // 200.0 * 0.0
+    }
+
+    #[test]
+    fn test_combine_features_unit_weight() {
+        let pca = [[1.0]];
+        let spatial = [[5.0, 10.0, 15.0]];
+        let mut output = [[0.0f64; 4]; 1];
+        combine_features::<1, 3, 4>(&pca, &spatial, 1.0, &mut output, 1);
+
+        assert!((output[0][0] - 1.0).abs() < 1e-12);
+        assert!((output[0][1] - 5.0).abs() < 1e-12);
+        assert!((output[0][2] - 10.0).abs() < 1e-12);
+        assert!((output[0][3] - 15.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_combine_features_partial_n() {
+        let pca = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
+        let spatial = [[10.0], [20.0], [30.0]];
+        let mut output = [[0.0f64; 3]; 3];
+        // Only process first 2 of 3
+        combine_features::<2, 1, 3>(&pca, &spatial, 0.1, &mut output, 2);
+
+        assert!((output[0][2] - 1.0).abs() < 1e-12); // 10.0 * 0.1
+        assert!((output[1][2] - 2.0).abs() < 1e-12); // 20.0 * 0.1
+        // Third entry untouched
+        assert!((output[2][0]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_extract_spatial_features_basic() {
+        let mut data = [[0.0f64; 4]; 20];
+        // Spike at sample 10: dominant on channel 2, some on channel 1
+        data[10][2] = -10.0;
+        data[10][1] = -3.0;
+
+        let positions = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
+        let events = [MultiChannelEvent {
+            sample: 10,
+            channel: 2,
+            amplitude: 10.0,
+        }];
+        let mut output = [[0.0f64; 2]; 4];
+        let n = extract_spatial_features::<4>(&data, &events, 1, &positions, &mut output);
+        assert_eq!(n, 1);
+        // Weighted: (3*25 + 10*50)/(3+10) = 575/13 ~ 44.23
+        let expected_y = (3.0 * 25.0 + 10.0 * 50.0) / (3.0 + 10.0);
+        assert!(
+            (output[0][1] - expected_y).abs() < 1e-9,
+            "y={}, expected={}",
+            output[0][1],
+            expected_y
+        );
+    }
+
+    #[test]
+    fn test_extract_spatial_features_empty() {
+        let data = [[0.0f64; 2]; 20];
+        let positions = [[0.0, 0.0], [0.0, 25.0]];
+        let mut output = [[0.0f64; 2]; 4];
+        let n = extract_spatial_features::<2>(&data, &[], 0, &positions, &mut output);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn test_extract_spatial_features_out_of_bounds_sample() {
+        let data = [[0.0f64; 2]; 10];
+        let positions = [[0.0, 0.0], [0.0, 25.0]];
+        let events = [MultiChannelEvent {
+            sample: 100, // out of bounds
+            channel: 0,
+            amplitude: 5.0,
+        }];
+        let mut output = [[0.0f64; 2]; 4];
+        let n = extract_spatial_features::<2>(&data, &events, 1, &positions, &mut output);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn test_extract_spatial_features_multiple_events() {
+        let mut data = [[0.0f64; 2]; 30];
+        // Event 1 at sample 5: dominant on channel 0
+        data[5][0] = -8.0;
+        // Event 2 at sample 20: dominant on channel 1
+        data[20][1] = -6.0;
+
+        let positions = [[0.0, 0.0], [0.0, 50.0]];
+        let events = [
+            MultiChannelEvent {
+                sample: 5,
+                channel: 0,
+                amplitude: 8.0,
+            },
+            MultiChannelEvent {
+                sample: 20,
+                channel: 1,
+                amplitude: 6.0,
+            },
+        ];
+        let mut output = [[0.0f64; 2]; 4];
+        let n = extract_spatial_features::<2>(&data, &events, 2, &positions, &mut output);
+        assert_eq!(n, 2);
+        // Event 1: dominated by ch0 at y=0
+        assert!(output[0][1] < 5.0);
+        // Event 2: dominated by ch1 at y=50
+        assert!(output[1][1] > 45.0);
+    }
+
+    #[test]
+    fn test_combine_and_extract_end_to_end() {
+        // Simulate a simple pipeline: detect -> extract spatial -> combine with PCA
+        let mut data = [[0.0f64; 4]; 30];
+        data[15][1] = -10.0;
+        data[15][2] = -4.0;
+
+        let positions = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
+        let events = [MultiChannelEvent {
+            sample: 15,
+            channel: 1,
+            amplitude: 10.0,
+        }];
+
+        // Extract spatial features
+        let mut spatial = [[0.0f64; 2]; 1];
+        let n = extract_spatial_features::<4>(&data, &events, 1, &positions, &mut spatial);
+        assert_eq!(n, 1);
+
+        // Fake PCA features
+        let pca = [[0.5, -0.3, 1.2]];
+
+        // Combine
+        let mut combined = [[0.0f64; 5]; 1];
+        combine_features::<3, 2, 5>(&pca, &spatial, 0.2, &mut combined, 1);
+
+        // PCA part unchanged
+        assert!((combined[0][0] - 0.5).abs() < 1e-12);
+        assert!((combined[0][1] - (-0.3)).abs() < 1e-12);
+        assert!((combined[0][2] - 1.2).abs() < 1e-12);
+        // Spatial part is scaled
+        assert!((combined[0][3] - spatial[0][0] * 0.2).abs() < 1e-12);
+        assert!((combined[0][4] - spatial[0][1] * 0.2).abs() < 1e-12);
     }
 }

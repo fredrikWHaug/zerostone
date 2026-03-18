@@ -50,6 +50,8 @@ use crate::whitening::{WhiteningMatrix, WhiteningMode};
 /// let config = SortConfig::default();
 /// assert!((config.threshold_multiplier - 5.0).abs() < 1e-12);
 /// assert_eq!(config.refractory_samples, 15);
+/// assert!((config.merge_dprime_threshold - 1.5).abs() < 1e-12);
+/// assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -70,6 +72,11 @@ pub struct SortConfig {
     pub cluster_max_count: u32,
     /// Regularization for whitening eigenvalues.
     pub whitening_epsilon: f64,
+    /// D-prime threshold for cluster merging: merge if d' below this value.
+    pub merge_dprime_threshold: f64,
+    /// ISI violation threshold for cluster merging: skip merge if combined
+    /// ISI violation rate would exceed this value.
+    pub merge_isi_threshold: f64,
 }
 
 impl Default for SortConfig {
@@ -84,6 +91,8 @@ impl Default for SortConfig {
             cluster_threshold: 3.0,
             cluster_max_count: 1000,
             whitening_epsilon: 1e-6,
+            merge_dprime_threshold: 1.5,
+            merge_isi_threshold: 0.05,
         }
     }
 }
@@ -230,6 +239,257 @@ fn compute_covariance<const C: usize>(data: &[[f64; C]]) -> [[f64; C]; C] {
         }
     }
     cov
+}
+
+/// Maximum number of clusters supported for merge bookkeeping.
+///
+/// Merge-related scratch arrays are sized to this limit. Pipelines with
+/// `N > MAX_MERGE_CLUSTERS` will only attempt merges among the first
+/// `MAX_MERGE_CLUSTERS` clusters.
+const MAX_MERGE_CLUSTERS: usize = 32;
+
+/// Merge over-split clusters based on d-prime and ISI violation criteria.
+///
+/// Iterates over all active cluster pairs and greedily merges the pair with
+/// the smallest d-prime (most similar feature distributions) provided that:
+///
+/// 1. d-prime is below `dprime_threshold`
+/// 2. The combined spike train would not exceed `isi_threshold` ISI violation rate
+///
+/// When a merge occurs, all labels equal to the removed cluster are reassigned
+/// to the kept cluster, and labels above the removed index are shifted down.
+/// The process repeats until no more valid merges remain.
+///
+/// Operates entirely on fixed-size stack buffers (no heap allocation).
+///
+/// # Arguments
+///
+/// * `n_spikes` - Number of valid entries in `labels`, `feature_buf`, and `event_buf`
+/// * `labels` - Cluster label per spike (modified in place on merge)
+/// * `feature_buf` - PCA feature vector per spike (read-only, K dimensions)
+/// * `event_buf` - Detected events (for spike times used in ISI computation)
+/// * `n_clusters` - Current number of active clusters (modified on return)
+/// * `dprime_threshold` - Merge if d-prime below this value
+/// * `isi_threshold` - Skip merge if combined ISI violation rate exceeds this
+/// * `refractory_samples` - Refractory period in samples for ISI computation
+/// * `scratch` - Working buffer, must have at least `n_spikes` elements
+///
+/// # Returns
+///
+/// The new number of active clusters after all merges.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::sorter::merge_clusters;
+/// use zerostone::spike_sort::MultiChannelEvent;
+///
+/// // Two clusters with identical features should merge
+/// let mut labels = [0, 0, 0, 1, 1, 1];
+/// let features = [[1.0, 0.0], [1.1, 0.1], [0.9, -0.1],
+///                  [1.05, 0.05], [0.95, -0.05], [1.0, 0.0]];
+/// let events = [
+///     MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
+///     MultiChannelEvent { sample: 200, channel: 0, amplitude: 5.0 },
+///     MultiChannelEvent { sample: 300, channel: 0, amplitude: 5.0 },
+///     MultiChannelEvent { sample: 400, channel: 0, amplitude: 5.0 },
+///     MultiChannelEvent { sample: 500, channel: 0, amplitude: 5.0 },
+///     MultiChannelEvent { sample: 600, channel: 0, amplitude: 5.0 },
+/// ];
+/// let mut scratch = [0.0f64; 6];
+/// let new_n = merge_clusters(
+///     6, &mut labels, &features, &events, 2,
+///     1.5, 0.05, 15, &mut scratch,
+/// );
+/// assert_eq!(new_n, 1);
+/// assert!(labels.iter().all(|&l| l == 0));
+/// ```
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+pub fn merge_clusters<const K: usize>(
+    n_spikes: usize,
+    labels: &mut [usize],
+    feature_buf: &[[f64; K]],
+    event_buf: &[MultiChannelEvent],
+    n_clusters: usize,
+    dprime_threshold: f64,
+    isi_threshold: f64,
+    refractory_samples: usize,
+    scratch: &mut [f64],
+) -> usize {
+    if n_clusters < 2 || n_spikes < 2 {
+        return n_clusters;
+    }
+
+    let max_k = if n_clusters > MAX_MERGE_CLUSTERS {
+        MAX_MERGE_CLUSTERS
+    } else {
+        n_clusters
+    };
+
+    let mut current_n = max_k;
+
+    // Fixed-size projection buffers for d-prime computation.
+    // We collect 1D projections of each cluster onto the axis connecting
+    // two cluster centroids. MAX_SPIKES_PER_CLUSTER limits stack usage.
+    const MAX_SPIKES: usize = 512;
+
+    loop {
+        if current_n < 2 {
+            break;
+        }
+
+        // Find the pair with the smallest d-prime
+        let mut best_dp = f64::MAX;
+        let mut best_i = 0usize;
+        let mut best_j = 0usize;
+
+        // Compute centroids for each cluster
+        let mut centroids = [[0.0f64; 32]; MAX_MERGE_CLUSTERS];
+        let mut counts = [0usize; MAX_MERGE_CLUSTERS];
+        let dim = if K > 32 { 32 } else { K };
+
+        for s in 0..n_spikes {
+            if s >= labels.len() {
+                break;
+            }
+            let cl = labels[s];
+            if cl >= current_n {
+                continue;
+            }
+            counts[cl] += 1;
+            for d in 0..dim {
+                centroids[cl][d] += feature_buf[s][d];
+            }
+        }
+        for cl in 0..current_n {
+            if counts[cl] > 0 {
+                let inv = 1.0 / counts[cl] as f64;
+                for d in 0..dim {
+                    centroids[cl][d] *= inv;
+                }
+            }
+        }
+
+        // Evaluate all pairs
+        for i in 0..current_n {
+            if counts[i] < 2 {
+                continue;
+            }
+            for j in (i + 1)..current_n {
+                if counts[j] < 2 {
+                    continue;
+                }
+
+                // Compute discriminant axis: centroid_j - centroid_i
+                let mut axis = [0.0f64; 32];
+                let mut axis_norm_sq = 0.0;
+                for d in 0..dim {
+                    axis[d] = centroids[j][d] - centroids[i][d];
+                    axis_norm_sq += axis[d] * axis[d];
+                }
+                if axis_norm_sq < 1e-30 {
+                    // Centroids are essentially identical -- d-prime ~ 0
+                    best_dp = 0.0;
+                    best_i = i;
+                    best_j = j;
+                    continue;
+                }
+                let inv_norm = 1.0 / libm::sqrt(axis_norm_sq);
+                for d in 0..dim {
+                    axis[d] *= inv_norm;
+                }
+
+                // Project spikes from cluster i and j onto axis and compute d-prime
+                let mut proj_a = [0.0f64; MAX_SPIKES];
+                let mut proj_b = [0.0f64; MAX_SPIKES];
+                let mut na = 0usize;
+                let mut nb = 0usize;
+
+                for s in 0..n_spikes {
+                    if s >= labels.len() {
+                        break;
+                    }
+                    let cl = labels[s];
+                    if cl == i && na < MAX_SPIKES {
+                        let mut dot = 0.0;
+                        for d in 0..dim {
+                            dot += feature_buf[s][d] * axis[d];
+                        }
+                        proj_a[na] = dot;
+                        na += 1;
+                    } else if cl == j && nb < MAX_SPIKES {
+                        let mut dot = 0.0;
+                        for d in 0..dim {
+                            dot += feature_buf[s][d] * axis[d];
+                        }
+                        proj_b[nb] = dot;
+                        nb += 1;
+                    }
+                }
+
+                if na < 2 || nb < 2 {
+                    continue;
+                }
+
+                if let Some(dp) = quality::d_prime(&proj_a[..na], &proj_b[..nb]) {
+                    if dp < best_dp {
+                        best_dp = dp;
+                        best_i = i;
+                        best_j = j;
+                    }
+                }
+            }
+        }
+
+        // Check if the best pair meets the d-prime criterion
+        if best_dp > dprime_threshold || best_dp == f64::MAX {
+            break;
+        }
+
+        // Check ISI violation rate of the merged spike train
+        // Collect spike times for clusters best_i and best_j into scratch
+        let mut n_combined = 0usize;
+        if scratch.len() >= n_spikes {
+            for s in 0..n_spikes {
+                if s >= labels.len() {
+                    break;
+                }
+                let cl = labels[s];
+                if (cl == best_i || cl == best_j) && n_combined < scratch.len() {
+                    scratch[n_combined] = event_buf[s].sample as f64;
+                    n_combined += 1;
+                }
+            }
+        }
+
+        if n_combined >= 2 {
+            let times = &mut scratch[..n_combined];
+            times.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+            let combined_isi =
+                quality::isi_violation_rate(times, refractory_samples as f64).unwrap_or(1.0);
+            if combined_isi > isi_threshold {
+                // Merging would create too many ISI violations.
+                // Mark this pair as ineligible by breaking (greedy -- we tried
+                // the best pair and it failed, so stop).
+                break;
+            }
+        }
+
+        // Execute the merge: relabel best_j -> best_i, shift labels above best_j down
+        for s in 0..n_spikes {
+            if s >= labels.len() {
+                break;
+            }
+            if labels[s] == best_j {
+                labels[s] = best_i;
+            } else if labels[s] > best_j {
+                labels[s] -= 1;
+            }
+        }
+        current_n -= 1;
+    }
+
+    current_n
 }
 
 /// Full multi-channel sorting pipeline.
@@ -417,7 +677,20 @@ pub fn sort_multichannel<
         }
     }
 
-    let n_clusters = km.n_active();
+    let n_clusters_pre = km.n_active();
+
+    // 9b. Post-clustering merge of over-split clusters
+    let n_clusters = merge_clusters::<K>(
+        n_extracted,
+        labels,
+        feature_buf,
+        event_buf,
+        n_clusters_pre,
+        config.merge_dprime_threshold,
+        config.merge_isi_threshold,
+        config.refractory_samples,
+        scratch,
+    );
 
     // 10. Quality metrics
     // Compute per-cluster: mean waveform for SNR, spike times for ISI
@@ -512,6 +785,39 @@ mod kani_proofs {
         assert!(noise[0] >= 0.0, "noise must be non-negative");
         assert!(noise[1] >= 0.0, "noise must be non-negative");
     }
+
+    /// Prove that `merge_clusters` does not panic for small valid inputs.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn merge_clusters_no_panic() {
+        let l0: usize = kani::any();
+        let l1: usize = kani::any();
+        let l2: usize = kani::any();
+        let l3: usize = kani::any();
+
+        kani::assume(l0 < 3 && l1 < 3 && l2 < 3 && l3 < 3);
+
+        let mut labels = [l0, l1, l2, l3];
+        let features = [[0.0f64; 2]; 4];
+        let events = [
+            crate::spike_sort::MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
+            crate::spike_sort::MultiChannelEvent { sample: 200, channel: 0, amplitude: 5.0 },
+            crate::spike_sort::MultiChannelEvent { sample: 300, channel: 0, amplitude: 5.0 },
+            crate::spike_sort::MultiChannelEvent { sample: 400, channel: 0, amplitude: 5.0 },
+        ];
+        let mut scratch = [0.0f64; 4];
+
+        let dp_thresh: f64 = kani::any();
+        let isi_thresh: f64 = kani::any();
+        kani::assume(dp_thresh.is_finite() && dp_thresh >= 0.0 && dp_thresh <= 100.0);
+        kani::assume(isi_thresh.is_finite() && isi_thresh >= 0.0 && isi_thresh <= 1.0);
+
+        let new_n = merge_clusters(
+            4, &mut labels, &features, &events, 3,
+            dp_thresh, isi_thresh, 15, &mut scratch,
+        );
+        assert!(new_n <= 3, "cluster count must not increase");
+    }
 }
 
 #[cfg(test)]
@@ -603,6 +909,8 @@ mod tests {
         assert!((config.cluster_threshold - 3.0).abs() < 1e-12);
         assert_eq!(config.cluster_max_count, 1000);
         assert!((config.whitening_epsilon - 1e-6).abs() < 1e-12);
+        assert!((config.merge_dprime_threshold - 1.5).abs() < 1e-12);
+        assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
     }
 
     #[test]
@@ -788,5 +1096,212 @@ mod tests {
             "Best cluster SNR should be > 1.0, got {}",
             max_snr
         );
+    }
+
+    // =========================================================================
+    // merge_clusters tests
+    // =========================================================================
+
+    #[test]
+    fn test_merge_identical_clusters() {
+        // Two clusters with identical feature distributions should merge
+        let mut labels = [0, 0, 0, 1, 1, 1];
+        let features = [
+            [1.0, 0.0],
+            [1.1, 0.1],
+            [0.9, -0.1],
+            [1.05, 0.05],
+            [0.95, -0.05],
+            [1.0, 0.0],
+        ];
+        let events = [
+            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 200, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 300, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 400, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 500, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 600, channel: 0, amplitude: 5.0 },
+        ];
+        let mut scratch = [0.0f64; 6];
+
+        let new_n = merge_clusters(
+            6, &mut labels, &features, &events, 2,
+            1.5, 0.05, 15, &mut scratch,
+        );
+        assert_eq!(new_n, 1, "Identical clusters should merge, got {}", new_n);
+        assert!(labels.iter().all(|&l| l == 0), "All labels should be 0 after merge");
+    }
+
+    #[test]
+    fn test_merge_well_separated_clusters() {
+        // Two clearly separated clusters should NOT merge
+        let mut labels = [0, 0, 0, 1, 1, 1];
+        let features = [
+            [0.0, 0.0],
+            [0.1, 0.1],
+            [-0.1, -0.1],
+            [10.0, 10.0],
+            [10.1, 10.1],
+            [9.9, 9.9],
+        ];
+        let events = [
+            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 200, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 300, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 400, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 500, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 600, channel: 0, amplitude: 5.0 },
+        ];
+        let mut scratch = [0.0f64; 6];
+
+        let new_n = merge_clusters(
+            6, &mut labels, &features, &events, 2,
+            1.5, 0.05, 15, &mut scratch,
+        );
+        assert_eq!(new_n, 2, "Separated clusters should NOT merge, got {}", new_n);
+    }
+
+    #[test]
+    fn test_merge_isi_violation_prevents_merge() {
+        // Two clusters that are similar but merging would create ISI violations
+        let mut labels = [0, 0, 0, 1, 1, 1];
+        let features = [
+            [1.0, 0.0],
+            [1.1, 0.1],
+            [0.9, -0.1],
+            [1.05, 0.05],
+            [0.95, -0.05],
+            [1.0, 0.0],
+        ];
+        // Spike times interleaved very closely -- merging would create ISI violations
+        let events = [
+            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 102, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 104, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 101, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 103, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 105, channel: 0, amplitude: 5.0 },
+        ];
+        let mut scratch = [0.0f64; 6];
+
+        let new_n = merge_clusters(
+            6, &mut labels, &features, &events, 2,
+            1.5, 0.05, 15, &mut scratch,
+        );
+        assert_eq!(new_n, 2, "ISI violations should prevent merge, got {}", new_n);
+    }
+
+    #[test]
+    fn test_merge_single_cluster() {
+        let mut labels = [0, 0, 0];
+        let features = [[1.0, 0.0], [1.1, 0.1], [0.9, -0.1]];
+        let events = [
+            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 200, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 300, channel: 0, amplitude: 5.0 },
+        ];
+        let mut scratch = [0.0f64; 3];
+
+        let new_n = merge_clusters(
+            3, &mut labels, &features, &events, 1,
+            1.5, 0.05, 15, &mut scratch,
+        );
+        assert_eq!(new_n, 1, "Single cluster should remain unchanged");
+    }
+
+    #[test]
+    fn test_merge_empty() {
+        let mut labels: [usize; 0] = [];
+        let features: [[f64; 2]; 0] = [];
+        let events: [MultiChannelEvent; 0] = [];
+        let mut scratch: [f64; 0] = [];
+
+        let new_n = merge_clusters(
+            0, &mut labels, &features, &events, 0,
+            1.5, 0.05, 15, &mut scratch,
+        );
+        assert_eq!(new_n, 0);
+    }
+
+    #[test]
+    fn test_merge_three_clusters_two_similar() {
+        // Three clusters: 0 and 1 are similar, 2 is separate
+        let mut labels = [0, 0, 0, 1, 1, 1, 2, 2, 2];
+        let features = [
+            [1.0, 0.0], [1.1, 0.1], [0.9, -0.1],   // cluster 0
+            [1.05, 0.05], [0.95, -0.05], [1.0, 0.0], // cluster 1 (similar to 0)
+            [10.0, 10.0], [10.1, 10.1], [9.9, 9.9],  // cluster 2 (far away)
+        ];
+        let events = [
+            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 200, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 300, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 400, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 500, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 600, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 700, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 800, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 900, channel: 0, amplitude: 5.0 },
+        ];
+        let mut scratch = [0.0f64; 9];
+
+        let new_n = merge_clusters(
+            9, &mut labels, &features, &events, 3,
+            1.5, 0.05, 15, &mut scratch,
+        );
+        assert_eq!(new_n, 2, "Should merge 0+1, keep 2 separate, got {}", new_n);
+        // Cluster 2 (originally) should now be at index 1
+        // All of the originally-cluster-0 and originally-cluster-1 should share a label
+        let label_01 = labels[0];
+        for &l in &labels[..6] {
+            assert_eq!(l, label_01, "Merged cluster labels should match");
+        }
+        // Cluster 2 should have a different label
+        let label_2 = labels[6];
+        assert_ne!(label_01, label_2, "Separate cluster should keep its own label");
+        for &l in &labels[6..9] {
+            assert_eq!(l, label_2, "Cluster 2 labels should all match");
+        }
+    }
+
+    #[test]
+    fn test_merge_label_shift() {
+        // Verify that labels above the removed cluster are shifted down properly
+        let mut labels = [0, 0, 1, 1, 2, 2, 3, 3];
+        // Clusters 1 and 2 are similar, 0 and 3 are far apart
+        let features = [
+            [0.0, 0.0], [0.1, 0.0],     // cluster 0
+            [5.0, 5.0], [5.1, 5.1],     // cluster 1
+            [5.05, 5.05], [4.95, 4.95], // cluster 2 (similar to 1)
+            [20.0, 20.0], [20.1, 20.1], // cluster 3
+        ];
+        let events = [
+            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 200, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 300, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 400, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 500, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 600, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 700, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 800, channel: 0, amplitude: 5.0 },
+        ];
+        let mut scratch = [0.0f64; 8];
+
+        let new_n = merge_clusters(
+            8, &mut labels, &features, &events, 4,
+            1.5, 0.05, 15, &mut scratch,
+        );
+        assert_eq!(new_n, 3, "Should merge 1+2 into 3 clusters, got {}", new_n);
+        // Cluster 0 stays at 0
+        assert_eq!(labels[0], 0);
+        assert_eq!(labels[1], 0);
+        // Clusters 1 and 2 merged (all become 1)
+        assert_eq!(labels[2], 1);
+        assert_eq!(labels[3], 1);
+        assert_eq!(labels[4], 1);
+        assert_eq!(labels[5], 1);
+        // Cluster 3 shifted down to 2
+        assert_eq!(labels[6], 2);
+        assert_eq!(labels[7], 2);
     }
 }

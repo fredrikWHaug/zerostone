@@ -174,12 +174,14 @@ pub use riemannian::{
 pub use rms::WindowedRms;
 pub use router::ChannelRouter;
 pub use sorter::{
-    estimate_noise_multichannel, sort_multichannel, ClusterInfo, SortConfig, SortResult,
+    estimate_noise_multichannel, merge_clusters, sort_multichannel, ClusterInfo, SortConfig,
+    SortResult,
 };
 pub use spike_sort::{
-    align_to_peak, deduplicate_events, detect_spikes, detect_spikes_multichannel,
-    estimate_noise_mad, extract_multichannel, extract_peak_channel, MultiChannelEvent, SortError,
-    SpikeCluster, TemplateMatch, WaveformExtractor, WaveformPca,
+    align_to_peak, combine_features, deduplicate_events, detect_spikes,
+    detect_spikes_multichannel, estimate_noise_mad, extract_multichannel, extract_peak_channel,
+    extract_spatial_features, MultiChannelEvent, SortError, SpikeCluster, TemplateMatch,
+    WaveformExtractor, WaveformPca,
 };
 pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;
@@ -187,7 +189,7 @@ pub use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
 pub use template_subtract::{PeelResult, TemplateSubtractor};
 pub use wavelet::{morlet_coefficient, wavelet_half_width, Cwt, MultiChannelCwt, WaveletType};
 pub use welch::WelchPsd;
-pub use whitening::{apply_whitening, WhiteningMatrix, WhiteningMode};
+pub use whitening::{apply_whitening, estimate_noise_covariance, WhiteningMatrix, WhiteningMode};
 pub use window::{
     apply_window, apply_window_f64, coherent_gain, equivalent_noise_bandwidth, window_coefficient,
     WindowType,
