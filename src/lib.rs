@@ -178,10 +178,9 @@ pub use sorter::{
     SortResult,
 };
 pub use spike_sort::{
-    align_to_peak, combine_features, deduplicate_events, detect_spikes,
-    detect_spikes_multichannel, estimate_noise_mad, extract_multichannel, extract_peak_channel,
-    extract_spatial_features, MultiChannelEvent, SortError, SpikeCluster, TemplateMatch,
-    WaveformExtractor, WaveformPca,
+    align_to_peak, combine_features, deduplicate_events, detect_spikes, detect_spikes_multichannel,
+    estimate_noise_mad, extract_multichannel, extract_peak_channel, extract_spatial_features,
+    MultiChannelEvent, SortError, SpikeCluster, TemplateMatch, WaveformExtractor, WaveformPca,
 };
 pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;

@@ -800,10 +800,26 @@ mod kani_proofs {
         let mut labels = [l0, l1, l2, l3];
         let features = [[0.0f64; 2]; 4];
         let events = [
-            crate::spike_sort::MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
-            crate::spike_sort::MultiChannelEvent { sample: 200, channel: 0, amplitude: 5.0 },
-            crate::spike_sort::MultiChannelEvent { sample: 300, channel: 0, amplitude: 5.0 },
-            crate::spike_sort::MultiChannelEvent { sample: 400, channel: 0, amplitude: 5.0 },
+            crate::spike_sort::MultiChannelEvent {
+                sample: 100,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            crate::spike_sort::MultiChannelEvent {
+                sample: 200,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            crate::spike_sort::MultiChannelEvent {
+                sample: 300,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            crate::spike_sort::MultiChannelEvent {
+                sample: 400,
+                channel: 0,
+                amplitude: 5.0,
+            },
         ];
         let mut scratch = [0.0f64; 4];
 
@@ -813,8 +829,15 @@ mod kani_proofs {
         kani::assume(isi_thresh.is_finite() && isi_thresh >= 0.0 && isi_thresh <= 1.0);
 
         let new_n = merge_clusters(
-            4, &mut labels, &features, &events, 3,
-            dp_thresh, isi_thresh, 15, &mut scratch,
+            4,
+            &mut labels,
+            &features,
+            &events,
+            3,
+            dp_thresh,
+            isi_thresh,
+            15,
+            &mut scratch,
         );
         assert!(new_n <= 3, "cluster count must not increase");
     }
@@ -1115,21 +1138,55 @@ mod tests {
             [1.0, 0.0],
         ];
         let events = [
-            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 200, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 300, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 400, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 500, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 600, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent {
+                sample: 100,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 200,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 300,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 400,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 500,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 600,
+                channel: 0,
+                amplitude: 5.0,
+            },
         ];
         let mut scratch = [0.0f64; 6];
 
         let new_n = merge_clusters(
-            6, &mut labels, &features, &events, 2,
-            1.5, 0.05, 15, &mut scratch,
+            6,
+            &mut labels,
+            &features,
+            &events,
+            2,
+            1.5,
+            0.05,
+            15,
+            &mut scratch,
         );
         assert_eq!(new_n, 1, "Identical clusters should merge, got {}", new_n);
-        assert!(labels.iter().all(|&l| l == 0), "All labels should be 0 after merge");
+        assert!(
+            labels.iter().all(|&l| l == 0),
+            "All labels should be 0 after merge"
+        );
     }
 
     #[test]
@@ -1145,20 +1202,55 @@ mod tests {
             [9.9, 9.9],
         ];
         let events = [
-            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 200, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 300, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 400, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 500, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 600, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent {
+                sample: 100,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 200,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 300,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 400,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 500,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 600,
+                channel: 0,
+                amplitude: 5.0,
+            },
         ];
         let mut scratch = [0.0f64; 6];
 
         let new_n = merge_clusters(
-            6, &mut labels, &features, &events, 2,
-            1.5, 0.05, 15, &mut scratch,
+            6,
+            &mut labels,
+            &features,
+            &events,
+            2,
+            1.5,
+            0.05,
+            15,
+            &mut scratch,
         );
-        assert_eq!(new_n, 2, "Separated clusters should NOT merge, got {}", new_n);
+        assert_eq!(
+            new_n, 2,
+            "Separated clusters should NOT merge, got {}",
+            new_n
+        );
     }
 
     #[test]
@@ -1175,20 +1267,55 @@ mod tests {
         ];
         // Spike times interleaved very closely -- merging would create ISI violations
         let events = [
-            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 102, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 104, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 101, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 103, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 105, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent {
+                sample: 100,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 102,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 104,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 101,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 103,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 105,
+                channel: 0,
+                amplitude: 5.0,
+            },
         ];
         let mut scratch = [0.0f64; 6];
 
         let new_n = merge_clusters(
-            6, &mut labels, &features, &events, 2,
-            1.5, 0.05, 15, &mut scratch,
+            6,
+            &mut labels,
+            &features,
+            &events,
+            2,
+            1.5,
+            0.05,
+            15,
+            &mut scratch,
         );
-        assert_eq!(new_n, 2, "ISI violations should prevent merge, got {}", new_n);
+        assert_eq!(
+            new_n, 2,
+            "ISI violations should prevent merge, got {}",
+            new_n
+        );
     }
 
     #[test]
@@ -1196,15 +1323,34 @@ mod tests {
         let mut labels = [0, 0, 0];
         let features = [[1.0, 0.0], [1.1, 0.1], [0.9, -0.1]];
         let events = [
-            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 200, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 300, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent {
+                sample: 100,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 200,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 300,
+                channel: 0,
+                amplitude: 5.0,
+            },
         ];
         let mut scratch = [0.0f64; 3];
 
         let new_n = merge_clusters(
-            3, &mut labels, &features, &events, 1,
-            1.5, 0.05, 15, &mut scratch,
+            3,
+            &mut labels,
+            &features,
+            &events,
+            1,
+            1.5,
+            0.05,
+            15,
+            &mut scratch,
         );
         assert_eq!(new_n, 1, "Single cluster should remain unchanged");
     }
@@ -1217,8 +1363,15 @@ mod tests {
         let mut scratch: [f64; 0] = [];
 
         let new_n = merge_clusters(
-            0, &mut labels, &features, &events, 0,
-            1.5, 0.05, 15, &mut scratch,
+            0,
+            &mut labels,
+            &features,
+            &events,
+            0,
+            1.5,
+            0.05,
+            15,
+            &mut scratch,
         );
         assert_eq!(new_n, 0);
     }
@@ -1228,26 +1381,75 @@ mod tests {
         // Three clusters: 0 and 1 are similar, 2 is separate
         let mut labels = [0, 0, 0, 1, 1, 1, 2, 2, 2];
         let features = [
-            [1.0, 0.0], [1.1, 0.1], [0.9, -0.1],   // cluster 0
-            [1.05, 0.05], [0.95, -0.05], [1.0, 0.0], // cluster 1 (similar to 0)
-            [10.0, 10.0], [10.1, 10.1], [9.9, 9.9],  // cluster 2 (far away)
+            [1.0, 0.0],
+            [1.1, 0.1],
+            [0.9, -0.1], // cluster 0
+            [1.05, 0.05],
+            [0.95, -0.05],
+            [1.0, 0.0], // cluster 1 (similar to 0)
+            [10.0, 10.0],
+            [10.1, 10.1],
+            [9.9, 9.9], // cluster 2 (far away)
         ];
         let events = [
-            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 200, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 300, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 400, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 500, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 600, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 700, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 800, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 900, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent {
+                sample: 100,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 200,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 300,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 400,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 500,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 600,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 700,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 800,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 900,
+                channel: 0,
+                amplitude: 5.0,
+            },
         ];
         let mut scratch = [0.0f64; 9];
 
         let new_n = merge_clusters(
-            9, &mut labels, &features, &events, 3,
-            1.5, 0.05, 15, &mut scratch,
+            9,
+            &mut labels,
+            &features,
+            &events,
+            3,
+            1.5,
+            0.05,
+            15,
+            &mut scratch,
         );
         assert_eq!(new_n, 2, "Should merge 0+1, keep 2 separate, got {}", new_n);
         // Cluster 2 (originally) should now be at index 1
@@ -1258,7 +1460,10 @@ mod tests {
         }
         // Cluster 2 should have a different label
         let label_2 = labels[6];
-        assert_ne!(label_01, label_2, "Separate cluster should keep its own label");
+        assert_ne!(
+            label_01, label_2,
+            "Separate cluster should keep its own label"
+        );
         for &l in &labels[6..9] {
             assert_eq!(l, label_2, "Cluster 2 labels should all match");
         }
@@ -1270,26 +1475,69 @@ mod tests {
         let mut labels = [0, 0, 1, 1, 2, 2, 3, 3];
         // Clusters 1 and 2 are similar, 0 and 3 are far apart
         let features = [
-            [0.0, 0.0], [0.1, 0.0],     // cluster 0
-            [5.0, 5.0], [5.1, 5.1],     // cluster 1
-            [5.05, 5.05], [4.95, 4.95], // cluster 2 (similar to 1)
-            [20.0, 20.0], [20.1, 20.1], // cluster 3
+            [0.0, 0.0],
+            [0.1, 0.0], // cluster 0
+            [5.0, 5.0],
+            [5.1, 5.1], // cluster 1
+            [5.05, 5.05],
+            [4.95, 4.95], // cluster 2 (similar to 1)
+            [20.0, 20.0],
+            [20.1, 20.1], // cluster 3
         ];
         let events = [
-            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 200, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 300, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 400, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 500, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 600, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 700, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 800, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent {
+                sample: 100,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 200,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 300,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 400,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 500,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 600,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 700,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 800,
+                channel: 0,
+                amplitude: 5.0,
+            },
         ];
         let mut scratch = [0.0f64; 8];
 
         let new_n = merge_clusters(
-            8, &mut labels, &features, &events, 4,
-            1.5, 0.05, 15, &mut scratch,
+            8,
+            &mut labels,
+            &features,
+            &events,
+            4,
+            1.5,
+            0.05,
+            15,
+            &mut scratch,
         );
         assert_eq!(new_n, 3, "Should merge 1+2 into 3 clusters, got {}", new_n);
         // Cluster 0 stays at 0

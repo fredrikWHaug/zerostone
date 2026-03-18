@@ -1067,8 +1067,8 @@ pub fn combine_features<const K: usize, const S: usize, const T: usize>(
     output: &mut [[f64; T]],
     n: usize,
 ) {
-    // Compile-time assertion: T must equal K + S
-    const { assert!(T == K + S, "T must equal K + S") };
+    // Runtime assertion (const generics checked at monomorphization)
+    assert!(T == K + S, "T must equal K + S");
 
     let mut i = 0;
     while i < n {
@@ -2349,7 +2349,7 @@ mod tests {
 
         assert!((output[0][2] - 1.0).abs() < 1e-12); // 10.0 * 0.1
         assert!((output[1][2] - 2.0).abs() < 1e-12); // 20.0 * 0.1
-        // Third entry untouched
+                                                     // Third entry untouched
         assert!((output[2][0]).abs() < 1e-12);
     }
 

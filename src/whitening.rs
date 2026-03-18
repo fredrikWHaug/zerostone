@@ -1061,7 +1061,10 @@ mod tests {
         let cov = estimate_noise_covariance(&data, &noise_std, 3.0, 1);
         for i in 0..2 {
             for j in 0..2 {
-                assert!((cov[i][j]).abs() < 1e-15, "Single sample should give zero cov");
+                assert!(
+                    (cov[i][j]).abs() < 1e-15,
+                    "Single sample should give zero cov"
+                );
             }
         }
     }
