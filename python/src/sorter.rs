@@ -38,6 +38,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     cluster_threshold (float): Distance threshold for creating new clusters. Default: 3.0.
 ///     cluster_max_count (int): Maximum observation count per cluster centroid. Default: 1000.
 ///     whitening_epsilon (float): Regularization for whitening eigenvalues. Default: 1e-6.
+///     merge_dprime_threshold (float): D-prime threshold for cluster merging. Default: 1.5.
+///     merge_isi_threshold (float): ISI violation threshold for cluster merging. Default: 0.05.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -68,6 +70,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     cluster_threshold = 3.0,
     cluster_max_count = 1000,
     whitening_epsilon = 1e-6,
+    merge_dprime_threshold = 1.5,
+    merge_isi_threshold = 0.05,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -83,6 +87,8 @@ fn sort_multichannel<'py>(
     cluster_threshold: f64,
     cluster_max_count: u32,
     whitening_epsilon: f64,
+    merge_dprime_threshold: f64,
+    merge_isi_threshold: f64,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -99,6 +105,8 @@ fn sort_multichannel<'py>(
         cluster_threshold,
         cluster_max_count,
         whitening_epsilon,
+        merge_dprime_threshold,
+        merge_isi_threshold,
         ..SortConfig::default()
     };
 

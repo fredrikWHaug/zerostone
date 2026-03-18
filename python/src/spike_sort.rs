@@ -1243,6 +1243,139 @@ fn align_to_peak<'py>(
     }
 }
 
+/// Combine PCA features with spatial features into a single feature vector.
+///
+/// Concatenates PCA features (unscaled) with spatial features (scaled by
+/// ``spatial_weight``) to produce a combined feature array suitable for
+/// clustering.
+///
+/// Args:
+///     pca_features (np.ndarray): 2D float64 array of shape ``(n, k)`` -- PCA features.
+///     spatial_features (np.ndarray): 2D float64 array of shape ``(n, s)`` -- spatial features.
+///     spatial_weight (float): Scaling factor applied to spatial features.
+///
+/// Returns:
+///     np.ndarray: 2D float64 array of shape ``(n, k + s)`` with combined features.
+#[pyfunction]
+fn combine_features<'py>(
+    py: Python<'py>,
+    pca_features: PyReadonlyArray2<f64>,
+    spatial_features: PyReadonlyArray2<f64>,
+    spatial_weight: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let pca_shape = pca_features.shape();
+    let spa_shape = spatial_features.shape();
+    let n = pca_shape[0];
+    let k = pca_shape[1];
+    let s = spa_shape[1];
+
+    if spa_shape[0] != n {
+        return Err(PyValueError::new_err(format!(
+            "pca_features has {} rows but spatial_features has {} rows",
+            n, spa_shape[0]
+        )));
+    }
+
+    let pca_slice = pca_features.as_slice()?;
+    let spa_slice = spatial_features.as_slice()?;
+    let t = k + s;
+
+    let mut output = vec![0.0f64; n * t];
+    for i in 0..n {
+        for j in 0..k {
+            output[i * t + j] = pca_slice[i * k + j];
+        }
+        for j in 0..s {
+            output[i * t + k + j] = spa_slice[i * s + j] * spatial_weight;
+        }
+    }
+
+    let arr = Array2::from_shape_vec((n, t), output)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(PyArray2::from_owned_array(py, arr))
+}
+
+/// Extract spatial position features for each spike from multi-channel data.
+///
+/// For each detected event, extracts peak amplitudes across channels in a
+/// small window and computes center-of-mass position using probe geometry.
+///
+/// Args:
+///     data (np.ndarray): 2D float64 array of shape ``(n_samples, n_channels)``.
+///         n_channels must be 2, 4, 8, 16, 32, or 64.
+///     events (list[dict]): List of ``{"sample": int, "channel": int, "amplitude": float}``.
+///     positions (np.ndarray): 2D float64 array of shape ``(n_channels, 2)`` -- channel positions.
+///
+/// Returns:
+///     np.ndarray: 2D float64 array of shape ``(n_events, 2)`` with (x, y) positions.
+#[pyfunction]
+fn extract_spatial_features<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray2<f64>,
+    events: Bound<'py, pyo3::types::PyList>,
+    positions: PyReadonlyArray2<f64>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let shape = data.shape();
+    let n_samples = shape[0];
+    let n_channels = shape[1];
+    let data_slice = data.as_slice()?;
+
+    let pos_shape = positions.shape();
+    if pos_shape[0] != n_channels || pos_shape[1] != 2 {
+        return Err(PyValueError::new_err(format!(
+            "positions must have shape ({}, 2), got ({}, {})",
+            n_channels, pos_shape[0], pos_shape[1]
+        )));
+    }
+    let pos_slice = positions.as_slice()?;
+
+    let ev = dicts_to_events(py, &events)?;
+    let n_events = ev.len();
+
+    macro_rules! do_extract {
+        ($c:expr) => {{
+            let typed_data: &[[f64; $c]] = {
+                assert!(data_slice.len() == n_samples * $c);
+                unsafe {
+                    core::slice::from_raw_parts(
+                        data_slice.as_ptr() as *const [f64; $c],
+                        n_samples,
+                    )
+                }
+            };
+            let mut pos_arr = [[0.0f64; 2]; $c];
+            for i in 0..$c {
+                pos_arr[i][0] = pos_slice[i * 2];
+                pos_arr[i][1] = pos_slice[i * 2 + 1];
+            }
+            let mut output = vec![[0.0f64; 2]; n_events];
+            let n = zs::extract_spatial_features::<$c>(
+                typed_data, &ev, n_events, &pos_arr, &mut output,
+            );
+            let mut flat = Vec::with_capacity(n * 2);
+            for i in 0..n {
+                flat.push(output[i][0]);
+                flat.push(output[i][1]);
+            }
+            let arr = Array2::from_shape_vec((n, 2), flat)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            Ok(PyArray2::from_owned_array(py, arr))
+        }};
+    }
+
+    match n_channels {
+        2 => do_extract!(2),
+        4 => do_extract!(4),
+        8 => do_extract!(8),
+        16 => do_extract!(16),
+        32 => do_extract!(32),
+        64 => do_extract!(64),
+        _ => Err(PyValueError::new_err(
+            "n_channels must be 2, 4, 8, 16, 32, or 64",
+        )),
+    }
+}
+
 /// Register spike sorting functions and classes.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_waveforms, m)?)?;
@@ -1252,5 +1385,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(detect_spikes_multichannel, m)?)?;
     m.add_function(wrap_pyfunction!(deduplicate_events, m)?)?;
     m.add_function(wrap_pyfunction!(align_to_peak, m)?)?;
+    m.add_function(wrap_pyfunction!(combine_features, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_spatial_features, m)?)?;
     Ok(())
 }

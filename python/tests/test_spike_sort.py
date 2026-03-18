@@ -555,3 +555,109 @@ class TestMultichannelEndToEnd:
         spike2_found = any(597 <= s <= 603 for s in samples)
         assert spike1_found, f"Spike 1 near t=200 not found in {samples}"
         assert spike2_found, f"Spike 2 near t=600 not found in {samples}"
+
+
+# ---- Feature combination tests ----
+
+
+class TestCombineFeatures:
+    def test_basic_shape(self):
+        pca = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        spatial = np.array([[10.0, 20.0], [30.0, 40.0]])
+        combined = zbci.combine_features(pca, spatial, spatial_weight=0.5)
+        assert combined.shape == (2, 5)
+
+    def test_pca_features_unscaled(self):
+        pca = np.array([[1.0, 2.0, 3.0]])
+        spatial = np.array([[10.0, 20.0]])
+        combined = zbci.combine_features(pca, spatial, spatial_weight=0.5)
+        np.testing.assert_array_almost_equal(combined[0, :3], [1.0, 2.0, 3.0])
+
+    def test_spatial_features_scaled(self):
+        pca = np.array([[1.0, 2.0, 3.0]])
+        spatial = np.array([[10.0, 20.0]])
+        combined = zbci.combine_features(pca, spatial, spatial_weight=0.5)
+        np.testing.assert_array_almost_equal(combined[0, 3:], [5.0, 10.0])
+
+    def test_zero_weight(self):
+        pca = np.array([[1.0, 2.0]])
+        spatial = np.array([[100.0, 200.0]])
+        combined = zbci.combine_features(pca, spatial, spatial_weight=0.0)
+        np.testing.assert_array_almost_equal(combined[0, 2:], [0.0, 0.0])
+
+    def test_unit_weight(self):
+        pca = np.array([[1.0, 2.0]])
+        spatial = np.array([[10.0, 20.0]])
+        combined = zbci.combine_features(pca, spatial, spatial_weight=1.0)
+        np.testing.assert_array_almost_equal(combined[0], [1.0, 2.0, 10.0, 20.0])
+
+    def test_mismatched_rows_error(self):
+        pca = np.array([[1.0, 2.0]])
+        spatial = np.array([[10.0], [20.0]])
+        with pytest.raises(ValueError, match="rows"):
+            zbci.combine_features(pca, spatial, spatial_weight=1.0)
+
+    def test_many_rows(self):
+        n = 100
+        pca = np.random.default_rng(42).standard_normal((n, 3))
+        spatial = np.random.default_rng(43).standard_normal((n, 2))
+        combined = zbci.combine_features(pca, spatial, spatial_weight=2.0)
+        assert combined.shape == (n, 5)
+        np.testing.assert_array_almost_equal(combined[:, :3], pca)
+        np.testing.assert_array_almost_equal(combined[:, 3:], spatial * 2.0)
+
+
+class TestExtractSpatialFeatures:
+    def test_basic_extraction(self):
+        data = np.zeros((20, 4), dtype=np.float64)
+        data[10, 2] = -10.0
+        data[10, 1] = -3.0
+        positions = np.array(
+            [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]]
+        )
+        events = [{"sample": 10, "channel": 2, "amplitude": 10.0}]
+        features = zbci.extract_spatial_features(data, events, positions)
+        assert features.shape == (1, 2)
+        # Dominated by ch2 at y=50, with pull from ch1 at y=25
+        assert features[0, 1] > 40.0
+
+    def test_no_events(self):
+        data = np.zeros((20, 4), dtype=np.float64)
+        positions = np.array(
+            [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]]
+        )
+        features = zbci.extract_spatial_features(data, [], positions)
+        assert features.shape == (0, 2)
+
+    def test_multiple_events(self):
+        data = np.zeros((100, 4), dtype=np.float64)
+        data[20, 0] = -8.0
+        data[60, 3] = -12.0
+        positions = np.array(
+            [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]]
+        )
+        events = [
+            {"sample": 20, "channel": 0, "amplitude": 8.0},
+            {"sample": 60, "channel": 3, "amplitude": 12.0},
+        ]
+        features = zbci.extract_spatial_features(data, events, positions)
+        assert features.shape == (2, 2)
+        # First event near ch0 (y=0), second near ch3 (y=75)
+        assert features[0, 1] < features[1, 1]
+
+    def test_wrong_positions_shape(self):
+        data = np.zeros((20, 4), dtype=np.float64)
+        positions = np.array([[0.0, 0.0], [0.0, 25.0]])  # wrong n_channels
+        events = [{"sample": 10, "channel": 0, "amplitude": 5.0}]
+        with pytest.raises(ValueError, match="positions"):
+            zbci.extract_spatial_features(data, events, positions)
+
+    def test_2_channels(self):
+        data = np.zeros((30, 2), dtype=np.float64)
+        data[15, 0] = -7.0
+        positions = np.array([[0.0, 0.0], [0.0, 50.0]])
+        events = [{"sample": 15, "channel": 0, "amplitude": 7.0}]
+        features = zbci.extract_spatial_features(data, events, positions)
+        assert features.shape == (1, 2)
+        # Dominated by ch0 at y=0
+        assert features[0, 1] < 25.0

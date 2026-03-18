@@ -1,10 +1,13 @@
 //! Python bindings for spatial whitening (ZCA/PCA).
 
-use numpy::ndarray::Array1;
-use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
+use numpy::ndarray::{Array1, Array2};
+use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use zerostone::whitening::{WhiteningMatrix as ZsWhiteningMatrix, WhiteningMode};
+use zerostone::whitening::{
+    estimate_noise_covariance as zs_estimate_noise_covariance, WhiteningMatrix as ZsWhiteningMatrix,
+    WhiteningMode,
+};
 
 // --- Macro for const-generic dispatch ---
 
@@ -192,8 +195,91 @@ impl WhiteningMatrix {
     }
 }
 
-/// Register whitening classes.
+/// Estimate noise covariance from spike-free segments of multi-channel data.
+///
+/// Identifies quiet periods (where all channels are below threshold) and
+/// computes covariance only from those samples. Falls back to full-data
+/// covariance if fewer than ``min_quiet_samples`` quiet samples are found.
+///
+/// Args:
+///     data (np.ndarray): 2D float64 array of shape ``(n_samples, n_channels)``.
+///         n_channels must be 2, 4, 8, 16, 32, or 64.
+///     noise_std (np.ndarray): 1D float64 array of per-channel noise standard deviations.
+///     threshold_multiplier (float): Amplitude threshold in noise units. Default: 3.0.
+///     min_quiet_samples (int): Minimum quiet samples required before fallback. Default: 100.
+///
+/// Returns:
+///     np.ndarray: 2D float64 covariance matrix of shape ``(n_channels, n_channels)``.
+#[pyfunction]
+#[pyo3(signature = (data, noise_std, threshold_multiplier=3.0, min_quiet_samples=100))]
+fn estimate_noise_covariance<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray2<f64>,
+    noise_std: PyReadonlyArray1<f64>,
+    threshold_multiplier: f64,
+    min_quiet_samples: usize,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let shape = data.shape();
+    let n_samples = shape[0];
+    let n_channels = shape[1];
+    let data_slice = data.as_slice()?;
+    let noise_slice = noise_std.as_slice()?;
+
+    if noise_slice.len() != n_channels {
+        return Err(PyValueError::new_err(format!(
+            "noise_std has {} elements, expected {}",
+            noise_slice.len(),
+            n_channels
+        )));
+    }
+
+    macro_rules! do_estimate {
+        ($c:expr) => {{
+            let typed_data: &[[f64; $c]] = {
+                assert!(data_slice.len() == n_samples * $c);
+                unsafe {
+                    core::slice::from_raw_parts(
+                        data_slice.as_ptr() as *const [f64; $c],
+                        n_samples,
+                    )
+                }
+            };
+            let mut noise_arr = [0.0f64; $c];
+            noise_arr.copy_from_slice(noise_slice);
+            let cov = zs_estimate_noise_covariance::<$c>(
+                typed_data,
+                &noise_arr,
+                threshold_multiplier,
+                min_quiet_samples,
+            );
+            let mut flat = Vec::with_capacity($c * $c);
+            for i in 0..$c {
+                for j in 0..$c {
+                    flat.push(cov[i][j]);
+                }
+            }
+            let arr = Array2::from_shape_vec(($c, $c), flat)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            Ok(PyArray2::from_owned_array(py, arr))
+        }};
+    }
+
+    match n_channels {
+        2 => do_estimate!(2),
+        4 => do_estimate!(4),
+        8 => do_estimate!(8),
+        16 => do_estimate!(16),
+        32 => do_estimate!(32),
+        64 => do_estimate!(64),
+        _ => Err(PyValueError::new_err(
+            "n_channels must be 2, 4, 8, 16, 32, or 64",
+        )),
+    }
+}
+
+/// Register whitening classes and functions.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<WhiteningMatrix>()?;
+    m.add_function(wrap_pyfunction!(estimate_noise_covariance, m)?)?;
     Ok(())
 }
