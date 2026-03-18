@@ -303,6 +303,138 @@ pub fn apply_whitening<const C: usize, const M: usize>(
     wm.apply(sample)
 }
 
+/// Estimate noise covariance from spike-free segments of multi-channel data.
+///
+/// Identifies quiet periods (where all channels are below `threshold * noise_std`)
+/// and computes covariance only from those samples. This produces a cleaner
+/// whitening matrix that doesn't overfit to spike waveform structure.
+///
+/// Falls back to full-data covariance if fewer than `min_samples` quiet
+/// samples are found.
+///
+/// # Type Parameters
+/// * `C` - Number of channels
+///
+/// # Arguments
+/// * `data` - Multi-channel recording data, one `[f64; C]` per time sample
+/// * `noise_std` - Per-channel noise standard deviation (e.g., from MAD estimation)
+/// * `threshold` - Amplitude threshold in noise units (typically 2.0-3.0)
+/// * `min_samples` - Minimum quiet samples required (fallback to full data if fewer)
+///
+/// # Returns
+/// Covariance matrix `[[f64; C]; C]`
+///
+/// # Examples
+///
+/// ```
+/// use zerostone::whitening::estimate_noise_covariance;
+///
+/// // 3 channels, 6 quiet samples
+/// let data = [
+///     [0.1, -0.2,  0.05],
+///     [0.3,  0.1, -0.1],
+///     [0.0,  0.15, 0.2],
+///     [-0.1, 0.0,  0.1],
+///     [0.2, -0.1,  0.0],
+///     [-0.2, 0.05, 0.15],
+/// ];
+/// let noise_std = [1.0, 1.0, 1.0];
+/// let cov = estimate_noise_covariance(&data, &noise_std, 3.0, 2);
+/// // Result is a 3x3 symmetric covariance matrix
+/// assert!((cov[0][1] - cov[1][0]).abs() < 1e-12);
+/// ```
+#[allow(clippy::needless_range_loop)]
+pub fn estimate_noise_covariance<const C: usize>(
+    data: &[[f64; C]],
+    noise_std: &[f64; C],
+    threshold: f64,
+    min_samples: usize,
+) -> [[f64; C]; C] {
+    let n = data.len();
+    if n <= 1 {
+        return [[0.0; C]; C];
+    }
+
+    // Count quiet samples: all channels below threshold * noise_std[ch]
+    let mut quiet_count: usize = 0;
+    for sample in data.iter() {
+        let mut all_quiet = true;
+        for ch in 0..C {
+            if libm::fabs(sample[ch]) >= threshold * noise_std[ch] {
+                all_quiet = false;
+                break;
+            }
+        }
+        if all_quiet {
+            quiet_count += 1;
+        }
+    }
+
+    // Decide whether to use quiet-only or full data
+    let use_quiet = quiet_count >= min_samples && min_samples > 0;
+
+    // First pass: compute means
+    let mut mean = [0.0f64; C];
+    let mut count: usize = 0;
+    for sample in data.iter() {
+        if use_quiet {
+            let mut all_quiet = true;
+            for ch in 0..C {
+                if libm::fabs(sample[ch]) >= threshold * noise_std[ch] {
+                    all_quiet = false;
+                    break;
+                }
+            }
+            if !all_quiet {
+                continue;
+            }
+        }
+        for ch in 0..C {
+            mean[ch] += sample[ch];
+        }
+        count += 1;
+    }
+
+    if count <= 1 {
+        return [[0.0; C]; C];
+    }
+
+    for ch in 0..C {
+        mean[ch] /= count as f64;
+    }
+
+    // Second pass: compute covariance (centered outer products)
+    let mut cov = [[0.0f64; C]; C];
+    for sample in data.iter() {
+        if use_quiet {
+            let mut all_quiet = true;
+            for ch in 0..C {
+                if libm::fabs(sample[ch]) >= threshold * noise_std[ch] {
+                    all_quiet = false;
+                    break;
+                }
+            }
+            if !all_quiet {
+                continue;
+            }
+        }
+        for i in 0..C {
+            for j in 0..C {
+                cov[i][j] += (sample[i] - mean[i]) * (sample[j] - mean[j]);
+            }
+        }
+    }
+
+    let denom = (count - 1) as f64;
+    for i in 0..C {
+        for j in 0..C {
+            cov[i][j] /= denom;
+        }
+    }
+
+    cov
+}
+
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
@@ -394,6 +526,37 @@ mod kani_proofs {
 
         assert!(r1[0] == r2[0], "free fn must match method for ch 0");
         assert!(r1[1] == r2[1], "free fn must match method for ch 1");
+    }
+
+    /// Prove that `estimate_noise_covariance` does not panic for small inputs.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn estimate_noise_covariance_no_panic() {
+        let s0: [f64; 2] = [kani::any(), kani::any()];
+        let s1: [f64; 2] = [kani::any(), kani::any()];
+        let s2: [f64; 2] = [kani::any(), kani::any()];
+        let noise_std: [f64; 2] = [kani::any(), kani::any()];
+        let threshold: f64 = kani::any();
+
+        kani::assume(s0[0].is_finite() && s0[0] >= -100.0 && s0[0] <= 100.0);
+        kani::assume(s0[1].is_finite() && s0[1] >= -100.0 && s0[1] <= 100.0);
+        kani::assume(s1[0].is_finite() && s1[0] >= -100.0 && s1[0] <= 100.0);
+        kani::assume(s1[1].is_finite() && s1[1] >= -100.0 && s1[1] <= 100.0);
+        kani::assume(s2[0].is_finite() && s2[0] >= -100.0 && s2[0] <= 100.0);
+        kani::assume(s2[1].is_finite() && s2[1] >= -100.0 && s2[1] <= 100.0);
+        kani::assume(noise_std[0].is_finite() && noise_std[0] >= 0.01 && noise_std[0] <= 100.0);
+        kani::assume(noise_std[1].is_finite() && noise_std[1] >= 0.01 && noise_std[1] <= 100.0);
+        kani::assume(threshold.is_finite() && threshold >= 0.0 && threshold <= 100.0);
+
+        let data = [s0, s1, s2];
+        let result = estimate_noise_covariance(&data, &noise_std, threshold, 2);
+
+        // Result should contain finite values
+        for i in 0..2 {
+            for j in 0..2 {
+                assert!(result[i][j].is_finite(), "covariance must be finite");
+            }
+        }
     }
 }
 
@@ -767,6 +930,140 @@ mod tests {
         let out2 = apply_whitening(&wm, &[2.0, 3.0]);
         assert!((out1[0] - out2[0]).abs() < 1e-15);
         assert!((out1[1] - out2[1]).abs() < 1e-15);
+    }
+
+    #[test]
+    fn test_noise_cov_all_quiet() {
+        // When all data is below threshold, noise cov should equal full cov
+        let data = [
+            [0.1, -0.2],
+            [0.3, 0.1],
+            [-0.1, 0.15],
+            [0.2, -0.1],
+            [-0.2, 0.05],
+        ];
+        let noise_std = [1.0, 1.0];
+        let noise_cov = estimate_noise_covariance(&data, &noise_std, 3.0, 2);
+        let full_cov = sample_covariance(&data);
+        for i in 0..2 {
+            for j in 0..2 {
+                assert!(
+                    (noise_cov[i][j] - full_cov[i][j]).abs() < 1e-12,
+                    "All-quiet noise cov should match full cov at [{i}][{j}]"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_noise_cov_with_spikes() {
+        // Inject large spikes: noise cov should differ from full cov
+        let mut data = [[0.0f64; 2]; 100];
+        let mut rng = Rng::new(123);
+        for i in 0..100 {
+            data[i] = [rng.gaussian(0.0, 1.0), rng.gaussian(0.0, 1.0)];
+        }
+        // Inject spikes at known positions
+        data[10] = [50.0, 50.0];
+        data[20] = [-40.0, 60.0];
+        data[30] = [45.0, -55.0];
+
+        let noise_std = [1.0, 1.0];
+        let noise_cov = estimate_noise_covariance(&data, &noise_std, 5.0, 10);
+        let full_cov = sample_covariance(&data);
+
+        // Full covariance should be inflated by spikes
+        // Noise covariance should have smaller diagonal entries
+        assert!(
+            noise_cov[0][0] < full_cov[0][0],
+            "Noise var should be smaller than full var: {} vs {}",
+            noise_cov[0][0],
+            full_cov[0][0]
+        );
+        assert!(
+            noise_cov[1][1] < full_cov[1][1],
+            "Noise var should be smaller than full var: {} vs {}",
+            noise_cov[1][1],
+            full_cov[1][1]
+        );
+    }
+
+    #[test]
+    fn test_noise_cov_fallback() {
+        // All samples exceed threshold -> falls back to full covariance
+        let data = [
+            [10.0, 10.0],
+            [11.0, 9.0],
+            [-10.0, 10.0],
+            [9.0, -11.0],
+            [-11.0, -9.0],
+        ];
+        let noise_std = [1.0, 1.0];
+        // threshold=3.0: all samples have |val| > 3.0, so 0 quiet samples
+        let noise_cov = estimate_noise_covariance(&data, &noise_std, 3.0, 2);
+        let full_cov = sample_covariance(&data);
+        for i in 0..2 {
+            for j in 0..2 {
+                assert!(
+                    (noise_cov[i][j] - full_cov[i][j]).abs() < 1e-12,
+                    "Fallback should match full cov at [{i}][{j}]"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_noise_cov_empty_data() {
+        let data: &[[f64; 2]] = &[];
+        let noise_std = [1.0, 1.0];
+        let cov = estimate_noise_covariance(data, &noise_std, 3.0, 2);
+        for i in 0..2 {
+            for j in 0..2 {
+                assert!((cov[i][j]).abs() < 1e-15, "Empty data should give zero cov");
+            }
+        }
+    }
+
+    #[test]
+    fn test_noise_cov_symmetry() {
+        let mut rng = Rng::new(555);
+        let mut data = [[0.0f64; 3]; 200];
+        for i in 0..200 {
+            data[i] = [
+                rng.gaussian(0.0, 1.0),
+                rng.gaussian(0.0, 2.0),
+                rng.gaussian(0.0, 1.5),
+            ];
+        }
+        // Inject a few spikes
+        data[50] = [20.0, 30.0, 25.0];
+        data[100] = [-15.0, 20.0, -30.0];
+
+        let noise_std = [1.0, 2.0, 1.5];
+        let cov = estimate_noise_covariance(&data, &noise_std, 4.0, 10);
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!(
+                    (cov[i][j] - cov[j][i]).abs() < 1e-12,
+                    "Covariance must be symmetric: cov[{i}][{j}]={} vs cov[{j}][{i}]={}",
+                    cov[i][j],
+                    cov[j][i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_noise_cov_single_sample() {
+        // Single sample: not enough for covariance, should return zeros
+        let data = [[1.0, 2.0]];
+        let noise_std = [1.0, 1.0];
+        let cov = estimate_noise_covariance(&data, &noise_std, 3.0, 1);
+        for i in 0..2 {
+            for j in 0..2 {
+                assert!((cov[i][j]).abs() < 1e-15, "Single sample should give zero cov");
+            }
+        }
     }
 
     #[test]
