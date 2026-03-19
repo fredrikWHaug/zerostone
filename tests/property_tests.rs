@@ -9,9 +9,12 @@ use zerostone::pac;
 use zerostone::probe::ProbeLayout;
 use zerostone::quality;
 use zerostone::riemannian;
-use zerostone::sorter::{estimate_noise_multichannel, sort_multichannel, SortConfig};
+use zerostone::sorter::{
+    estimate_noise_multichannel, merge_clusters, sort_multichannel, SortConfig,
+};
 use zerostone::spike_sort::{
-    align_to_peak, deduplicate_events, detect_spikes_multichannel, MultiChannelEvent,
+    align_to_peak, combine_features, compute_adaptive_thresholds, deduplicate_events,
+    detect_spikes_multichannel, MultiChannelEvent,
 };
 use zerostone::template_subtract::{PeelResult, TemplateSubtractor};
 use zerostone::whitening::{WhiteningMatrix, WhiteningMode};
@@ -862,6 +865,220 @@ proptest! {
             prop_assert!(
                 sr.n_clusters >= nonzero_clusters,
                 "n_clusters {} < nonzero clusters {}", sr.n_clusters, nonzero_clusters
+            );
+        }
+    }
+
+    // =========================================================================
+    // Merge + feature combination properties
+    // =========================================================================
+
+    /// merge_clusters output count is <= input count.
+    #[test]
+    fn merge_never_increases_clusters(
+        n_spikes in 4usize..20,
+        n_clusters in 2usize..5,
+        seed in 0u64..1000,
+    ) {
+        let mut s = seed.wrapping_add(1);
+        let mut next = || -> f64 {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            ((s % 2_000_000) as f64 - 1_000_000.0) / 1_000_000.0
+        };
+
+        let mut labels: Vec<usize> = (0..n_spikes).map(|i| i % n_clusters).collect();
+        let feature_buf: Vec<[f64; 3]> = (0..n_spikes)
+            .map(|_| [next(), next(), next()])
+            .collect();
+        let event_buf: Vec<MultiChannelEvent> = (0..n_spikes)
+            .map(|i| MultiChannelEvent {
+                sample: i * 20,
+                channel: i % 2,
+                amplitude: next().abs() + 1.0,
+            })
+            .collect();
+        let mut scratch = vec![0.0f64; n_spikes];
+
+        let result = merge_clusters::<3>(
+            n_spikes, &mut labels, &feature_buf, &event_buf,
+            n_clusters, 1.5, 0.2, 10, &mut scratch,
+        );
+        prop_assert!(
+            result <= n_clusters,
+            "merge_clusters returned {} > input n_clusters {}", result, n_clusters
+        );
+    }
+
+    /// After merge, all labels are in [0, new_n_clusters).
+    #[test]
+    fn merge_labels_valid(
+        n_spikes in 4usize..20,
+        n_clusters in 2usize..5,
+        seed in 0u64..1000,
+    ) {
+        let mut s = seed.wrapping_add(1);
+        let mut next = || -> f64 {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            ((s % 2_000_000) as f64 - 1_000_000.0) / 1_000_000.0
+        };
+
+        let mut labels: Vec<usize> = (0..n_spikes).map(|i| i % n_clusters).collect();
+        let feature_buf: Vec<[f64; 3]> = (0..n_spikes)
+            .map(|_| [next(), next(), next()])
+            .collect();
+        let event_buf: Vec<MultiChannelEvent> = (0..n_spikes)
+            .map(|i| MultiChannelEvent {
+                sample: i * 20,
+                channel: i % 2,
+                amplitude: next().abs() + 1.0,
+            })
+            .collect();
+        let mut scratch = vec![0.0f64; n_spikes];
+
+        let new_n = merge_clusters::<3>(
+            n_spikes, &mut labels, &feature_buf, &event_buf,
+            n_clusters, 1.5, 0.2, 10, &mut scratch,
+        );
+        for (i, &lbl) in labels[..n_spikes].iter().enumerate() {
+            prop_assert!(
+                lbl < new_n,
+                "label[{i}] = {lbl} >= new_n_clusters {new_n}"
+            );
+        }
+    }
+
+    /// combine_features output preserves PCA features and scales spatial features.
+    #[test]
+    fn combine_features_preserves_pca(
+        pca_vals in prop::collection::vec(-100.0f64..100.0, 8..=8),
+        spatial_vals in prop::collection::vec(-100.0f64..100.0, 8..=8),
+        weight in 0.01f64..10.0,
+    ) {
+        // K=2, S=2, T=4, n=4 (4 spikes with 2 PCA features and 2 spatial features each)
+        let pca: Vec<[f64; 2]> = pca_vals.chunks_exact(2)
+            .map(|c| [c[0], c[1]])
+            .collect();
+        let spatial: Vec<[f64; 2]> = spatial_vals.chunks_exact(2)
+            .map(|c| [c[0], c[1]])
+            .collect();
+        let mut output = [[0.0f64; 4]; 4];
+        combine_features::<2, 2, 4>(&pca, &spatial, weight, &mut output, 4);
+
+        for i in 0..4 {
+            prop_assert!(
+                (output[i][0] - pca[i][0]).abs() < 1e-12,
+                "output[{i}][0] = {} != pca {}", output[i][0], pca[i][0]
+            );
+            prop_assert!(
+                (output[i][1] - pca[i][1]).abs() < 1e-12,
+                "output[{i}][1] = {} != pca {}", output[i][1], pca[i][1]
+            );
+            prop_assert!(
+                (output[i][2] - spatial[i][0] * weight).abs() < 1e-10,
+                "output[{i}][2] = {} != spatial*w {}", output[i][2], spatial[i][0] * weight
+            );
+            prop_assert!(
+                (output[i][3] - spatial[i][1] * weight).abs() < 1e-10,
+                "output[{i}][3] = {} != spatial*w {}", output[i][3], spatial[i][1] * weight
+            );
+        }
+    }
+
+    // =========================================================================
+    // Adaptive threshold properties
+    // =========================================================================
+
+    /// Adaptive thresholds are always >= min_threshold.
+    #[test]
+    fn adaptive_threshold_ge_floor(
+        vals in prop::collection::vec(-10.0f64..10.0, 200..=200),
+        base_mult in 3.0f64..8.0,
+        min_thresh in 0.1f64..5.0,
+    ) {
+        // 4 channels, 50 time steps
+        let mut data = [[0.0f64; 4]; 50];
+        for (i, chunk) in vals.chunks_exact(4).enumerate() {
+            for (ch, &v) in chunk.iter().enumerate() {
+                data[i][ch] = v;
+            }
+        }
+        let mut scratch = [0.0f64; 50];
+        let thresholds = compute_adaptive_thresholds::<4>(
+            &data, base_mult, min_thresh, 100.0, 30000.0, &mut scratch,
+        );
+        for (ch, &t) in thresholds.iter().enumerate() {
+            prop_assert!(
+                t >= min_thresh - 1e-12,
+                "threshold[{ch}] = {t} < min_threshold {min_thresh}"
+            );
+            prop_assert!(t.is_finite(), "threshold[{ch}] is not finite");
+        }
+    }
+
+    /// Higher base_multiplier produces higher or equal thresholds (no activity scaling).
+    #[test]
+    fn adaptive_threshold_monotone_in_multiplier(
+        vals in prop::collection::vec(-10.0f64..10.0, 80..=80),
+        low_mult in 2.0f64..4.0,
+        delta in 0.5f64..4.0,
+    ) {
+        let mut data = [[0.0f64; 2]; 40];
+        for (i, chunk) in vals.chunks_exact(2).enumerate() {
+            data[i][0] = chunk[0];
+            data[i][1] = chunk[1];
+        }
+        let high_mult = low_mult + delta;
+        let mut scratch = [0.0f64; 40];
+        // Use f64::MAX for max_rate_hz to disable activity scaling,
+        // which can break monotonicity (fewer crossings at high mult
+        // means less upward scaling, potentially yielding lower threshold).
+        let t_low = compute_adaptive_thresholds::<2>(
+            &data, low_mult, 0.1, f64::MAX, 30000.0, &mut scratch,
+        );
+        let t_high = compute_adaptive_thresholds::<2>(
+            &data, high_mult, 0.1, f64::MAX, 30000.0, &mut scratch,
+        );
+        for ch in 0..2 {
+            prop_assert!(
+                t_high[ch] >= t_low[ch] - 1e-10,
+                "ch {ch}: higher multiplier gave lower threshold: {} < {}",
+                t_high[ch], t_low[ch]
+            );
+        }
+    }
+
+    /// With spatial_weight=0, output equals [pca_features..., 0, 0].
+    #[test]
+    fn combine_features_zero_weight(
+        pca_vals in prop::collection::vec(-100.0f64..100.0, 6..=6),
+        spatial_vals in prop::collection::vec(-100.0f64..100.0, 3..=3),
+    ) {
+        // K=2, S=1, T=3, n=3
+        let pca: Vec<[f64; 2]> = pca_vals.chunks_exact(2)
+            .map(|c| [c[0], c[1]])
+            .collect();
+        let spatial: Vec<[f64; 1]> = spatial_vals.iter()
+            .map(|&v| [v])
+            .collect();
+        let mut output = [[0.0f64; 3]; 3];
+        combine_features::<2, 1, 3>(&pca, &spatial, 0.0, &mut output, 3);
+
+        for i in 0..3 {
+            prop_assert!(
+                (output[i][0] - pca[i][0]).abs() < 1e-12,
+                "output[{i}][0] = {} != pca {}", output[i][0], pca[i][0]
+            );
+            prop_assert!(
+                (output[i][1] - pca[i][1]).abs() < 1e-12,
+                "output[{i}][1] = {} != pca {}", output[i][1], pca[i][1]
+            );
+            prop_assert!(
+                output[i][2] == 0.0,
+                "output[{i}][2] = {} should be 0.0 with zero weight", output[i][2]
             );
         }
     }
