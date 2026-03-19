@@ -40,6 +40,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     whitening_epsilon (float): Regularization for whitening eigenvalues. Default: 1e-6.
 ///     merge_dprime_threshold (float): D-prime threshold for cluster merging. Default: 1.5.
 ///     merge_isi_threshold (float): ISI violation threshold for cluster merging. Default: 0.05.
+///     split_min_cluster_size (int): Minimum spikes per cluster to attempt splitting. Default: 10.
+///     split_bimodality_threshold (float): Gap/std threshold for cluster splitting. Default: 2.0.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -72,6 +74,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     whitening_epsilon = 1e-6,
     merge_dprime_threshold = 1.5,
     merge_isi_threshold = 0.05,
+    split_min_cluster_size = 10,
+    split_bimodality_threshold = 2.0,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -89,6 +93,8 @@ fn sort_multichannel<'py>(
     whitening_epsilon: f64,
     merge_dprime_threshold: f64,
     merge_isi_threshold: f64,
+    split_min_cluster_size: usize,
+    split_bimodality_threshold: f64,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -107,7 +113,8 @@ fn sort_multichannel<'py>(
         whitening_epsilon,
         merge_dprime_threshold,
         merge_isi_threshold,
-        ..SortConfig::default()
+        split_min_cluster_size,
+        split_bimodality_threshold,
     };
 
     // W=32, K=3, WM=1024, N=16
