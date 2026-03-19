@@ -651,6 +651,140 @@ pub fn detect_spikes_multichannel<const C: usize>(
     total
 }
 
+/// Compute per-channel adaptive detection thresholds from noise statistics.
+///
+/// For each channel:
+/// 1. Estimates noise via MAD (robust to spike contamination)
+/// 2. Base threshold = `base_multiplier * noise[ch]`
+/// 3. Applies a minimum floor: `max(base_threshold, min_threshold)`
+/// 4. Activity check: counts negative crossings at the base threshold.
+///    If the crossing rate exceeds `max_rate_hz`, scales the threshold
+///    up by `sqrt(rate / max_rate_hz)` to suppress over-detection.
+///
+/// Returns per-channel absolute thresholds suitable for comparison
+/// against `-data[t][ch]` (i.e., threshold values are positive).
+///
+/// # Arguments
+///
+/// * `data` - Multi-channel recording, `data[t][ch]`
+/// * `base_multiplier` - Multiplier for MAD noise estimate (typically 4.0-5.0)
+/// * `min_threshold` - Minimum threshold floor for dead channel protection
+/// * `max_rate_hz` - Maximum allowed crossing rate before threshold is raised
+/// * `sample_rate` - Sampling rate in Hz
+/// * `scratch` - Scratch buffer, must have at least `data.len()` elements
+///
+/// # Example
+///
+/// ```
+/// use zerostone::spike_sort::compute_adaptive_thresholds;
+///
+/// // 2-channel data: channel 0 has noise, channel 1 is dead
+/// let data = [
+///     [0.3, 0.0], [-0.5, 0.0], [0.1, 0.0], [0.4, 0.0],
+///     [-0.2, 0.0], [0.6, 0.0], [-0.3, 0.0], [0.2, 0.0],
+/// ];
+/// let mut scratch = [0.0f64; 8];
+/// let thresholds = compute_adaptive_thresholds::<2>(
+///     &data, 4.0, 0.5, 100.0, 30000.0, &mut scratch,
+/// );
+/// // Channel 0: threshold based on noise level
+/// assert!(thresholds[0] > 0.5);
+/// // Channel 1: dead channel gets min_threshold
+/// assert!((thresholds[1] - 0.5).abs() < 1e-12);
+/// ```
+pub fn compute_adaptive_thresholds<const C: usize>(
+    data: &[[f64; C]],
+    base_multiplier: f64,
+    min_threshold: f64,
+    max_rate_hz: f64,
+    sample_rate: f64,
+    scratch: &mut [f64],
+) -> [f64; C] {
+    let t_len = data.len();
+    let mut thresholds = [0.0f64; C];
+
+    // Handle empty data: return min_threshold for all channels.
+    if t_len == 0 {
+        let mut ch = 0;
+        while ch < C {
+            thresholds[ch] = min_threshold;
+            ch += 1;
+        }
+        return thresholds;
+    }
+
+    assert!(
+        scratch.len() >= t_len,
+        "scratch buffer must be at least data.len() elements"
+    );
+
+    // Step 1 & 2: Estimate noise per channel via MAD and compute base thresholds.
+    // Inline the MAD computation (same as estimate_noise_mad) to avoid
+    // aliasing scratch as both data and scratch arguments.
+    let mut ch = 0;
+    while ch < C {
+        // Copy absolute values of channel data into scratch.
+        let mut t = 0;
+        while t < t_len {
+            scratch[t] = libm::fabs(data[t][ch]);
+            t += 1;
+        }
+        let s = &mut scratch[..t_len];
+        s.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+
+        let median = if t_len % 2 == 1 {
+            s[t_len / 2]
+        } else {
+            (s[t_len / 2 - 1] + s[t_len / 2]) * 0.5
+        };
+        let noise = median / 0.6745;
+        let base = base_multiplier * noise;
+
+        // Step 3: Apply minimum threshold floor (dead channel protection).
+        thresholds[ch] = if base > min_threshold {
+            base
+        } else {
+            min_threshold
+        };
+
+        ch += 1;
+    }
+
+    // Step 4: Activity check -- count crossings and raise threshold on
+    // overactive channels.
+    let duration_s = t_len as f64 / sample_rate;
+    if duration_s > 0.0 && max_rate_hz > 0.0 {
+        let mut ch = 0;
+        while ch < C {
+            let thresh = thresholds[ch];
+            let mut crossings = 0usize;
+            let mut t = 1;
+            while t < t_len {
+                // Count negative crossings: sample goes below -thresh
+                // while the previous sample was above -thresh.
+                if data[t][ch] < -thresh && data[t - 1][ch] >= -thresh {
+                    crossings += 1;
+                }
+                t += 1;
+            }
+
+            let rate = crossings as f64 / duration_s;
+            if rate > max_rate_hz {
+                let scale = libm::sqrt(rate / max_rate_hz);
+                thresholds[ch] *= scale;
+                // Re-apply floor after scaling (should always be >=, but be safe).
+                if thresholds[ch] < min_threshold {
+                    thresholds[ch] = min_threshold;
+                }
+            }
+
+            ch += 1;
+        }
+    }
+
+    thresholds
+}
+
 /// Remove duplicate detections of the same spike across neighboring channels.
 ///
 /// When a neuron fires, its extracellular waveform appears on multiple nearby
@@ -1345,6 +1479,41 @@ mod kani_proofs {
         let mut output = [[0.0f64; 4]; 2];
         let n = extract_peak_channel::<2, 4>(&data, &events, 1, pre, &mut output);
         assert!(n <= 2, "extracted count must not exceed output buffer");
+    }
+
+    /// Prove that `compute_adaptive_thresholds` never panics and
+    /// returns finite thresholds >= min_threshold.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn adaptive_threshold_no_panic() {
+        let d0: f64 = kani::any();
+        let d1: f64 = kani::any();
+        let d2: f64 = kani::any();
+        let d3: f64 = kani::any();
+        let d4: f64 = kani::any();
+        let d5: f64 = kani::any();
+        let d6: f64 = kani::any();
+        let d7: f64 = kani::any();
+
+        kani::assume(d0.is_finite() && d0 >= -1e6 && d0 <= 1e6);
+        kani::assume(d1.is_finite() && d1 >= -1e6 && d1 <= 1e6);
+        kani::assume(d2.is_finite() && d2 >= -1e6 && d2 <= 1e6);
+        kani::assume(d3.is_finite() && d3 >= -1e6 && d3 <= 1e6);
+        kani::assume(d4.is_finite() && d4 >= -1e6 && d4 <= 1e6);
+        kani::assume(d5.is_finite() && d5 >= -1e6 && d5 <= 1e6);
+        kani::assume(d6.is_finite() && d6 >= -1e6 && d6 <= 1e6);
+        kani::assume(d7.is_finite() && d7 >= -1e6 && d7 <= 1e6);
+
+        let data = [[d0, d1], [d2, d3], [d4, d5], [d6, d7]];
+        let mut scratch = [0.0f64; 4];
+        let result =
+            compute_adaptive_thresholds::<2>(&data, 4.0, 0.5, 100.0, 30000.0, &mut scratch);
+        let mut ch = 0;
+        while ch < 2 {
+            kani::assert(result[ch].is_finite(), "threshold must be finite");
+            kani::assert(result[ch] >= 0.5, "threshold must be >= min_threshold");
+            ch += 1;
+        }
     }
 
     /// Prove that `combine_features` never panics for bounded finite inputs.
@@ -2465,5 +2634,108 @@ mod tests {
         // Spatial part is scaled
         assert!((combined[0][3] - spatial[0][0] * 0.2).abs() < 1e-12);
         assert!((combined[0][4] - spatial[0][1] * 0.2).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_adaptive_threshold_basic() {
+        // 4 channels with different noise levels.
+        let mut rng = Rng::new(99);
+        let mut data = [[0.0f64; 4]; 500];
+        // Channel 0: noise std=1.0, Channel 1: std=3.0,
+        // Channel 2: std=0.5, Channel 3: std=2.0
+        let stds = [1.0, 3.0, 0.5, 2.0];
+        for t in 0..500 {
+            for ch in 0..4 {
+                data[t][ch] = rng.gaussian(0.0, stds[ch]);
+            }
+        }
+        let mut scratch = [0.0f64; 500];
+        let thresholds =
+            compute_adaptive_thresholds::<4>(&data, 4.0, 0.1, 200.0, 30000.0, &mut scratch);
+
+        // Thresholds should be roughly proportional to noise levels.
+        // Channel 1 (std=3) should have higher threshold than channel 2 (std=0.5).
+        assert!(
+            thresholds[1] > thresholds[2],
+            "noisier channel should have higher threshold: ch1={} ch2={}",
+            thresholds[1],
+            thresholds[2]
+        );
+        // All thresholds should be positive and >= min_threshold.
+        for ch in 0..4 {
+            assert!(thresholds[ch] >= 0.1, "threshold must be >= min_threshold");
+            assert!(thresholds[ch].is_finite(), "threshold must be finite");
+        }
+    }
+
+    #[test]
+    fn test_adaptive_threshold_dead_channel() {
+        // Channel 0 has noise, channel 1 is dead (all zeros).
+        let mut data = [[0.0f64; 2]; 200];
+        let mut rng = Rng::new(42);
+        for t in 0..200 {
+            data[t][0] = rng.gaussian(0.0, 2.0);
+            // Channel 1 stays zero.
+        }
+        let mut scratch = [0.0f64; 200];
+        let thresholds =
+            compute_adaptive_thresholds::<2>(&data, 4.0, 0.5, 100.0, 30000.0, &mut scratch);
+
+        // Dead channel should get exactly min_threshold.
+        assert!(
+            (thresholds[1] - 0.5).abs() < 1e-12,
+            "dead channel should get min_threshold, got {}",
+            thresholds[1]
+        );
+        // Active channel should have threshold > min_threshold.
+        assert!(
+            thresholds[0] > 0.5,
+            "active channel threshold should exceed min_threshold, got {}",
+            thresholds[0]
+        );
+    }
+
+    #[test]
+    fn test_adaptive_threshold_overactive() {
+        // Create a channel that crosses threshold very frequently.
+        // Use a fast oscillation that will produce many crossings.
+        let mut data = [[0.0f64; 2]; 1000];
+        let mut rng = Rng::new(77);
+        for t in 0..1000 {
+            // Channel 0: moderate noise
+            data[t][0] = rng.gaussian(0.0, 1.0);
+            // Channel 1: same noise plus a fast oscillation that creates many crossings
+            data[t][1] = rng.gaussian(0.0, 1.0)
+                + 5.0 * libm::sin(2.0 * core::f64::consts::PI * 500.0 * t as f64 / 30000.0);
+        }
+
+        let mut scratch = [0.0f64; 1000];
+        // Use a very low max_rate_hz so channel 1's activity triggers scaling.
+        let thresholds =
+            compute_adaptive_thresholds::<2>(&data, 4.0, 0.1, 5.0, 30000.0, &mut scratch);
+
+        // Both thresholds should be valid.
+        assert!(thresholds[0] >= 0.1);
+        assert!(thresholds[1] >= 0.1);
+        assert!(thresholds[0].is_finite());
+        assert!(thresholds[1].is_finite());
+    }
+
+    #[test]
+    fn test_adaptive_threshold_empty_data() {
+        let data: &[[f64; 3]] = &[];
+        let mut scratch = [0.0f64; 0];
+        let thresholds =
+            compute_adaptive_thresholds::<3>(data, 4.0, 0.75, 100.0, 30000.0, &mut scratch);
+
+        // All channels should get min_threshold.
+        for ch in 0..3 {
+            assert!(
+                (thresholds[ch] - 0.75).abs() < 1e-12,
+                "empty data: channel {} should get min_threshold, got {}",
+                ch,
+                thresholds[ch]
+            );
+        }
     }
 }
