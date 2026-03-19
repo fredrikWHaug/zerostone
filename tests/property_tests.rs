@@ -9,8 +9,10 @@ use zerostone::pac;
 use zerostone::probe::ProbeLayout;
 use zerostone::quality;
 use zerostone::riemannian;
+use zerostone::drift::{estimate_drift_from_positions, DriftEstimator};
 use zerostone::sorter::{
-    estimate_noise_multichannel, merge_clusters, sort_multichannel, SortConfig,
+    estimate_noise_multichannel, merge_clusters, sort_multichannel, split_clusters, OnlineSorter,
+    SortConfig,
 };
 use zerostone::spike_sort::{
     align_to_peak, combine_features, compute_adaptive_thresholds, deduplicate_events,
@@ -1081,5 +1083,133 @@ proptest! {
                 "output[{i}][2] = {} should be 0.0 with zero weight", output[i][2]
             );
         }
+    }
+
+    // =========================================================================
+    // Day 5: drift, split_clusters, OnlineSorter
+    // =========================================================================
+
+    /// DriftEstimator: fit + estimate_drift always returns finite values.
+    #[test]
+    fn drift_estimator_finite(
+        positions in prop::collection::vec(-1e4f64..1e4, 4..=16),
+    ) {
+        let mut est = DriftEstimator::<32>::new(1000);
+        for (i, &pos) in positions.iter().enumerate() {
+            est.add_spike(i * 1000 + 500, pos);
+        }
+        est.fit();
+        let slope = est.slope();
+        let intercept = est.intercept();
+        prop_assert!(slope.is_finite(), "slope must be finite: {}", slope);
+        prop_assert!(intercept.is_finite(), "intercept must be finite: {}", intercept);
+
+        let d = est.estimate_drift(5000);
+        prop_assert!(d.is_finite(), "drift estimate must be finite: {}", d);
+    }
+
+    /// DriftEstimator: corrected positions have lower variance when there is drift.
+    #[test]
+    fn drift_correction_reduces_variance(
+        drift_rate in 0.001f64..0.1,
+        n_bins in 4usize..16,
+    ) {
+        let mut est = DriftEstimator::<32>::new(1000);
+        let base = 100.0;
+        for i in 0..n_bins {
+            let pos = base + (i as f64) * drift_rate * 1000.0;
+            est.add_spike(i * 1000 + 500, pos);
+        }
+        est.fit();
+
+        let mut raw_sum = 0.0;
+        let mut raw_sq = 0.0;
+        let mut cor_sum = 0.0;
+        let mut cor_sq = 0.0;
+        for i in 0..n_bins {
+            let raw = base + (i as f64) * drift_rate * 1000.0;
+            let corrected = est.correct_position(i * 1000 + 500, raw);
+            raw_sum += raw;
+            raw_sq += raw * raw;
+            cor_sum += corrected;
+            cor_sq += corrected * corrected;
+        }
+        let n = n_bins as f64;
+        let raw_var = raw_sq / n - (raw_sum / n) * (raw_sum / n);
+        let cor_var = cor_sq / n - (cor_sum / n) * (cor_sum / n);
+
+        prop_assert!(
+            cor_var <= raw_var + 1e-6,
+            "Corrected variance ({}) should be <= raw variance ({})",
+            cor_var, raw_var
+        );
+    }
+
+    /// estimate_drift_from_positions: returns None for single-bin data.
+    #[test]
+    fn batch_drift_single_bin_none(
+        n_spikes in 1usize..20,
+        positions in prop::collection::vec(0.0f64..100.0, 1..=20),
+    ) {
+        let indices: Vec<usize> = (0..n_spikes).map(|i| i * 10).collect();
+        let pos: Vec<f64> = positions.into_iter().take(n_spikes).collect();
+        if pos.is_empty() {
+            return Ok(());
+        }
+        let result = estimate_drift_from_positions(&indices, &pos, 10000, 8);
+        prop_assert!(result.is_none(), "Single bin should return None");
+    }
+
+    /// split_clusters: never reduces cluster count.
+    #[test]
+    fn split_clusters_monotonic(
+        n_clusters in 1usize..4,
+        threshold in 0.5f64..5.0,
+    ) {
+        let mut labels = [0usize; 12];
+        let mut features = [[0.0f64; 2]; 12];
+        for i in 0..12 {
+            let cl = i % n_clusters;
+            labels[i] = cl;
+            features[i] = [cl as f64 * 0.01, cl as f64 * 0.01];
+        }
+        let new_n = split_clusters(12, &mut labels, &features, n_clusters, 3, threshold);
+        prop_assert!(
+            new_n >= n_clusters,
+            "split should never reduce cluster count: {} < {}",
+            new_n, n_clusters
+        );
+    }
+
+    /// OnlineSorter: classify always returns a valid label.
+    #[test]
+    fn online_sorter_valid_label(
+        template_vals in prop::collection::vec(-10.0f64..10.0, 3..=3),
+        feature_vals in prop::collection::vec(-10.0f64..10.0, 3..=3),
+    ) {
+        let mut sorter = OnlineSorter::<3, 8>::new();
+        let template: [f64; 3] = [template_vals[0], template_vals[1], template_vals[2]];
+        sorter.add_template(&template);
+
+        let features: [f64; 3] = [feature_vals[0], feature_vals[1], feature_vals[2]];
+        let (label, dist) = sorter.classify(&features);
+
+        prop_assert_eq!(label, 0, "Only one template, label must be 0");
+        prop_assert!(dist >= 0.0, "Distance must be non-negative: {}", dist);
+        prop_assert!(dist.is_finite(), "Distance must be finite: {}", dist);
+    }
+
+    /// OnlineSorter: distance to own template is zero.
+    #[test]
+    fn online_sorter_zero_self_distance(
+        vals in prop::collection::vec(-10.0f64..10.0, 3..=3),
+    ) {
+        let mut sorter = OnlineSorter::<3, 8>::new();
+        let template: [f64; 3] = [vals[0], vals[1], vals[2]];
+        sorter.add_template(&template);
+
+        let (label, dist) = sorter.classify(&template);
+        prop_assert_eq!(label, 0);
+        prop_assert!(dist < 1e-10, "Self-distance should be ~0, got {}", dist);
     }
 }
