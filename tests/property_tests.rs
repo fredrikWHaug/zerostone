@@ -1,5 +1,6 @@
 use proptest::prelude::*;
 use zerostone::connectivity;
+use zerostone::drift::{estimate_drift_from_positions, DriftEstimator};
 use zerostone::entropy;
 use zerostone::isi;
 use zerostone::kalman::KalmanFilter;
@@ -9,7 +10,6 @@ use zerostone::pac;
 use zerostone::probe::ProbeLayout;
 use zerostone::quality;
 use zerostone::riemannian;
-use zerostone::drift::{estimate_drift_from_positions, DriftEstimator};
 use zerostone::sorter::{
     estimate_noise_multichannel, merge_clusters, sort_multichannel, split_clusters, OnlineSorter,
     SortConfig,
