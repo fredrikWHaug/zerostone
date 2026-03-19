@@ -82,6 +82,7 @@ mod csp;
 mod decimate;
 mod deconvolution;
 mod detector;
+pub mod drift;
 pub mod edf;
 pub mod entropy;
 mod envelope;
@@ -133,6 +134,7 @@ pub use detector::{
     AdaptiveThresholdDetector, CrossingDirection, DetectorState, SpikeEvent, SpikeEvents,
     ThresholdDetector, ZeroCrossingDetector,
 };
+pub use drift::{estimate_drift_from_positions, DriftEstimator};
 pub use edf::{
     parse_header, parse_signal_header, read_channel, read_record, EdfError, EdfHeader,
     EdfSignalHeader,
@@ -174,8 +176,8 @@ pub use riemannian::{
 pub use rms::WindowedRms;
 pub use router::ChannelRouter;
 pub use sorter::{
-    estimate_noise_multichannel, merge_clusters, sort_multichannel, ClusterInfo, SortConfig,
-    SortResult,
+    estimate_noise_multichannel, merge_clusters, sort_multichannel, split_clusters, ClusterInfo,
+    OnlineSorter, SortConfig, SortResult,
 };
 pub use spike_sort::{
     align_to_peak, combine_features, deduplicate_events, detect_spikes, detect_spikes_multichannel,
