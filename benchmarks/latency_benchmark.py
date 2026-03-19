@@ -59,7 +59,7 @@ def bench_online_sorter(n_templates, n_spikes, n_features=3):
     return per_spike_us, total_ms
 
 
-def bench_batch_sorter(n_channels, duration_s, sample_rate=30000.0):
+def bench_batch_sorter(n_channels, duration_s, sampling_rate=30000.0):
     """Benchmark sort_multichannel() throughput."""
     if not HAS_SYNTHETIC:
         return None, None, None
@@ -68,7 +68,7 @@ def bench_batch_sorter(n_channels, duration_s, sample_rate=30000.0):
         n_channels=n_channels,
         n_units=5,
         duration_s=duration_s,
-        sample_rate=sample_rate,
+        sampling_rate=sampling_rate,
         noise_std=1.0,
         seed=42,
     )
@@ -128,8 +128,12 @@ def main():
         )
         print("-" * 62)
 
-        for n_ch, dur in [(4, 10.0), (8, 10.0), (16, 5.0), (32, 2.0)]:
-            total_ms, per_spike_us, throughput = bench_batch_sorter(n_ch, dur)
+        for n_ch, dur in [(8, 10.0), (16, 5.0), (32, 2.0)]:
+            try:
+                total_ms, per_spike_us, throughput = bench_batch_sorter(n_ch, dur)
+            except Exception as e:
+                print(f"{n_ch:>10} {dur:>8.1f}s {'ERROR':>12} -- {e}")
+                continue
             if total_ms is not None:
                 thr_str = f"{throughput:.2f} MHz" if throughput else "N/A"
                 ps_str = f"{per_spike_us:.1f}" if per_spike_us else "N/A"
