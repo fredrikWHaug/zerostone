@@ -212,8 +212,113 @@ fn build_result_dict<const N: usize>(
     Ok(dict.into())
 }
 
+/// Online spike sorter for real-time template matching.
+///
+/// After learning templates from batch sorting, classifies new spikes
+/// by nearest-centroid distance in feature space.
+///
+/// Example:
+///     >>> sorter = zbci.OnlineSorter()
+///     >>> sorter.add_template([1.0, 0.0, 0.0])
+///     >>> sorter.add_template([0.0, 1.0, 0.0])
+///     >>> label, dist = sorter.classify([0.9, 0.1, 0.0])
+#[pyclass]
+pub struct OnlineSorter {
+    inner: zerostone::sorter::OnlineSorter<3, 16>,
+}
+
+#[pymethods]
+impl OnlineSorter {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: zerostone::sorter::OnlineSorter::<3, 16>::new(),
+        }
+    }
+
+    /// Create from a list of centroid arrays.
+    #[staticmethod]
+    fn from_centroids(centroids: Vec<Vec<f64>>) -> PyResult<Self> {
+        let mut fixed: Vec<[f64; 3]> = Vec::new();
+        for c in &centroids {
+            if c.len() != 3 {
+                return Err(PyValueError::new_err("Each centroid must have 3 elements"));
+            }
+            fixed.push([c[0], c[1], c[2]]);
+        }
+        Ok(Self {
+            inner: zerostone::sorter::OnlineSorter::<3, 16>::from_centroids(&fixed),
+        })
+    }
+
+    /// Add a template centroid. Returns template index or None if full.
+    fn add_template(&mut self, centroid: Vec<f64>) -> PyResult<Option<usize>> {
+        if centroid.len() != 3 {
+            return Err(PyValueError::new_err("Centroid must have 3 elements"));
+        }
+        let arr = [centroid[0], centroid[1], centroid[2]];
+        Ok(self.inner.add_template(&arr))
+    }
+
+    /// Set max distance for rejection.
+    fn set_max_distance(&mut self, max_dist: f64) {
+        self.inner.set_max_distance(max_dist);
+    }
+
+    /// Classify a spike. Returns (label, distance).
+    fn classify(&mut self, features: Vec<f64>) -> PyResult<(usize, f64)> {
+        if features.len() != 3 {
+            return Err(PyValueError::new_err("Features must have 3 elements"));
+        }
+        let arr = [features[0], features[1], features[2]];
+        Ok(self.inner.classify(&arr))
+    }
+
+    /// Classify or reject. Returns (label, distance) or None.
+    fn classify_or_reject(&mut self, features: Vec<f64>) -> PyResult<Option<(usize, f64)>> {
+        if features.len() != 3 {
+            return Err(PyValueError::new_err("Features must have 3 elements"));
+        }
+        let arr = [features[0], features[1], features[2]];
+        Ok(self.inner.classify_or_reject(&arr))
+    }
+
+    #[getter]
+    fn n_templates(&self) -> usize {
+        self.inner.n_templates()
+    }
+
+    #[getter]
+    fn n_classified(&self) -> usize {
+        self.inner.n_classified()
+    }
+
+    #[getter]
+    fn n_rejected(&self) -> usize {
+        self.inner.n_rejected()
+    }
+
+    fn reset_counters(&mut self) {
+        self.inner.reset_counters();
+    }
+
+    fn reset(&mut self) {
+        self.inner.reset();
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "OnlineSorter(n_templates={}, classified={}, rejected={})",
+            self.inner.n_templates(),
+            self.inner.n_classified(),
+            self.inner.n_rejected()
+        )
+    }
+}
+
 /// Register sorting pipeline functions.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sort_multichannel, m)?)?;
+    m.add_class::<OnlineSorter>()?;
     Ok(())
 }

@@ -11,6 +11,7 @@ mod connectivity;
 mod csp;
 mod deconvolution;
 mod detection;
+mod drift;
 mod edf;
 mod entropy;
 mod erp;
@@ -501,6 +502,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Template subtraction
     template_subtract::register(m)?;
+
+    // Drift estimation
+    drift::register(m)?;
 
     // Window functions
     window::register(m)?;
