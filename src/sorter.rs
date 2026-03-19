@@ -52,6 +52,8 @@ use crate::whitening::{WhiteningMatrix, WhiteningMode};
 /// assert_eq!(config.refractory_samples, 15);
 /// assert!((config.merge_dprime_threshold - 1.5).abs() < 1e-12);
 /// assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
+/// assert_eq!(config.split_min_cluster_size, 10);
+/// assert!((config.split_bimodality_threshold - 2.0).abs() < 1e-12);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -77,6 +79,10 @@ pub struct SortConfig {
     /// ISI violation threshold for cluster merging: skip merge if combined
     /// ISI violation rate would exceed this value.
     pub merge_isi_threshold: f64,
+    /// Minimum spikes per cluster to attempt splitting.
+    pub split_min_cluster_size: usize,
+    /// Bimodality threshold for cluster splitting (gap / std_dev).
+    pub split_bimodality_threshold: f64,
 }
 
 impl Default for SortConfig {
@@ -93,6 +99,8 @@ impl Default for SortConfig {
             whitening_epsilon: 1e-6,
             merge_dprime_threshold: 1.5,
             merge_isi_threshold: 0.05,
+            split_min_cluster_size: 10,
+            split_bimodality_threshold: 2.0,
         }
     }
 }
@@ -492,6 +500,253 @@ pub fn merge_clusters<const K: usize>(
     current_n
 }
 
+/// Split clusters that show bimodal distributions in feature space.
+///
+/// For each active cluster, projects spikes onto the axis of maximum
+/// variance and checks for bimodality using a gap-based criterion.
+/// Clusters with a gap exceeding `bimodality_threshold * std_dev` are
+/// split into two sub-clusters.
+///
+/// Only one cluster is split per pass; the function loops until no
+/// more splits are found, up to `MAX_MERGE_CLUSTERS` total clusters.
+///
+/// # Arguments
+///
+/// * `n_spikes` -- Number of valid entries in `labels` and `feature_buf`
+/// * `labels` -- Cluster label per spike (modified in place on split)
+/// * `feature_buf` -- PCA feature vector per spike
+/// * `n_clusters` -- Current number of active clusters
+/// * `min_cluster_size` -- Minimum spikes per cluster to attempt split
+/// * `bimodality_threshold` -- Gap threshold relative to std deviation
+///
+/// # Returns
+///
+/// The new number of active clusters after all splits.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::sorter::split_clusters;
+///
+/// // Two well-separated groups incorrectly merged into cluster 0
+/// let mut labels = [0, 0, 0, 0, 0, 0];
+/// let features = [
+///     [0.0, 0.0], [0.1, 0.1], [0.2, -0.1],  // group A near origin
+///     [5.0, 5.0], [5.1, 4.9], [4.9, 5.1],    // group B far away
+/// ];
+/// let new_n = split_clusters(6, &mut labels, &features, 1, 3, 1.5);
+/// assert_eq!(new_n, 2);
+/// ```
+#[allow(clippy::needless_range_loop)]
+pub fn split_clusters<const K: usize>(
+    n_spikes: usize,
+    labels: &mut [usize],
+    feature_buf: &[[f64; K]],
+    n_clusters: usize,
+    min_cluster_size: usize,
+    bimodality_threshold: f64,
+) -> usize {
+    if n_spikes == 0 || n_clusters == 0 {
+        return n_clusters;
+    }
+
+    const MAX_SPIKES: usize = 512;
+    let mut current_n = n_clusters;
+
+    loop {
+        if current_n >= MAX_MERGE_CLUSTERS {
+            break;
+        }
+
+        let mut did_split = false;
+
+        let mut cl = 0;
+        while cl < current_n {
+            // Count spikes in this cluster and collect indices
+            let mut indices = [0usize; MAX_SPIKES];
+            let mut count = 0usize;
+            let mut s = 0;
+            while s < n_spikes && s < labels.len() {
+                if labels[s] == cl && count < MAX_SPIKES {
+                    indices[count] = s;
+                    count += 1;
+                }
+                s += 1;
+            }
+
+            if count < min_cluster_size || count < 4 {
+                cl += 1;
+                continue;
+            }
+
+            let dim = if K > 32 { 32 } else { K };
+
+            // Compute centroid
+            let mut centroid = [0.0f64; 32];
+            let mut i = 0;
+            while i < count {
+                let mut d = 0;
+                while d < dim {
+                    centroid[d] += feature_buf[indices[i]][d];
+                    d += 1;
+                }
+                i += 1;
+            }
+            let inv_count = 1.0 / count as f64;
+            let mut d = 0;
+            while d < dim {
+                centroid[d] *= inv_count;
+                d += 1;
+            }
+
+            // Power iteration: find direction of maximum variance (1D PCA)
+            // Initialize with first centered spike
+            let mut axis = [0.0f64; 32];
+            let mut d = 0;
+            while d < dim {
+                axis[d] = feature_buf[indices[0]][d] - centroid[d];
+                d += 1;
+            }
+            // Normalize
+            let mut norm_sq = 0.0;
+            d = 0;
+            while d < dim {
+                norm_sq += axis[d] * axis[d];
+                d += 1;
+            }
+            if norm_sq < 1e-30 {
+                cl += 1;
+                continue;
+            }
+            let inv_norm = 1.0 / libm::sqrt(norm_sq);
+            d = 0;
+            while d < dim {
+                axis[d] *= inv_norm;
+                d += 1;
+            }
+
+            // 3 iterations of power method on the scatter matrix
+            let mut iter = 0;
+            while iter < 3 {
+                let mut new_axis = [0.0f64; 32];
+                let mut i = 0;
+                while i < count {
+                    // Project centered spike onto current axis
+                    let mut dot = 0.0;
+                    let mut d = 0;
+                    while d < dim {
+                        dot += (feature_buf[indices[i]][d] - centroid[d]) * axis[d];
+                        d += 1;
+                    }
+                    // Accumulate outer product contribution
+                    d = 0;
+                    while d < dim {
+                        new_axis[d] += dot * (feature_buf[indices[i]][d] - centroid[d]);
+                        d += 1;
+                    }
+                    i += 1;
+                }
+                // Normalize
+                let mut ns = 0.0;
+                d = 0;
+                while d < dim {
+                    ns += new_axis[d] * new_axis[d];
+                    d += 1;
+                }
+                if ns < 1e-30 {
+                    break;
+                }
+                let inv = 1.0 / libm::sqrt(ns);
+                d = 0;
+                while d < dim {
+                    axis[d] = new_axis[d] * inv;
+                    d += 1;
+                }
+                iter += 1;
+            }
+
+            // Project all spikes onto the axis
+            let mut projections = [0.0f64; MAX_SPIKES];
+            let mut i = 0;
+            while i < count {
+                let mut dot = 0.0;
+                let mut d = 0;
+                while d < dim {
+                    dot += (feature_buf[indices[i]][d] - centroid[d]) * axis[d];
+                    d += 1;
+                }
+                projections[i] = dot;
+                i += 1;
+            }
+
+            // Compute std dev of projections
+            let mut sum = 0.0;
+            let mut sum_sq = 0.0;
+            i = 0;
+            while i < count {
+                sum += projections[i];
+                sum_sq += projections[i] * projections[i];
+                i += 1;
+            }
+            let mean_proj = sum / count as f64;
+            let var = sum_sq / count as f64 - mean_proj * mean_proj;
+            let std_dev = if var > 0.0 { libm::sqrt(var) } else { 0.0 };
+
+            if std_dev < 1e-15 {
+                cl += 1;
+                continue;
+            }
+
+            // Sort projections (need sorted copy + index mapping)
+            let mut sorted_proj = [0.0f64; MAX_SPIKES];
+            i = 0;
+            while i < count {
+                sorted_proj[i] = projections[i];
+                i += 1;
+            }
+            let sp = &mut sorted_proj[..count];
+            sp.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+
+            // Find largest gap
+            let mut max_gap = 0.0;
+            let mut gap_midpoint = 0.0;
+            i = 1;
+            while i < count {
+                let gap = sp[i] - sp[i - 1];
+                if gap > max_gap {
+                    max_gap = gap;
+                    gap_midpoint = (sp[i] + sp[i - 1]) * 0.5;
+                }
+                i += 1;
+            }
+
+            // Check bimodality criterion
+            if max_gap > bimodality_threshold * std_dev {
+                // Split: spikes with projection >= gap_midpoint get new label
+                let new_label = current_n;
+                i = 0;
+                while i < count {
+                    if projections[i] >= gap_midpoint {
+                        labels[indices[i]] = new_label;
+                    }
+                    i += 1;
+                }
+                current_n += 1;
+                did_split = true;
+                break; // restart outer loop
+            }
+
+            cl += 1;
+        }
+
+        if !did_split {
+            break;
+        }
+    }
+
+    current_n
+}
+
 /// Full multi-channel sorting pipeline.
 ///
 /// Pipeline: noise -> covariance -> whiten (in-place) -> detect -> dedup ->
@@ -692,6 +947,16 @@ pub fn sort_multichannel<
         scratch,
     );
 
+    // 9c. Split bimodal clusters
+    let n_clusters = split_clusters::<K>(
+        n_extracted,
+        labels,
+        feature_buf,
+        n_clusters,
+        config.split_min_cluster_size,
+        config.split_bimodality_threshold,
+    );
+
     // 10. Quality metrics
     // Compute per-cluster: mean waveform for SNR, spike times for ISI
     let mut clusters: [ClusterInfo; N] = core::array::from_fn(|_| ClusterInfo {
@@ -757,6 +1022,180 @@ pub fn sort_multichannel<
         n_clusters,
         clusters,
     })
+}
+
+/// Online spike sorter for real-time template matching.
+///
+/// After learning cluster centroids from a batch sorting pass, this
+/// struct classifies new spikes by nearest-centroid distance in
+/// feature space. Designed for sub-100 microsecond per-spike latency.
+///
+/// # Type Parameters
+///
+/// * `K` -- Feature dimensionality (number of PCA components)
+/// * `N` -- Maximum number of templates/clusters
+///
+/// # Example
+///
+/// ```
+/// use zerostone::sorter::OnlineSorter;
+///
+/// // Create from pre-learned centroids
+/// let centroids = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+/// let mut sorter = OnlineSorter::<3, 8>::from_centroids(&centroids);
+/// assert_eq!(sorter.n_templates(), 2);
+///
+/// let (label, dist) = sorter.classify(&[0.9, 0.1, 0.0]);
+/// assert_eq!(label, 0); // closest to first template
+/// assert!(dist < 0.2);
+///
+/// // Reject distant spikes
+/// sorter.set_max_distance(0.5);
+/// assert!(sorter.classify_or_reject(&[5.0, 5.0, 5.0]).is_none());
+/// ```
+pub struct OnlineSorter<const K: usize, const N: usize> {
+    templates: [[f64; K]; N],
+    n_templates: usize,
+    max_distance: f64,
+    n_classified: usize,
+    n_rejected: usize,
+}
+
+impl<const K: usize, const N: usize> OnlineSorter<K, N> {
+    /// Create a new online sorter with no templates.
+    pub fn new() -> Self {
+        Self {
+            templates: [[0.0; K]; N],
+            n_templates: 0,
+            max_distance: f64::MAX,
+            n_classified: 0,
+            n_rejected: 0,
+        }
+    }
+
+    /// Create from centroids extracted from a batch sort result.
+    /// `centroids` is a slice of feature vectors, up to N are used.
+    pub fn from_centroids(centroids: &[[f64; K]]) -> Self {
+        let mut s = Self::new();
+        let count = if centroids.len() < N {
+            centroids.len()
+        } else {
+            N
+        };
+        let mut i = 0;
+        while i < count {
+            s.templates[i] = centroids[i];
+            i += 1;
+        }
+        s.n_templates = count;
+        s
+    }
+
+    /// Add a template. Returns the template index, or None if full.
+    pub fn add_template(&mut self, centroid: &[f64; K]) -> Option<usize> {
+        if self.n_templates >= N {
+            return None;
+        }
+        let idx = self.n_templates;
+        self.templates[idx] = *centroid;
+        self.n_templates += 1;
+        Some(idx)
+    }
+
+    /// Set the maximum distance for classification. Spikes farther
+    /// than this from all templates are rejected (classified as `None`).
+    /// Default: f64::MAX (no rejection).
+    pub fn set_max_distance(&mut self, max_dist: f64) {
+        self.max_distance = max_dist;
+    }
+
+    /// Classify a single spike by nearest centroid.
+    /// Returns (template_index, distance).
+    /// If no templates are loaded, returns (0, f64::MAX).
+    pub fn classify(&mut self, features: &[f64; K]) -> (usize, f64) {
+        self.n_classified += 1;
+
+        if self.n_templates == 0 {
+            return (0, f64::MAX);
+        }
+
+        let mut best_idx = 0;
+        let mut best_dist = f64::MAX;
+
+        let mut ti = 0;
+        while ti < self.n_templates {
+            let mut sum_sq = 0.0f64;
+            let mut ki = 0;
+            while ki < K {
+                let diff = features[ki] - self.templates[ti][ki];
+                sum_sq += diff * diff;
+                ki += 1;
+            }
+            let dist = libm::sqrt(sum_sq);
+            if dist < best_dist {
+                best_dist = dist;
+                best_idx = ti;
+            }
+            ti += 1;
+        }
+
+        (best_idx, best_dist)
+    }
+
+    /// Classify a spike, returning None if distance exceeds max_distance.
+    pub fn classify_or_reject(&mut self, features: &[f64; K]) -> Option<(usize, f64)> {
+        let (label, dist) = self.classify(features);
+        if dist > self.max_distance {
+            self.n_rejected += 1;
+            None
+        } else {
+            Some((label, dist))
+        }
+    }
+
+    /// Number of templates loaded.
+    pub fn n_templates(&self) -> usize {
+        self.n_templates
+    }
+
+    /// Total spikes classified (including rejected).
+    pub fn n_classified(&self) -> usize {
+        self.n_classified
+    }
+
+    /// Total spikes rejected (distance > max_distance).
+    pub fn n_rejected(&self) -> usize {
+        self.n_rejected
+    }
+
+    /// Get a reference to the template centroids.
+    pub fn templates(&self) -> &[[f64; K]] {
+        &self.templates[..self.n_templates]
+    }
+
+    /// Reset counters (but keep templates).
+    pub fn reset_counters(&mut self) {
+        self.n_classified = 0;
+        self.n_rejected = 0;
+    }
+
+    /// Clear all templates and counters.
+    pub fn reset(&mut self) {
+        self.n_templates = 0;
+        self.n_classified = 0;
+        self.n_rejected = 0;
+        let mut i = 0;
+        while i < N {
+            self.templates[i] = [0.0; K];
+            i += 1;
+        }
+    }
+}
+
+impl<const K: usize, const N: usize> Default for OnlineSorter<K, N> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(kani)]
@@ -840,6 +1279,46 @@ mod kani_proofs {
             &mut scratch,
         );
         assert!(new_n <= 3, "cluster count must not increase");
+    }
+
+    /// Prove that `split_clusters` does not panic for small valid inputs.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn split_clusters_no_panic() {
+        let l0: usize = kani::any();
+        let l1: usize = kani::any();
+        let l2: usize = kani::any();
+        let l3: usize = kani::any();
+        kani::assume(l0 < 2 && l1 < 2 && l2 < 2 && l3 < 2);
+
+        let mut labels = [l0, l1, l2, l3];
+        let features = [[1.0f64, 0.0], [0.0, 1.0], [5.0, 5.0], [6.0, 6.0]];
+        let threshold: f64 = kani::any();
+        kani::assume(threshold.is_finite() && threshold >= 0.0 && threshold <= 100.0);
+
+        let new_n = split_clusters(4, &mut labels, &features, 2, 2, threshold);
+        assert!(new_n >= 2);
+    }
+
+    /// Prove that `OnlineSorter::classify` does not panic for finite inputs.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn online_sorter_classify_no_panic() {
+        let mut sorter = OnlineSorter::<2, 4>::new();
+        let t0: f64 = kani::any();
+        let t1: f64 = kani::any();
+        let f0: f64 = kani::any();
+        let f1: f64 = kani::any();
+        kani::assume(t0.is_finite() && t0 >= -1e6 && t0 <= 1e6);
+        kani::assume(t1.is_finite() && t1 >= -1e6 && t1 <= 1e6);
+        kani::assume(f0.is_finite() && f0 >= -1e6 && f0 <= 1e6);
+        kani::assume(f1.is_finite() && f1 >= -1e6 && f1 <= 1e6);
+
+        sorter.add_template(&[t0, t1]);
+        let (label, dist) = sorter.classify(&[f0, f1]);
+        assert_eq!(label, 0);
+        assert!(dist.is_finite());
+        assert!(dist >= 0.0);
     }
 }
 
@@ -1551,5 +2030,156 @@ mod tests {
         // Cluster 3 shifted down to 2
         assert_eq!(labels[6], 2);
         assert_eq!(labels[7], 2);
+    }
+
+    // ---- split_clusters ----
+
+    #[test]
+    fn test_split_bimodal_cluster() {
+        // Two well-separated groups in one cluster
+        let mut labels = [0, 0, 0, 0, 0, 0];
+        let features = [
+            [0.0, 0.0],
+            [0.1, 0.1],
+            [0.2, -0.1],
+            [10.0, 10.0],
+            [10.1, 9.9],
+            [9.9, 10.1],
+        ];
+        let new_n = split_clusters(6, &mut labels, &features, 1, 3, 1.5);
+        assert_eq!(new_n, 2, "Should split into 2 clusters");
+        // Verify both labels are present
+        let has_0 = labels.contains(&0);
+        let has_1 = labels.contains(&1);
+        assert!(has_0 && has_1, "Both clusters should be present");
+    }
+
+    #[test]
+    fn test_split_unimodal_no_split() {
+        // Tight cluster, should not split
+        let mut labels = [0, 0, 0, 0, 0, 0];
+        let features = [
+            [1.0, 1.0],
+            [1.01, 0.99],
+            [0.99, 1.01],
+            [1.02, 0.98],
+            [0.98, 1.02],
+            [1.0, 1.0],
+        ];
+        let new_n = split_clusters(6, &mut labels, &features, 1, 3, 2.0);
+        assert_eq!(new_n, 1, "Tight cluster should not split");
+    }
+
+    #[test]
+    fn test_split_small_cluster_skipped() {
+        let mut labels = [0, 0];
+        let features = [[0.0, 0.0], [10.0, 10.0]];
+        // min_cluster_size = 5, so this cluster of 2 is skipped
+        let new_n = split_clusters(2, &mut labels, &features, 1, 5, 1.0);
+        assert_eq!(new_n, 1);
+    }
+
+    #[test]
+    fn test_split_empty_no_panic() {
+        let mut labels: [usize; 0] = [];
+        let features: [[f64; 2]; 0] = [];
+        let new_n = split_clusters(0, &mut labels, &features, 0, 3, 2.0);
+        assert_eq!(new_n, 0);
+    }
+
+    // ---- OnlineSorter ----
+
+    #[test]
+    fn test_online_sorter_basic() {
+        let mut sorter = OnlineSorter::<3, 8>::new();
+        sorter.add_template(&[1.0, 0.0, 0.0]);
+        sorter.add_template(&[0.0, 1.0, 0.0]);
+
+        let (label0, dist0) = sorter.classify(&[0.9, 0.1, 0.0]);
+        assert_eq!(label0, 0, "Should match first template");
+        assert!(dist0 < 0.2, "Distance should be small, got {}", dist0);
+
+        let (label1, dist1) = sorter.classify(&[0.1, 0.9, 0.0]);
+        assert_eq!(label1, 1, "Should match second template");
+        assert!(dist1 < 0.2, "Distance should be small, got {}", dist1);
+    }
+
+    #[test]
+    fn test_online_sorter_reject() {
+        let mut sorter = OnlineSorter::<2, 4>::new();
+        sorter.add_template(&[0.0, 0.0]);
+        sorter.set_max_distance(1.0);
+
+        let result = sorter.classify_or_reject(&[0.5, 0.5]);
+        assert!(result.is_some(), "Close spike should be accepted");
+
+        let result = sorter.classify_or_reject(&[10.0, 10.0]);
+        assert!(result.is_none(), "Distant spike should be rejected");
+        assert_eq!(sorter.n_rejected(), 1);
+    }
+
+    #[test]
+    fn test_online_sorter_from_centroids() {
+        let centroids = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
+        let sorter = OnlineSorter::<2, 8>::from_centroids(&centroids);
+        assert_eq!(sorter.n_templates(), 3);
+        assert!((sorter.templates()[0][0] - 1.0).abs() < 1e-12);
+        assert!((sorter.templates()[1][0] - 3.0).abs() < 1e-12);
+        assert!((sorter.templates()[2][1] - 6.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_online_sorter_no_templates() {
+        let mut sorter = OnlineSorter::<2, 4>::new();
+        let (label, dist) = sorter.classify(&[1.0, 2.0]);
+        assert_eq!(label, 0);
+        assert_eq!(dist, f64::MAX);
+    }
+
+    #[test]
+    fn test_online_sorter_reset() {
+        let mut sorter = OnlineSorter::<2, 4>::new();
+        sorter.add_template(&[1.0, 0.0]);
+        sorter.add_template(&[0.0, 1.0]);
+        sorter.classify(&[0.5, 0.5]);
+        assert_eq!(sorter.n_templates(), 2);
+        assert_eq!(sorter.n_classified(), 1);
+
+        sorter.reset();
+        assert_eq!(sorter.n_templates(), 0);
+        assert_eq!(sorter.n_classified(), 0);
+        assert_eq!(sorter.n_rejected(), 0);
+    }
+
+    #[test]
+    fn test_online_sorter_full() {
+        let mut sorter = OnlineSorter::<2, 2>::new();
+        assert!(sorter.add_template(&[1.0, 0.0]).is_some());
+        assert!(sorter.add_template(&[0.0, 1.0]).is_some());
+        assert!(sorter.add_template(&[0.5, 0.5]).is_none(), "Should be full");
+        assert_eq!(sorter.n_templates(), 2);
+    }
+
+    #[test]
+    fn test_online_sorter_counters() {
+        let mut sorter = OnlineSorter::<2, 4>::new();
+        sorter.add_template(&[0.0, 0.0]);
+        sorter.set_max_distance(1.0);
+
+        sorter.classify(&[0.1, 0.1]);
+        sorter.classify(&[0.2, 0.2]);
+        sorter.classify(&[0.3, 0.3]);
+        assert_eq!(sorter.n_classified(), 3);
+        assert_eq!(sorter.n_rejected(), 0);
+
+        sorter.classify_or_reject(&[10.0, 10.0]);
+        sorter.classify_or_reject(&[20.0, 20.0]);
+        assert_eq!(sorter.n_classified(), 5);
+        assert_eq!(sorter.n_rejected(), 2);
+
+        sorter.reset_counters();
+        assert_eq!(sorter.n_classified(), 0);
+        assert_eq!(sorter.n_rejected(), 0);
+        assert_eq!(sorter.n_templates(), 1);
     }
 }
