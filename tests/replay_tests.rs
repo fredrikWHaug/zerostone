@@ -8,8 +8,11 @@
 //! All trig uses `libm` (pure Rust) instead of platform `sin()`/`cos()` to guarantee
 //! identical results on macOS ARM64, Linux x86_64, etc.
 
+use zerostone::localize::{center_of_mass, center_of_mass_threshold};
 use zerostone::probe::ProbeLayout;
+use zerostone::sorter::{sort_multichannel, SortConfig};
 use zerostone::spike_sort::{deduplicate_events, detect_spikes_multichannel, MultiChannelEvent};
+use zerostone::whitening::{apply_whitening, WhiteningMatrix, WhiteningMode};
 use zerostone::{BiquadCoeffs, Complex, Fft, IirFilter, ThresholdDetector, WelchPsd, WindowType};
 
 /// FNV-1a hash of an f32 slice -- detects any bit-level change in output.
@@ -239,6 +242,167 @@ fn replay_multichannel_detect_dedup() {
     );
 }
 
+/// Replay 7: Whitening matrix computation + application.
+#[test]
+fn replay_whitening_pipeline() {
+    // Generate deterministic 2-channel signal: 100 samples at 250 Hz
+    let n = 100;
+    let fs = 250.0f64;
+    let mut data = [[0.0f64; 2]; 100];
+    for (i, sample) in data.iter_mut().enumerate().take(n) {
+        let t = i as f64 / fs;
+        sample[0] = libm::sin(2.0 * std::f64::consts::PI * 10.0 * t);
+        sample[1] = libm::sin(2.0 * std::f64::consts::PI * 15.0 * t);
+    }
+
+    // Compute sample covariance
+    let mut mean = [0.0f64; 2];
+    for sample in data.iter() {
+        mean[0] += sample[0];
+        mean[1] += sample[1];
+    }
+    mean[0] /= n as f64;
+    mean[1] /= n as f64;
+
+    let mut cov = [[0.0f64; 2]; 2];
+    for sample in data.iter() {
+        let d0 = sample[0] - mean[0];
+        let d1 = sample[1] - mean[1];
+        cov[0][0] += d0 * d0;
+        cov[0][1] += d0 * d1;
+        cov[1][0] += d1 * d0;
+        cov[1][1] += d1 * d1;
+    }
+    let inv = 1.0 / (n - 1) as f64;
+    cov[0][0] *= inv;
+    cov[0][1] *= inv;
+    cov[1][0] *= inv;
+    cov[1][1] *= inv;
+
+    // Compute whitening matrix (ZCA, epsilon=1e-6)
+    let wm = WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, 1e-6).unwrap();
+
+    // Apply whitening to all samples
+    let mut whitened = Vec::with_capacity(n * 2);
+    for sample in data.iter() {
+        let out = apply_whitening(&wm, sample);
+        whitened.push(out[0]);
+        whitened.push(out[1]);
+    }
+
+    let h = hash_f64(&whitened);
+    assert_eq!(
+        h, HASH_WHITENING,
+        "whitening pipeline replay changed: got {h:#018x}, expected {HASH_WHITENING:#018x}"
+    );
+}
+
+/// Replay 8: Spike localization from amplitude distributions.
+#[test]
+fn replay_localization() {
+    // Create a deterministic 4-channel linear probe with 25um pitch
+    let probe = ProbeLayout::<4>::linear(25.0);
+    let positions = *probe.positions();
+
+    // Deterministic amplitude array (simulates a spike strongest on channel 0)
+    let amplitudes: [f64; 4] = [10.0, 5.0, 2.0, 1.0];
+
+    // Center-of-mass localization
+    let com = center_of_mass(&amplitudes, &positions);
+
+    // Thresholded center-of-mass (threshold=0.3 -- all channels pass)
+    let com_thresh = center_of_mass_threshold(&amplitudes, &positions, 0.3).unwrap();
+
+    // Hash both results: com_x, com_y, thresh_x, thresh_y
+    let flat = [com[0], com[1], com_thresh[0], com_thresh[1]];
+    let h = hash_f64(&flat);
+    assert_eq!(
+        h, HASH_LOCALIZATION,
+        "localization replay changed: got {h:#018x}, expected {HASH_LOCALIZATION:#018x}"
+    );
+}
+
+/// Replay 9: Full multi-channel sorting pipeline.
+#[test]
+fn replay_sort_multichannel() {
+    // Deterministic 2-channel signal: 1000 samples at 250 Hz (same pattern as detect+dedup)
+    let n = 1000;
+    let fs = 250.0f64;
+    let mut data = vec![[0.0f64; 2]; n];
+    for (i, sample) in data.iter_mut().enumerate().take(n) {
+        let t = i as f64 / fs;
+        sample[0] = libm::sin(2.0 * std::f64::consts::PI * 8.0 * t);
+        sample[1] = libm::sin(2.0 * std::f64::consts::PI * 12.0 * t);
+    }
+
+    // Inject deterministic spikes on channel 0
+    for &pos in &[100usize, 350, 600, 850] {
+        data[pos][0] = -12.0;
+        if pos + 1 < n {
+            data[pos + 1][0] = -8.0;
+        }
+        if pos + 2 < n {
+            data[pos + 2][0] = 4.0;
+        }
+    }
+    // Inject deterministic spikes on channel 1
+    for &pos in &[200usize, 450, 700] {
+        data[pos][1] = -15.0;
+        if pos + 1 < n {
+            data[pos + 1][1] = -10.0;
+        }
+        if pos + 2 < n {
+            data[pos + 2][1] = 5.0;
+        }
+    }
+
+    let config = SortConfig {
+        pre_samples: 4,
+        ..SortConfig::default()
+    };
+    let probe = ProbeLayout::<2>::linear(25.0);
+
+    let mut scratch = vec![0.0f64; n];
+    let mut events = vec![
+        MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0,
+        };
+        200
+    ];
+    let mut waveforms = vec![[0.0f64; 32]; 200];
+    let mut features = vec![[0.0f64; 3]; 200];
+    let mut labels = vec![0usize; 200];
+
+    let result = sort_multichannel::<2, 4, 32, 3, 1024, 8>(
+        &config,
+        &probe,
+        &mut data,
+        &mut scratch,
+        &mut events,
+        &mut waveforms,
+        &mut features,
+        &mut labels,
+    )
+    .expect("sort_multichannel failed");
+
+    // Hash: labels (as f64) + n_spikes + n_clusters
+    let mut flat: Vec<f64> = labels
+        .iter()
+        .take(result.n_spikes)
+        .map(|&l| l as f64)
+        .collect();
+    flat.push(result.n_spikes as f64);
+    flat.push(result.n_clusters as f64);
+
+    let h = hash_f64(&flat);
+    assert_eq!(
+        h, HASH_SORT_MULTICHANNEL,
+        "sort_multichannel replay changed: got {h:#018x}, expected {HASH_SORT_MULTICHANNEL:#018x}"
+    );
+}
+
 // Canonical hashes -- regenerate by running tests and updating from failure messages.
 // Any change here means pipeline output changed. Commits tagged [refactor] must not change these.
 const HASH_BANDPASS: u64 = 0x2cfb75bb77f0f1ec;
@@ -247,3 +411,6 @@ const HASH_WELCH: u64 = 0x22c723d86dad4098;
 const HASH_SPIKE: u64 = 0x271153b6466ce591;
 const HASH_CSP: u64 = 0x6beb8f7318b7cb14;
 const HASH_MULTICHANNEL_DETECT: u64 = 0x0b237a058d038e32;
+const HASH_WHITENING: u64 = 0xf05e0280890d2b3d;
+const HASH_LOCALIZATION: u64 = 0xcef05e22f2464b21;
+const HASH_SORT_MULTICHANNEL: u64 = 0x640c847077948964;
