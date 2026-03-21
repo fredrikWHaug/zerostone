@@ -7,7 +7,7 @@ use zerostone::kalman::KalmanFilter;
 use zerostone::linalg::Matrix;
 use zerostone::localize::{center_of_mass, center_of_mass_threshold};
 use zerostone::mda::{mda_element_size, MdaDataType};
-use zerostone::metrics::compare_spike_trains;
+use zerostone::metrics::{compare_sorting, compare_spike_trains, UnitMatch};
 use zerostone::pac;
 use zerostone::probe::ProbeLayout;
 use zerostone::quality;
@@ -18,7 +18,8 @@ use zerostone::sorter::{
 };
 use zerostone::spike_sort::{
     align_to_peak, combine_features, compute_adaptive_thresholds, deduplicate_events,
-    detect_spikes_multichannel, extract_peak_channel, extract_spatial_features, MultiChannelEvent,
+    detect_spikes_multichannel, extract_multichannel, extract_peak_channel,
+    extract_spatial_features, MultiChannelEvent,
 };
 use zerostone::template_subtract::{PeelResult, TemplateSubtractor};
 use zerostone::whitening::{estimate_noise_covariance, WhiteningMatrix, WhiteningMode};
@@ -1460,5 +1461,90 @@ proptest! {
         let expected_max = if n_events < output.len() { n_events } else { output.len() };
         prop_assert!(count <= expected_max,
             "count {} must be <= min(n_events={}, buffer_len={})", count, n_events, output.len());
+    }
+
+    // =========================================================================
+    // compare_sorting properties
+    // =========================================================================
+
+    /// compare_sorting: matched count <= min(n_gt, n_sorted), metrics in [0,1].
+    #[test]
+    fn compare_sorting_metrics_bounded(
+        gt0_intervals in prop::collection::vec(10usize..200, 2..=4),
+        gt1_intervals in prop::collection::vec(10usize..200, 2..=4),
+        s0_intervals in prop::collection::vec(10usize..200, 2..=4),
+        s1_intervals in prop::collection::vec(10usize..200, 2..=4),
+        tolerance in 0usize..20,
+    ) {
+        let build_times = |intervals: &[usize]| -> Vec<usize> {
+            let mut times = Vec::new();
+            let mut acc = 0usize;
+            for &iv in intervals {
+                acc += iv;
+                times.push(acc);
+            }
+            times
+        };
+        let gt0 = build_times(&gt0_intervals);
+        let gt1 = build_times(&gt1_intervals);
+        let s0 = build_times(&s0_intervals);
+        let s1 = build_times(&s1_intervals);
+
+        let gt_trains: [&[usize]; 2] = [&gt0, &gt1];
+        let sorted_trains: [&[usize]; 2] = [&s0, &s1];
+        let mut out = [UnitMatch::empty(); 2];
+        let matched = compare_sorting(&gt_trains, &sorted_trains, tolerance, &mut out);
+
+        prop_assert!(matched <= 2, "matched {} must be <= min(n_gt, n_sorted) = 2", matched);
+        for (i, m) in out.iter().enumerate() {
+            prop_assert!(m.accuracy >= 0.0 && m.accuracy <= 1.0,
+                "out[{i}].accuracy = {} not in [0,1]", m.accuracy);
+            prop_assert!(m.precision >= 0.0 && m.precision <= 1.0,
+                "out[{i}].precision = {} not in [0,1]", m.precision);
+            prop_assert!(m.recall >= 0.0 && m.recall <= 1.0,
+                "out[{i}].recall = {} not in [0,1]", m.recall);
+        }
+    }
+
+    // =========================================================================
+    // extract_multichannel properties
+    // =========================================================================
+
+    /// extract_multichannel: count <= min(n_events, output.len()), values finite.
+    #[test]
+    fn extract_multichannel_count_bounded(
+        data_vals in prop::collection::vec(-1e3f64..1e3, 20..=20),
+        n_events in 1usize..=3,
+    ) {
+        // 2-channel data, 10 time samples
+        let mut data = [[0.0f64; 2]; 10];
+        for (t, chunk) in data_vals.chunks_exact(2).enumerate() {
+            data[t][0] = chunk[0];
+            data[t][1] = chunk[1];
+        }
+
+        let mut events = [MultiChannelEvent { sample: 0, channel: 0, amplitude: 1.0 }; 3];
+        for (i, event) in events.iter_mut().enumerate().take(n_events) {
+            *event = MultiChannelEvent {
+                sample: 2 + i * 2, // pre_samples=1, W=4, so valid range [1..6]
+                channel: i % 2,
+                amplitude: 1.0,
+            };
+        }
+
+        let mut output = [[[0.0f64; 4]; 2]; 2]; // buffer for 2 waveforms
+        let count = extract_multichannel::<2, 4>(&data, &events, n_events, 1, &mut output);
+
+        let expected_max = if n_events < output.len() { n_events } else { output.len() };
+        prop_assert!(count <= expected_max,
+            "count {} must be <= min(n_events={}, buffer_len={})", count, n_events, output.len());
+
+        for wf in output.iter().take(count) {
+            for ch_data in wf.iter() {
+                for &v in ch_data.iter() {
+                    prop_assert!(v.is_finite(), "extracted waveform value must be finite, got {}", v);
+                }
+            }
+        }
     }
 }
