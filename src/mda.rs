@@ -839,4 +839,72 @@ mod kani_proofs {
         // Must not panic regardless of input
         let _ = parse_mda_header(&data);
     }
+
+    /// Prove that `mda_element_size` returns 1, 2, 4, or 8 for every variant.
+    #[kani::proof]
+    fn verify_mda_element_size_valid() {
+        let code: i32 = kani::any();
+        kani::assume(code >= -8 && code <= -2);
+        if let Some(dtype) = MdaDataType::from_code(code) {
+            let size = mda_element_size(dtype);
+            assert!(
+                size == 1 || size == 2 || size == 4 || size == 8,
+                "element size must be 1, 2, 4, or 8"
+            );
+        }
+    }
+
+    /// Prove that `mda_num_elements` does not overflow for small dimension values.
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn verify_mda_num_elements_no_overflow() {
+        let d0: usize = kani::any();
+        let d1: usize = kani::any();
+        kani::assume(d0 <= 1000 && d1 <= 1000);
+        let header = MdaHeader {
+            data_type: MdaDataType::Float32,
+            ndims: 2,
+            dims: [d0, d1, 0, 0, 0, 0],
+            data_offset: 16,
+        };
+        let n = mda_num_elements(&header);
+        // saturating_mul means n <= d0 * d1 (no wrapping)
+        assert!(n <= 1_000_000);
+    }
+
+    /// Prove that if `parse_mda_header` succeeds, `mda_element_size` returns a valid size.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn verify_parse_mda_header_data_type_consistency() {
+        // Construct a valid-looking 1-D header: [dtype(4)] [ndims=1(4)] [dim0(4)]
+        let code: i32 = kani::any();
+        kani::assume(code >= -8 && code <= -2);
+        let dim: i32 = kani::any();
+        kani::assume(dim >= 0 && dim <= 100);
+
+        let mut data = [0u8; 12];
+        let code_bytes = code.to_le_bytes();
+        let ndims_bytes = 1i32.to_le_bytes();
+        let dim_bytes = dim.to_le_bytes();
+        data[0] = code_bytes[0];
+        data[1] = code_bytes[1];
+        data[2] = code_bytes[2];
+        data[3] = code_bytes[3];
+        data[4] = ndims_bytes[0];
+        data[5] = ndims_bytes[1];
+        data[6] = ndims_bytes[2];
+        data[7] = ndims_bytes[3];
+        data[8] = dim_bytes[0];
+        data[9] = dim_bytes[1];
+        data[10] = dim_bytes[2];
+        data[11] = dim_bytes[3];
+
+        if let Some(header) = parse_mda_header(&data) {
+            let size = mda_element_size(header.data_type);
+            assert!(
+                size == 1 || size == 2 || size == 4 || size == 8,
+                "parsed header must have valid element size"
+            );
+        }
+    }
 }

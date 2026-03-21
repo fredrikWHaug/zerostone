@@ -352,6 +352,65 @@ mod kani_proofs {
         let d = est.estimate_drift(sample);
         assert!(d.is_finite());
     }
+
+    /// Prove that `estimate_drift_from_positions` never panics for small bounded inputs.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn verify_estimate_drift_from_positions_no_panic() {
+        let s0: usize = kani::any();
+        let s1: usize = kani::any();
+        let p0: f64 = kani::any();
+        let p1: f64 = kani::any();
+        kani::assume(s0 < 10000 && s1 < 10000);
+        kani::assume(p0.is_finite() && p0 >= -1e4 && p0 <= 1e4);
+        kani::assume(p1.is_finite() && p1 >= -1e4 && p1 <= 1e4);
+        let samples = [s0, s1];
+        let positions = [p0, p1];
+        let bin_dur: usize = kani::any();
+        kani::assume(bin_dur >= 1 && bin_dur <= 5000);
+        let result = estimate_drift_from_positions(&samples, &positions, bin_dur, 4);
+        if let Some((slope, intercept)) = result {
+            assert!(slope.is_finite());
+            assert!(intercept.is_finite());
+        }
+    }
+
+    /// Prove that `DriftEstimator::new()` + `add_spike()` never panics for bounded inputs.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn verify_drift_estimator_add_spike_no_panic() {
+        let bin_dur: usize = kani::any();
+        kani::assume(bin_dur >= 1 && bin_dur <= 5000);
+        let mut est = DriftEstimator::<3>::new(bin_dur);
+        let s0: usize = kani::any();
+        let s1: usize = kani::any();
+        let p0: f64 = kani::any();
+        let p1: f64 = kani::any();
+        kani::assume(s0 < 20000 && s1 < 20000);
+        kani::assume(p0.is_finite() && p0 >= -1e4 && p0 <= 1e4);
+        kani::assume(p1.is_finite() && p1 >= -1e4 && p1 <= 1e4);
+        est.add_spike(s0, p0);
+        est.add_spike(s1, p1);
+        assert!(est.n_bins_used() <= 3);
+    }
+
+    /// Prove that after adding spikes to distinct bins, `fit()` returns finite coefficients.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn verify_drift_estimator_fit_returns_finite() {
+        let mut est = DriftEstimator::<4>::new(100);
+        let p0: f64 = kani::any();
+        let p1: f64 = kani::any();
+        kani::assume(p0.is_finite() && p0 >= -1e4 && p0 <= 1e4);
+        kani::assume(p1.is_finite() && p1 >= -1e4 && p1 <= 1e4);
+        // Place in distinct bins to guarantee fit succeeds
+        est.add_spike(50, p0);
+        est.add_spike(150, p1);
+        est.fit();
+        assert!(est.slope().is_finite());
+        assert!(est.intercept().is_finite());
+        assert!(est.is_fitted());
+    }
 }
 
 #[cfg(test)]
