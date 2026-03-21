@@ -1320,6 +1320,22 @@ mod kani_proofs {
         assert!(dist.is_finite());
         assert!(dist >= 0.0);
     }
+
+    /// Prove that `SortConfig::default()` produces valid positive thresholds.
+    #[kani::proof]
+    fn verify_sort_config_default_valid() {
+        let cfg = SortConfig::default();
+        assert!(cfg.threshold_multiplier > 0.0);
+        assert!(cfg.refractory_samples > 0);
+        assert!(cfg.spatial_radius_um > 0.0);
+        assert!(cfg.temporal_radius > 0);
+        assert!(cfg.cluster_threshold > 0.0);
+        assert!(cfg.whitening_epsilon > 0.0);
+        assert!(cfg.merge_dprime_threshold > 0.0);
+        assert!(cfg.merge_isi_threshold > 0.0);
+        assert!(cfg.split_min_cluster_size > 0);
+        assert!(cfg.split_bimodality_threshold > 0.0);
+    }
 }
 
 #[cfg(test)]

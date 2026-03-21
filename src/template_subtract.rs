@@ -452,6 +452,34 @@ mod kani_proofs {
         let n = sub.peel(&mut data, &times, 1, 1, &mut results);
         assert!(n <= 2, "output count must not exceed buffer length");
     }
+
+    /// Prove that creating, adding a template, and mutating config never panics.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn verify_template_subtractor_lifecycle_no_panic() {
+        let max_iter: usize = kani::any();
+        kani::assume(max_iter <= 100);
+        let mut sub = TemplateSubtractor::<4, 2>::new(max_iter);
+        assert_eq!(sub.n_templates(), 0);
+
+        let t0: f64 = kani::any();
+        let t1: f64 = kani::any();
+        let t2: f64 = kani::any();
+        let t3: f64 = kani::any();
+        kani::assume(t0.is_finite() && t0 >= -10.0 && t0 <= 10.0);
+        kani::assume(t1.is_finite() && t1 >= -10.0 && t1 <= 10.0);
+        kani::assume(t2.is_finite() && t2 >= -10.0 && t2 <= 10.0);
+        kani::assume(t3.is_finite() && t3 >= -10.0 && t3 <= 10.0);
+
+        let _ = sub.add_template(&[t0, t1, t2, t3], 0.5, 2.0);
+        assert_eq!(sub.n_templates(), 1);
+
+        // Mutate bounds and max_failures -- must not panic
+        sub.set_amplitude_bounds(0, 0.1, 5.0);
+        let mf: usize = kani::any();
+        kani::assume(mf <= 50);
+        sub.set_max_failures(mf);
+    }
 }
 
 #[cfg(test)]
