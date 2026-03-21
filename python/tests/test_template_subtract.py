@@ -114,3 +114,91 @@ class TestPeel:
         data[10:26] = 1.0 * template
         results = sub.peel(data, np.array([14], dtype=np.int64), pre_samples=4)
         assert len(results) >= 1
+
+
+class TestTemplateSubtractExpanded:
+    def test_peel_empty_signal(self):
+        sub = zbci.TemplateSubtractor(window_len=8, max_templates=4)
+        template = np.array([-0.5, -2.0, -5.0, -3.0, -1.0, 0.5, 1.0, 0.3])
+        sub.add_template(template, 0.5, 2.0)
+        data = np.array([], dtype=np.float64)
+        results = sub.peel(data, np.array([], dtype=np.int64), pre_samples=2)
+        assert len(results) == 0
+
+    def test_peel_no_templates(self):
+        sub = zbci.TemplateSubtractor(window_len=8, max_templates=4)
+        data = np.random.randn(100)
+        spike_times = np.array([10, 30, 50], dtype=np.int64)
+        results = sub.peel(data, spike_times, pre_samples=2)
+        assert len(results) == 0
+
+    def test_peel_short_signal(self):
+        sub = zbci.TemplateSubtractor(window_len=8, max_templates=4)
+        template = np.array([-0.5, -2.0, -5.0, -3.0, -1.0, 0.5, 1.0, 0.3])
+        sub.add_template(template, 0.5, 2.0)
+        # Signal shorter than template
+        data = np.zeros(4)
+        results = sub.peel(data, np.array([], dtype=np.int64), pre_samples=2)
+        assert len(results) == 0
+
+    def test_peel_exact_match(self):
+        sub = zbci.TemplateSubtractor(window_len=8, max_templates=4)
+        template = np.array([-0.5, -2.0, -5.0, -3.0, -1.0, 0.5, 1.0, 0.3])
+        sub.add_template(template, 0.5, 2.0)
+        # Data is exactly 1.0 * template at offset
+        data = np.zeros(24)
+        data[4:12] = template
+        results = sub.peel(data, np.array([6], dtype=np.int64), pre_samples=2)
+        assert len(results) >= 1
+        assert results[0]["template_id"] == 0
+        assert abs(results[0]["amplitude"] - 1.0) < 0.1
+
+    def test_peel_multiple_templates(self):
+        sub = zbci.TemplateSubtractor(window_len=8, max_templates=4)
+        t1 = np.array([-0.5, -2.0, -5.0, -3.0, -1.0, 0.5, 1.0, 0.3])
+        t2 = np.array([0.3, 1.0, 0.5, -1.0, -3.0, -5.0, -2.0, -0.5])
+        sub.add_template(t1, 0.5, 2.0)
+        sub.add_template(t2, 0.5, 2.0)
+        assert sub.n_templates == 2
+        # Insert t1 at one location, t2 at another
+        data = np.zeros(50)
+        data[4:12] = 1.0 * t1
+        data[30:38] = 1.0 * t2
+        spike_times = np.array([6, 32], dtype=np.int64)
+        results = sub.peel(data, spike_times, pre_samples=2)
+        assert len(results) >= 2
+        template_ids = [r["template_id"] for r in results]
+        assert 0 in template_ids
+        assert 1 in template_ids
+
+    def test_peel_high_threshold(self):
+        sub = zbci.TemplateSubtractor(window_len=8, max_templates=4)
+        template = np.array([-0.5, -2.0, -5.0, -3.0, -1.0, 0.5, 1.0, 0.3])
+        # Amplitude bounds require amp in [10, 20] -- actual amp is 1.0
+        sub.add_template(template, 10.0, 20.0)
+        data = np.zeros(24)
+        data[4:12] = template
+        results = sub.peel(data, np.array([6], dtype=np.int64), pre_samples=2)
+        assert len(results) == 0
+
+    def test_add_template_max(self):
+        sub = zbci.TemplateSubtractor(window_len=8, max_templates=4)
+        for i in range(4):
+            t = np.ones(8) * (i + 1.0)
+            sub.add_template(t, 0.5, 2.0)
+        assert sub.n_templates == 4
+        with pytest.raises(ValueError):
+            sub.add_template(np.ones(8), 0.5, 2.0)
+
+    def test_peel_overlapping(self):
+        sub = zbci.TemplateSubtractor(window_len=8, max_templates=4)
+        template = np.array([-0.5, -2.0, -5.0, -3.0, -1.0, 0.5, 1.0, 0.3])
+        sub.add_template(template, 0.5, 2.0)
+        # Two overlapping spikes close together
+        data = np.zeros(30)
+        data[4:12] = 1.0 * template
+        data[8:16] += 1.0 * template  # overlap with first
+        spike_times = np.array([6, 10], dtype=np.int64)
+        results = sub.peel(data, spike_times, pre_samples=2)
+        # Should find at least one match (peeling is iterative)
+        assert len(results) >= 1
