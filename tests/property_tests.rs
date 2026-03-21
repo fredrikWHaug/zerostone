@@ -6,6 +6,8 @@ use zerostone::isi;
 use zerostone::kalman::KalmanFilter;
 use zerostone::linalg::Matrix;
 use zerostone::localize::{center_of_mass, center_of_mass_threshold};
+use zerostone::mda::{mda_element_size, MdaDataType};
+use zerostone::metrics::compare_spike_trains;
 use zerostone::pac;
 use zerostone::probe::ProbeLayout;
 use zerostone::quality;
@@ -16,10 +18,10 @@ use zerostone::sorter::{
 };
 use zerostone::spike_sort::{
     align_to_peak, combine_features, compute_adaptive_thresholds, deduplicate_events,
-    detect_spikes_multichannel, MultiChannelEvent,
+    detect_spikes_multichannel, extract_peak_channel, extract_spatial_features, MultiChannelEvent,
 };
 use zerostone::template_subtract::{PeelResult, TemplateSubtractor};
-use zerostone::whitening::{WhiteningMatrix, WhiteningMode};
+use zerostone::whitening::{estimate_noise_covariance, WhiteningMatrix, WhiteningMode};
 use zerostone::{BiquadCoeffs, Complex, Fft, HilbertTransform, IirFilter, OnlineStats, WindowType};
 
 /// Construct a 3x3 SPD matrix from 9 arbitrary values: A^T * A + 0.1 * I.
@@ -1211,5 +1213,252 @@ proptest! {
         let (label, dist) = sorter.classify(&template);
         prop_assert_eq!(label, 0);
         prop_assert!(dist < 1e-10, "Self-distance should be ~0, got {}", dist);
+    }
+
+    // =========================================================================
+    // Metrics properties
+    // =========================================================================
+
+    /// compare_spike_trains: accuracy, precision, recall are all in [0.0, 1.0].
+    #[test]
+    fn metrics_accuracy_bounded(
+        intervals_gt in prop::collection::vec(1usize..100, 1..=8),
+        intervals_sorted in prop::collection::vec(1usize..100, 1..=8),
+        tolerance in 0usize..20,
+    ) {
+        // Build sorted spike times by accumulating intervals
+        let mut gt_times: Vec<usize> = Vec::new();
+        let mut acc = 0usize;
+        for &iv in &intervals_gt {
+            acc += iv;
+            gt_times.push(acc);
+        }
+        let mut sorted_times: Vec<usize> = Vec::new();
+        acc = 0;
+        for &iv in &intervals_sorted {
+            acc += iv;
+            sorted_times.push(acc);
+        }
+
+        let m = compare_spike_trains(&gt_times, &sorted_times, tolerance);
+        prop_assert!(m.accuracy >= 0.0, "accuracy must be >= 0: {}", m.accuracy);
+        prop_assert!(m.accuracy <= 1.0, "accuracy must be <= 1: {}", m.accuracy);
+        prop_assert!(m.precision >= 0.0, "precision must be >= 0: {}", m.precision);
+        prop_assert!(m.precision <= 1.0, "precision must be <= 1: {}", m.precision);
+        prop_assert!(m.recall >= 0.0, "recall must be >= 0: {}", m.recall);
+        prop_assert!(m.recall <= 1.0, "recall must be <= 1: {}", m.recall);
+    }
+
+    /// compare_spike_trains: identical trains yield perfect scores.
+    #[test]
+    fn metrics_identical_trains_perfect(
+        intervals in prop::collection::vec(1usize..200, 1..=8),
+        tolerance in 0usize..20,
+    ) {
+        let mut times: Vec<usize> = Vec::new();
+        let mut acc = 0usize;
+        for &iv in &intervals {
+            acc += iv;
+            times.push(acc);
+        }
+
+        let m = compare_spike_trains(&times, &times, tolerance);
+        prop_assert!((m.accuracy - 1.0).abs() < 1e-10,
+            "identical trains must have accuracy=1.0, got {}", m.accuracy);
+        prop_assert!((m.precision - 1.0).abs() < 1e-10,
+            "identical trains must have precision=1.0, got {}", m.precision);
+        prop_assert!((m.recall - 1.0).abs() < 1e-10,
+            "identical trains must have recall=1.0, got {}", m.recall);
+    }
+
+    /// compare_spike_trains: empty GT against non-empty sorted gives accuracy=0.
+    #[test]
+    fn metrics_empty_gt_zero_accuracy(
+        intervals in prop::collection::vec(1usize..200, 1..=8),
+        tolerance in 0usize..20,
+    ) {
+        let mut sorted_times: Vec<usize> = Vec::new();
+        let mut acc = 0usize;
+        for &iv in &intervals {
+            acc += iv;
+            sorted_times.push(acc);
+        }
+        let gt_empty: Vec<usize> = Vec::new();
+
+        let m = compare_spike_trains(&gt_empty, &sorted_times, tolerance);
+        prop_assert!((m.accuracy - 0.0).abs() < 1e-10,
+            "empty GT must have accuracy=0.0, got {}", m.accuracy);
+    }
+
+    // =========================================================================
+    // MDA properties
+    // =========================================================================
+
+    /// mda_element_size returns a value in {1, 2, 4, 8} for all variants.
+    #[test]
+    fn mda_element_size_positive(
+        variant_idx in 0usize..7,
+    ) {
+        let variants = [
+            MdaDataType::Uint8,
+            MdaDataType::Float32,
+            MdaDataType::Int16,
+            MdaDataType::Int32,
+            MdaDataType::Uint16,
+            MdaDataType::Float64,
+            MdaDataType::Uint32,
+        ];
+        let dt = variants[variant_idx];
+        let sz = mda_element_size(dt);
+        prop_assert!(
+            sz == 1 || sz == 2 || sz == 4 || sz == 8,
+            "element size must be 1, 2, 4, or 8; got {}", sz
+        );
+    }
+
+    // =========================================================================
+    // Spatial features property
+    // =========================================================================
+
+    /// extract_spatial_features with finite inputs returns all-finite outputs.
+    #[test]
+    fn spatial_features_finite(
+        amp_vals in prop::collection::vec(-1e6f64..1e6, 8..=8),
+        pos_vals in prop::collection::vec(-1e3f64..1e3, 4..=4),
+        event_sample in 1usize..6,
+        event_channel in 0usize..2,
+    ) {
+        // 2-channel data, 8 time samples
+        let mut data = [[0.0f64; 2]; 8];
+        for t in 0..8 {
+            data[t][0] = amp_vals[t];
+            data[t][1] = if t < 8 { amp_vals[t] * 0.5 } else { 0.0 };
+        }
+
+        let positions: [[f64; 2]; 2] = [
+            [pos_vals[0], pos_vals[1]],
+            [pos_vals[2], pos_vals[3]],
+        ];
+
+        let ch = if event_channel < 2 { event_channel } else { 0 };
+        let s = if event_sample < 8 { event_sample } else { 1 };
+        let events = [MultiChannelEvent { sample: s, channel: ch, amplitude: 1.0 }];
+        let mut output = [[0.0f64; 2]; 1];
+
+        let n = extract_spatial_features::<2>(&data, &events, 1, &positions, &mut output);
+        prop_assert!(n <= 1, "count must be <= 1, got {}", n);
+        if n > 0 {
+            prop_assert!(output[0][0].is_finite(),
+                "spatial feature x must be finite, got {}", output[0][0]);
+            prop_assert!(output[0][1].is_finite(),
+                "spatial feature y must be finite, got {}", output[0][1]);
+        }
+    }
+
+    // =========================================================================
+    // Noise covariance property
+    // =========================================================================
+
+    /// estimate_noise_covariance on random finite data produces positive diagonal.
+    #[test]
+    fn noise_covariance_diagonal_positive(
+        vals in prop::collection::vec(-1e3f64..1e3, 6..=6),
+    ) {
+        // 2-channel data, 3 time samples (minimum for non-zero covariance)
+        let data: [[f64; 2]; 3] = [
+            [vals[0], vals[1]],
+            [vals[2], vals[3]],
+            [vals[4], vals[5]],
+        ];
+        let noise_std = [1e6, 1e6]; // high threshold so all samples are "quiet"
+
+        let cov = estimate_noise_covariance(&data, &noise_std, 3.0, 2);
+        // Diagonal entries of a covariance matrix must be >= 0
+        prop_assert!(cov[0][0] >= 0.0,
+            "covariance diagonal [0][0] must be >= 0, got {}", cov[0][0]);
+        prop_assert!(cov[1][1] >= 0.0,
+            "covariance diagonal [1][1] must be >= 0, got {}", cov[1][1]);
+        prop_assert!(cov[0][0].is_finite(),
+            "covariance diagonal [0][0] must be finite, got {}", cov[0][0]);
+        prop_assert!(cov[1][1].is_finite(),
+            "covariance diagonal [1][1] must be finite, got {}", cov[1][1]);
+    }
+
+    // =========================================================================
+    // Template subtraction energy property
+    // =========================================================================
+
+    /// After peeling, residual energy <= original energy + small epsilon.
+    #[test]
+    fn peel_reduces_or_preserves_energy(
+        template_vals in prop::collection::vec(-5.0f64..5.0, 4..=4),
+        amp in 0.8f64..1.8,
+    ) {
+        let template: [f64; 4] = [template_vals[0], template_vals[1], template_vals[2], template_vals[3]];
+
+        // Only test when template has non-trivial norm
+        let norm_sq: f64 = template.iter().map(|x| x * x).sum();
+        if norm_sq < 0.01 {
+            return Ok(());
+        }
+
+        let mut sub = TemplateSubtractor::<4, 2>::new(10);
+        sub.add_template(&template, 0.5, 2.0).unwrap();
+
+        // Build data = amp * template at position [1..5] in a length-8 buffer
+        let mut data = [0.0f64; 8];
+        for i in 0..4 {
+            data[1 + i] = amp * template[i];
+        }
+
+        let energy_before: f64 = data.iter().map(|x| x * x).sum();
+
+        let spike_times = [2usize];
+        let mut results = [PeelResult { sample: 0, template_id: 0, amplitude: 0.0 }; 4];
+        let n = sub.peel(&mut data, &spike_times, 1, 1, &mut results);
+
+        let energy_after: f64 = data.iter().map(|x| x * x).sum();
+
+        // If subtraction occurred, residual should not exceed original
+        if n > 0 {
+            let eps = 1e-6;
+            prop_assert!(energy_after <= energy_before + eps,
+                "peel should not amplify energy: before={}, after={}", energy_before, energy_after);
+        }
+    }
+
+    // =========================================================================
+    // Extract peak channel count bounded
+    // =========================================================================
+
+    /// extract_peak_channel returns count <= min(n_events, output.len()).
+    #[test]
+    fn extract_peak_channel_count_bounded(
+        data_vals in prop::collection::vec(-1e6f64..1e6, 16..=16),
+        n_events in 1usize..=4,
+    ) {
+        // 2-channel data, 8 time samples
+        let mut data = [[0.0f64; 2]; 8];
+        for t in 0..8 {
+            data[t][0] = data_vals[t * 2];
+            data[t][1] = data_vals[t * 2 + 1];
+        }
+
+        // Create events pointing to valid samples
+        let mut events = [MultiChannelEvent { sample: 0, channel: 0, amplitude: 1.0 }; 4];
+        for i in 0..n_events {
+            events[i] = MultiChannelEvent {
+                sample: 2 + i,  // safe range with pre_samples=1 and W=4
+                channel: i % 2,
+                amplitude: 1.0,
+            };
+        }
+
+        let mut output = [[0.0f64; 4]; 3]; // buffer smaller than max events
+        let count = extract_peak_channel::<2, 4>(&data, &events, n_events, 1, &mut output);
+
+        let expected_max = if n_events < output.len() { n_events } else { output.len() };
+        prop_assert!(count <= expected_max,
+            "count {} must be <= min(n_events={}, buffer_len={})", count, n_events, output.len());
     }
 }
