@@ -126,8 +126,10 @@ fn sort_all_zeros() {
 
 #[test]
 fn sort_very_high_threshold() {
-    let mut config = SortConfig::default();
-    config.threshold_multiplier = 1000.0;
+    let config = SortConfig {
+        threshold_multiplier: 1000.0,
+        ..SortConfig::default()
+    };
     let probe = ProbeLayout::<2>::linear(25.0);
     // Normal-ish data: small values that won't exceed threshold * noise
     let mut data: Vec<[f64; 2]> = (0..128)
@@ -251,8 +253,8 @@ fn detect_single_channel_spike() {
     let n = detect_spikes_multichannel::<2>(&data, 5.0, &noise, 15, &mut events);
     assert!(n >= 1, "Should detect at least 1 spike on channel 0");
     // All detected events should be on channel 0
-    for i in 0..n {
-        assert_eq!(events[i].channel, 0);
+    for event in events.iter().take(n) {
+        assert_eq!(event.channel, 0);
     }
 }
 
@@ -274,7 +276,7 @@ fn detect_all_above_threshold() {
     let n = detect_spikes_multichannel::<1>(&data, 5.0, &noise, refractory, &mut events);
     // Should not panic, and refractory period limits count
     // Maximum detections: roughly ceil(200 / refractory)
-    let max_expected = (200 + refractory - 1) / refractory;
+    let max_expected = 200_usize.div_ceil(refractory);
     assert!(
         n <= max_expected + 1,
         "Refractory should limit detections: got {}, max_expected {}",
