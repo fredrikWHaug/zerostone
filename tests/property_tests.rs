@@ -1446,8 +1446,8 @@ proptest! {
 
         // Create events pointing to valid samples
         let mut events = [MultiChannelEvent { sample: 0, channel: 0, amplitude: 1.0 }; 4];
-        for i in 0..n_events {
-            events[i] = MultiChannelEvent {
+        for (i, event) in events.iter_mut().enumerate().take(n_events) {
+            *event = MultiChannelEvent {
                 sample: 2 + i,  // safe range with pre_samples=1 and W=4
                 channel: i % 2,
                 amplitude: 1.0,
