@@ -48,6 +48,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///         - ``"n_spikes"`` (int): Total spikes detected.
 ///         - ``"n_clusters"`` (int): Number of clusters found.
 ///         - ``"labels"`` (np.ndarray): 1D int array of cluster labels per spike.
+///         - ``"spike_times"`` (np.ndarray): 1D int64 array of sample indices per spike.
+///         - ``"spike_channels"`` (np.ndarray): 1D int64 array of peak channel per spike.
 ///         - ``"clusters"`` (list[dict]): Per-cluster metrics, each with
 ///           ``"count"`` (int), ``"snr"`` (float), ``"isi_violation_rate"`` (float).
 ///
@@ -163,7 +165,7 @@ fn sort_multichannel<'py>(
             })?;
 
             let sr = result.map_err(sort_error_to_py)?;
-            build_result_dict(py, &sr, &labels)
+            build_result_dict(py, &sr, &labels, &event_buf[..sr.n_spikes])
         }};
     }
 
@@ -185,6 +187,7 @@ fn build_result_dict<const N: usize>(
     py: Python<'_>,
     sr: &zerostone::sorter::SortResult<N>,
     labels: &[usize],
+    events: &[MultiChannelEvent],
 ) -> PyResult<PyObject> {
     use pyo3::types::{PyDict, PyList};
 
@@ -197,6 +200,18 @@ fn build_result_dict<const N: usize>(
     let label_array = Array1::from_vec(label_data);
     let label_py = PyArray1::from_owned_array(py, label_array);
     dict.set_item("labels", label_py)?;
+
+    // Spike times array (sample indices from event_buf)
+    let times_data: Vec<i64> = events.iter().map(|e| e.sample as i64).collect();
+    let times_array = Array1::from_vec(times_data);
+    let times_py = PyArray1::from_owned_array(py, times_array);
+    dict.set_item("spike_times", times_py)?;
+
+    // Spike channels array (peak channel per spike)
+    let ch_data: Vec<i64> = events.iter().map(|e| e.channel as i64).collect();
+    let ch_array = Array1::from_vec(ch_data);
+    let ch_py = PyArray1::from_owned_array(py, ch_array);
+    dict.set_item("spike_channels", ch_py)?;
 
     // Clusters list of dicts
     let clusters_list = PyList::empty(py);

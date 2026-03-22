@@ -19,7 +19,6 @@ Requires ``spikeinterface >= 0.100`` as an optional dependency.
 """
 
 import json
-import warnings
 from pathlib import Path
 
 import numpy as np
@@ -43,23 +42,6 @@ def _check_spikeinterface():
             "spikeinterface is required for zpybci.spikeinterface. "
             "Install it with: pip install spikeinterface"
         )
-
-
-def _estimate_noise_multichannel(data):
-    """Estimate per-channel noise using MAD (median absolute deviation).
-
-    Parameters
-    ----------
-    data : np.ndarray
-        2D float64 array of shape ``(n_samples, n_channels)``.
-
-    Returns
-    -------
-    np.ndarray
-        1D float64 array of per-channel noise estimates.
-    """
-    # MAD noise: sigma = median(|x|) / 0.6745
-    return np.median(np.abs(data), axis=0) / 0.6745
 
 
 def _recording_to_numpy(recording):
@@ -196,41 +178,12 @@ def _sort_recording(recording, params):
         sorting = NumpySorting.from_unit_dict({}, sampling_frequency=fs)
         return sorting, sort_result
 
-    # Step 2: Recover spike times via separate detection on raw data.
-    # sort_multichannel whitens internally before detection, so spike times
-    # from raw detection are approximate. We detect, deduplicate, and take
-    # the first n_spikes events to align with the label array.
-    noise = _estimate_noise_multichannel(data)
-    events = zbci.detect_spikes_multichannel(
-        data,
-        params["threshold"],
-        noise,
-        params["refractory"],
-    )
-
-    # Extract sample times from event dicts, sorted by time
-    event_times = np.array([e["sample"] for e in events], dtype=np.int64)
-
-    # The sort pipeline internally whitens then detects, so spike counts
-    # may differ. Use the minimum count and warn if they diverge.
-    n_events = len(event_times)
-    if n_events != n_spikes:
-        n_use = min(n_events, n_spikes)
-        if n_use == 0:
-            sorting = NumpySorting.from_unit_dict({}, sampling_frequency=fs)
-            return sorting, sort_result
-        warnings.warn(
-            f"Detection found {n_events} events but sorter labeled {n_spikes} "
-            f"spikes (whitening changes thresholds). Using {n_use} spikes.",
-            stacklevel=2,
-        )
-        event_times = event_times[:n_use]
-        labels = labels[:n_use]
+    # Step 2: Extract spike times directly from sort result
+    spike_times = np.asarray(sort_result["spike_times"], dtype=np.int64)
 
     # Step 3: Build NumpySorting from sample indices and unit labels
-    # NumpySorting.from_samples_and_labels expects int arrays
     sorting = NumpySorting.from_samples_and_labels(
-        samples_list=[event_times],
+        samples_list=[spike_times],
         labels_list=[labels],
         sampling_frequency=fs,
     )

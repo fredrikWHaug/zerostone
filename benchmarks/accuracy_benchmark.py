@@ -12,11 +12,9 @@ Ground-truth-to-sorted matching uses greedy best-match by accuracy,
 with a configurable tolerance window (default 0.4 ms = 12 samples at
 30 kHz), consistent with SpikeInterface defaults.
 
-Note: sort_multichannel() whitens data internally before detection, so
-running detection on raw data yields different spike times. This benchmark
-re-runs detection on raw data to obtain spike sample indices, then pairs
-them with the sorter's cluster labels by count. This is an approximation;
-a future version may expose spike times from the sorter directly.
+Spike times and cluster labels are extracted directly from the
+sort_multichannel() output, which exposes them as "spike_times" and
+"labels" in the result dict.
 
 Usage:
     python benchmarks/accuracy_benchmark.py
@@ -31,10 +29,8 @@ import time
 
 import numpy as np
 
-import zpybci as zbci
 from zpybci.zpybci import (
     ProbeLayout,
-    detect_spikes_multichannel,
     sort_multichannel,
 )
 from zpybci.synthetic import generate_recording
@@ -340,33 +336,12 @@ def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=Tru
         print(f"done ({t_sort:.1f}s, {sort_result['n_spikes']} spikes, "
               f"{sort_result['n_clusters']} clusters)")
 
-    # 4. Get spike times via detection on raw data
-    #    NOTE: The sorter whitens internally, so detection on raw data gives
-    #    different spike times. We use raw detection as an approximation.
-    if verbose:
-        print("  Running detection for spike times...", end=" ", flush=True)
-    t0 = time.perf_counter()
-
-    # Estimate per-channel noise via MAD
-    noise = np.zeros(n_ch, dtype=np.float64)
-    for ch in range(n_ch):
-        noise[ch] = zbci.estimate_noise_mad(np.ascontiguousarray(data[:, ch]))
-
-    events = detect_spikes_multichannel(data, 5.0, noise, 15)
-    t_det = time.perf_counter() - t0
-
-    # Extract sample times from events
-    n_detected = len(events)
-    if verbose:
-        print(f"done ({t_det:.1f}s, {n_detected} raw detections)")
-
-    # The sorter may find a different number of spikes due to whitening,
-    # deduplication, and alignment. We align by count: take the first
-    # min(n_sort, n_detect) events.
-    n_sort = sort_result["n_spikes"]
+    # 4. Extract spike times from sorter output
+    sorted_times = np.array(sort_result["spike_times"], dtype=np.int64)
     sort_labels = np.array(sort_result["labels"], dtype=np.int64)
+    n_sort = sort_result["n_spikes"]
 
-    if n_detected == 0 or n_sort == 0:
+    if n_sort == 0:
         if verbose:
             print("  WARNING: No spikes detected. Skipping metrics.")
         return {
@@ -377,21 +352,6 @@ def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=Tru
             "elapsed_s": t_sort,
         }
 
-    # Build sorted spike times and labels arrays
-    # Events from detect_spikes_multichannel are sorted by sample time.
-    # We pair them with sorter labels positionally.
-    det_times = np.array([e["sample"] for e in events], dtype=np.int64)
-
-    # Handle count mismatch: the sorter may have fewer spikes due to
-    # deduplication/alignment that raw detection doesn't do.
-    n_use = min(n_sort, n_detected)
-    if n_sort != n_detected and verbose:
-        print(f"  NOTE: count mismatch -- sorter={n_sort}, "
-              f"raw_detect={n_detected}, using first {n_use}")
-
-    sorted_times = det_times[:n_use]
-    sorted_labels_use = sort_labels[:n_use]
-
     # 5. Compute accuracy metrics
     if verbose:
         print("  Computing accuracy metrics...", end=" ", flush=True)
@@ -399,7 +359,7 @@ def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=Tru
         rec["all_spike_times"],
         rec["spike_labels"],
         sorted_times,
-        sorted_labels_use,
+        sort_labels,
         rec["n_units"],
         tolerance=tolerance,
     )
