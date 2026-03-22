@@ -150,6 +150,69 @@ class TestSortMultichannel:
         result = zbci.sort_multichannel(data, probe, threshold=5.0)
         assert result["n_spikes"] >= 0
 
+    def test_sort_returns_spike_times(self):
+        np.random.seed(60)
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        data = np.random.randn(8000, 4)
+        for t in range(200, 7000, 200):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(data, probe, threshold=4.0)
+        assert "spike_times" in result
+        times = result["spike_times"]
+        assert isinstance(times, np.ndarray)
+        assert len(times) == result["n_spikes"]
+        # Times should be non-negative
+        if len(times) > 0:
+            assert np.all(times >= 0)
+
+    def test_sort_returns_spike_channels(self):
+        np.random.seed(61)
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        data = np.random.randn(8000, 4)
+        for t in range(200, 7000, 200):
+            data[t, 1] += -15.0
+        result = zbci.sort_multichannel(data, probe, threshold=4.0)
+        assert "spike_channels" in result
+        channels = result["spike_channels"]
+        assert isinstance(channels, np.ndarray)
+        assert len(channels) == result["n_spikes"]
+        # Channels should be in valid range
+        if len(channels) > 0:
+            assert np.all(channels >= 0)
+            assert np.all(channels < 4)
+
+    def test_sort_spike_times_sorted(self):
+        np.random.seed(62)
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        data = np.random.randn(8000, 4)
+        for t in range(200, 7000, 200):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(data, probe, threshold=4.0)
+        times = result["spike_times"]
+        if len(times) > 1:
+            # After dedup + alignment, spike times should be non-decreasing
+            assert np.all(np.diff(times) >= 0)
+
+    def test_sort_zero_data_spike_times(self):
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        data = np.zeros((5000, 4))
+        result = zbci.sort_multichannel(data, probe, threshold=5.0)
+        assert "spike_times" in result
+        assert len(result["spike_times"]) == 0
+        assert "spike_channels" in result
+        assert len(result["spike_channels"]) == 0
+
+    def test_sort_spike_times_consistent_with_labels(self):
+        np.random.seed(63)
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        data = np.random.randn(8000, 4)
+        for t in range(200, 7000, 200):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(data, probe, threshold=4.0)
+        # spike_times, spike_channels, and labels should all have same length
+        assert len(result["spike_times"]) == len(result["labels"])
+        assert len(result["spike_channels"]) == len(result["labels"])
+
 
 # ---- OnlineSorter tests (in test_sorter.py) ----
 

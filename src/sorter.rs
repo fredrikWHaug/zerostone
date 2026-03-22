@@ -778,6 +778,11 @@ pub fn split_clusters<const K: usize>(
 ///
 /// `SortResult<N>` with spike count, cluster count, and per-cluster quality.
 ///
+/// After this function returns, `event_buf[0..result.n_spikes]` contains the
+/// final spike events after deduplication and alignment, each with `.sample`
+/// (the sample index in the input data), `.channel` (the peak channel), and
+/// `.amplitude` fields.
+///
 /// # Errors
 ///
 /// Returns `SortError::InsufficientData` if the data is too short or too
