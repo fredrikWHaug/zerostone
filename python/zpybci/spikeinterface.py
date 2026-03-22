@@ -44,6 +44,23 @@ def _check_spikeinterface():
         )
 
 
+def _estimate_noise_multichannel(data):
+    """Estimate per-channel noise using MAD (median absolute deviation).
+
+    Parameters
+    ----------
+    data : np.ndarray
+        2D float64 array of shape ``(n_samples, n_channels)``.
+
+    Returns
+    -------
+    np.ndarray
+        1D float64 array of per-channel noise estimates.
+    """
+    # MAD noise: sigma = median(|x|) / 0.6745
+    return np.median(np.abs(data), axis=0) / 0.6745
+
+
 def _recording_to_numpy(recording):
     """Extract contiguous float64 array from a SpikeInterface recording.
 
