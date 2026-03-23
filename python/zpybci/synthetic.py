@@ -173,14 +173,16 @@ def generate_recording(
     # Build recording: start with noise
     data = rng.normal(0.0, noise_std, size=(n_total_samples, n_channels))
 
-    # Superimpose spikes
+    # Superimpose spikes (scale by noise_std so template amplitudes are in
+    # units of noise standard deviation, i.e., the amplitude parameter in
+    # generate_templates truly represents SNR)
     for u in range(n_units):
         template = templates[u]  # (n_channels, template_len)
         for t_spike in spike_times_per_unit[u]:
             start = t_spike - half_template
             end = start + template_len
             # template is (n_channels, template_len), data is (n_samples, n_channels)
-            data[start:end, :] += template.T
+            data[start:end, :] += template.T * noise_std
 
     # Merge all spike times and labels, sorted by time
     all_times = []

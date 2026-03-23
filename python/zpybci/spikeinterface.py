@@ -89,7 +89,7 @@ _DEFAULT_PARAMS = {
     "temporal_radius": 5,
     "align_half_window": 5,
     "pre_samples": 16,
-    "cluster_threshold": 3.0,
+    "cluster_threshold": 5.0,
     "cluster_max_count": 1000,
     "whitening_epsilon": 1e-6,
     "probe_pitch": 25.0,
