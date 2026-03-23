@@ -2533,9 +2533,21 @@ mod tests {
         ];
         let labels = [0usize, 0, 1];
         let events = [
-            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
-            MultiChannelEvent { sample: 200, channel: 0, amplitude: 6.0 },
-            MultiChannelEvent { sample: 300, channel: 1, amplitude: 8.0 },
+            MultiChannelEvent {
+                sample: 100,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            MultiChannelEvent {
+                sample: 200,
+                channel: 0,
+                amplitude: 6.0,
+            },
+            MultiChannelEvent {
+                sample: 300,
+                channel: 1,
+                amplitude: 8.0,
+            },
         ];
 
         let mut means = [[0.0f64; 4]; 4];
@@ -2543,8 +2555,14 @@ mod tests {
         let mut peak_ch = [0usize; 4];
 
         compute_cluster_means::<4, 4>(
-            &waveforms, &labels, &events, 3, 2,
-            &mut means, &mut counts, &mut peak_ch,
+            &waveforms,
+            &labels,
+            &events,
+            3,
+            2,
+            &mut means,
+            &mut counts,
+            &mut peak_ch,
         );
 
         assert_eq!(counts[0], 2);
@@ -2567,12 +2585,13 @@ mod tests {
         data[5] = [3.0, 0.0];
         data[6] = [2.0, 0.0];
 
-        let events = [MultiChannelEvent { sample: 5, channel: 0, amplitude: 3.0 }];
+        let events = [MultiChannelEvent {
+            sample: 5,
+            channel: 0,
+            amplitude: 3.0,
+        }];
         let labels = [0usize];
-        let means: [[f64; 4]; 4] = [
-            [1.0, 2.0, 3.0, 2.0],
-            [0.0; 4], [0.0; 4], [0.0; 4],
-        ];
+        let means: [[f64; 4]; 4] = [[1.0, 2.0, 3.0, 2.0], [0.0; 4], [0.0; 4], [0.0; 4]];
         let counts = [5u32, 0, 0, 0];
         let peak_ch = [0usize, 0, 0, 0];
 
@@ -2585,7 +2604,7 @@ mod tests {
         assert!((data[4][0] - 0.0).abs() < 1e-12); // 2.0 - 2.0
         assert!((data[5][0] - 0.0).abs() < 1e-12); // 3.0 - 3.0
         assert!((data[6][0] - 0.0).abs() < 1e-12); // 2.0 - 2.0
-        // Channel 1 untouched
+                                                   // Channel 1 untouched
         assert!((data[3][1]).abs() < 1e-12);
     }
 
@@ -2594,7 +2613,8 @@ mod tests {
         let means: [[f64; 4]; 4] = [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
-            [0.0; 4], [0.0; 4],
+            [0.0; 4],
+            [0.0; 4],
         ];
         let counts = [10u32, 10, 0, 0];
 
@@ -2631,39 +2651,72 @@ mod tests {
         let probe = ProbeLayout::<2>::linear(25.0);
         let max_ev = n / 15 + 2;
 
-        let mut config_on = SortConfig::default();
-        config_on.template_subtract = true;
+        let config_on = SortConfig {
+            template_subtract: true,
+            ..SortConfig::default()
+        };
         let mut scratch_on = vec![0.0f64; n];
-        let mut ev_on = vec![MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; max_ev];
+        let mut ev_on = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0
+            };
+            max_ev
+        ];
         let mut wf_on = vec![[0.0f64; 8]; max_ev];
         let mut feat_on = vec![[0.0f64; 3]; max_ev];
         let mut lab_on = vec![0usize; max_ev];
 
         let r_on = sort_multichannel::<2, 4, 8, 3, 64, 4>(
-            &config_on, &probe, &mut data_on, &mut scratch_on,
-            &mut ev_on, &mut wf_on, &mut feat_on, &mut lab_on,
+            &config_on,
+            &probe,
+            &mut data_on,
+            &mut scratch_on,
+            &mut ev_on,
+            &mut wf_on,
+            &mut feat_on,
+            &mut lab_on,
         );
         assert!(r_on.is_ok());
 
-        let mut config_off = SortConfig::default();
-        config_off.template_subtract = false;
+        let config_off = SortConfig {
+            template_subtract: false,
+            ..SortConfig::default()
+        };
         let mut scratch_off = vec![0.0f64; n];
-        let mut ev_off = vec![MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; max_ev];
+        let mut ev_off = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0
+            };
+            max_ev
+        ];
         let mut wf_off = vec![[0.0f64; 8]; max_ev];
         let mut feat_off = vec![[0.0f64; 3]; max_ev];
         let mut lab_off = vec![0usize; max_ev];
 
         let r_off = sort_multichannel::<2, 4, 8, 3, 64, 4>(
-            &config_off, &probe, &mut data_off, &mut scratch_off,
-            &mut ev_off, &mut wf_off, &mut feat_off, &mut lab_off,
+            &config_off,
+            &probe,
+            &mut data_off,
+            &mut scratch_off,
+            &mut ev_off,
+            &mut wf_off,
+            &mut feat_off,
+            &mut lab_off,
         );
         assert!(r_off.is_ok());
 
         // Template subtraction should find >= as many spikes as without
         let sr_on = r_on.unwrap();
         let sr_off = r_off.unwrap();
-        assert!(sr_on.n_spikes >= sr_off.n_spikes,
+        assert!(
+            sr_on.n_spikes >= sr_off.n_spikes,
             "template_subtract ON ({}) should find >= spikes than OFF ({})",
-            sr_on.n_spikes, sr_off.n_spikes);
+            sr_on.n_spikes,
+            sr_off.n_spikes
+        );
     }
 }
