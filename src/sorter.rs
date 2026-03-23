@@ -57,6 +57,7 @@ use crate::whitening::{WhiteningMatrix, WhiteningMode};
 /// assert!((config.spatial_merge_dprime - 1.5).abs() < 1e-12);
 /// assert!(config.template_subtract);
 /// assert_eq!(config.template_min_count, 3);
+/// assert!((config.min_cluster_snr - 2.5).abs() < 1e-12);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -92,6 +93,8 @@ pub struct SortConfig {
     pub template_subtract: bool,
     /// Minimum spikes per cluster to build a reliable template for subtraction.
     pub template_min_count: usize,
+    /// Minimum cluster SNR for auto-curation. Clusters below this are removed.
+    pub min_cluster_snr: f64,
 }
 
 impl Default for SortConfig {
@@ -113,6 +116,7 @@ impl Default for SortConfig {
             spatial_merge_dprime: 1.5,
             template_subtract: true,
             template_min_count: 3,
+            min_cluster_snr: 2.5,
         }
     }
 }
@@ -1419,7 +1423,7 @@ pub fn sort_multichannel<
     );
 
     // Cap n_clusters at N (the SortResult array size)
-    let n_clusters = if n_clusters > N { N } else { n_clusters };
+    let mut n_clusters = if n_clusters > N { N } else { n_clusters };
 
     // 9d. Template subtraction pass: subtract known spikes, re-detect masked ones
     if config.template_subtract && n_clusters > 0 && n_extracted > 0 {
@@ -1620,6 +1624,77 @@ pub fn sort_multichannel<
                 quality::isi_violation_rate(spike_times, config.refractory_samples as f64)
                     .unwrap_or(0.0);
         }
+    }
+
+    // 11. Auto-curation: remove spikes from clusters below SNR floor
+    // Normalize threshold by noise level: SNR uses pre-whitening noise_mean as denominator,
+    // so higher noise → lower SNR for the same signal. Scale threshold proportionally.
+    // noise_mean ≈ median(|x|)/0.6745 ≈ 1.0 for unit Gaussian noise.
+    const REF_NOISE: f64 = 1.0;
+    let effective_snr_threshold = config.min_cluster_snr * (REF_NOISE / noise_mean);
+    let mut keep_cluster = [false; N];
+    let mut n_kept_clusters = 0usize;
+    for ci in 0..n_clusters {
+        if clusters[ci].snr >= effective_snr_threshold {
+            keep_cluster[ci] = true;
+            n_kept_clusters += 1;
+        }
+    }
+
+    if n_kept_clusters < n_clusters {
+        // Build label remapping (old cluster index -> new compact index)
+        let mut label_map = [0usize; N];
+        let mut new_idx = 0;
+        for ci in 0..n_clusters {
+            if keep_cluster[ci] {
+                label_map[ci] = new_idx;
+                new_idx += 1;
+            }
+        }
+
+        // Compact spikes: keep only those in surviving clusters
+        let mut write = 0;
+        for read in 0..n_extracted {
+            if read < labels.len() && labels[read] < n_clusters && keep_cluster[labels[read]] {
+                if write != read {
+                    event_buf[write] = event_buf[read];
+                    waveform_buf[write] = waveform_buf[read];
+                    feature_buf[write] = feature_buf[read];
+                }
+                labels[write] = label_map[labels[read]];
+                write += 1;
+            }
+        }
+        n_extracted = write;
+
+        // Compact cluster info
+        let mut new_clusters: [ClusterInfo; N] = core::array::from_fn(|_| ClusterInfo {
+            count: 0,
+            snr: 0.0,
+            isi_violation_rate: 0.0,
+        });
+        let mut wi = 0;
+        for ci in 0..n_clusters {
+            if keep_cluster[ci] {
+                new_clusters[wi] = ClusterInfo {
+                    count: clusters[ci].count,
+                    snr: clusters[ci].snr,
+                    isi_violation_rate: clusters[ci].isi_violation_rate,
+                };
+                // Recount after compaction (some spikes may have been from template subtraction)
+                let mut recount = 0;
+                for label in labels.iter().take(n_extracted) {
+                    if *label == wi {
+                        recount += 1;
+                    }
+                }
+                new_clusters[wi].count = recount;
+                wi += 1;
+            }
+        }
+
+        n_clusters = n_kept_clusters;
+        clusters = new_clusters;
     }
 
     Ok(SortResult {

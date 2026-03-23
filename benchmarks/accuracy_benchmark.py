@@ -45,7 +45,7 @@ PRESETS = {
         "noise_std": 1.0,
         "duration_s": 60.0,
         "firing_rate": 5.0,
-        "threshold": 5.0,
+        "threshold": 4.0,
     },
     "medium": {
         "n_channels": 32,
