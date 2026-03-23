@@ -42,6 +42,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     merge_isi_threshold (float): ISI violation threshold for cluster merging. Default: 0.05.
 ///     split_min_cluster_size (int): Minimum spikes per cluster to attempt splitting. Default: 10.
 ///     split_bimodality_threshold (float): Gap/std threshold for cluster splitting. Default: 2.0.
+///     template_subtract (bool): Enable template subtraction to recover masked spikes. Default: True.
+///     template_min_count (int): Minimum spikes per cluster to build a subtraction template. Default: 3.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -78,6 +80,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     merge_isi_threshold = 0.05,
     split_min_cluster_size = 10,
     split_bimodality_threshold = 2.0,
+    template_subtract = true,
+    template_min_count = 3,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -97,6 +101,8 @@ fn sort_multichannel<'py>(
     merge_isi_threshold: f64,
     split_min_cluster_size: usize,
     split_bimodality_threshold: f64,
+    template_subtract: bool,
+    template_min_count: usize,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -117,6 +123,8 @@ fn sort_multichannel<'py>(
         merge_isi_threshold,
         split_min_cluster_size,
         split_bimodality_threshold,
+        template_subtract,
+        template_min_count,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),

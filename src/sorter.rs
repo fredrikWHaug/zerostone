@@ -54,6 +54,8 @@ use crate::whitening::{WhiteningMatrix, WhiteningMode};
 /// assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
 /// assert_eq!(config.split_min_cluster_size, 10);
 /// assert!((config.split_bimodality_threshold - 2.0).abs() < 1e-12);
+/// assert!(config.template_subtract);
+/// assert_eq!(config.template_min_count, 3);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -83,6 +85,10 @@ pub struct SortConfig {
     pub split_min_cluster_size: usize,
     /// Bimodality threshold for cluster splitting (gap / std_dev).
     pub split_bimodality_threshold: f64,
+    /// Enable template subtraction pass to recover masked spikes.
+    pub template_subtract: bool,
+    /// Minimum spikes per cluster to build a reliable template for subtraction.
+    pub template_min_count: usize,
 }
 
 impl Default for SortConfig {
@@ -101,6 +107,8 @@ impl Default for SortConfig {
             merge_isi_threshold: 0.05,
             split_min_cluster_size: 10,
             split_bimodality_threshold: 2.0,
+            template_subtract: true,
+            template_min_count: 3,
         }
     }
 }
@@ -774,6 +782,117 @@ pub fn split_clusters<const K: usize>(
     current_n
 }
 
+/// Compute mean waveform per cluster, spike count, and most common peak channel.
+#[allow(clippy::too_many_arguments)]
+fn compute_cluster_means<const W: usize, const N: usize>(
+    waveform_buf: &[[f64; W]],
+    labels: &[usize],
+    event_buf: &[MultiChannelEvent],
+    n_extracted: usize,
+    n_clusters: usize,
+    means: &mut [[f64; W]; N],
+    counts: &mut [u32; N],
+    peak_channels: &mut [usize; N],
+) {
+    for c in 0..N {
+        means[c] = [0.0; W];
+        counts[c] = 0;
+        peak_channels[c] = 0;
+    }
+    let mut ch_votes = [[0u32; 64]; N];
+
+    for i in 0..n_extracted {
+        let label = labels[i];
+        if label >= n_clusters || label >= N {
+            continue;
+        }
+        counts[label] += 1;
+        let ch = event_buf[i].channel;
+        if ch < 64 {
+            ch_votes[label][ch] += 1;
+        }
+        for (w, mw) in means[label].iter_mut().enumerate() {
+            *mw += waveform_buf[i][w];
+        }
+    }
+
+    for c in 0..n_clusters.min(N) {
+        if counts[c] > 0 {
+            let inv = 1.0 / counts[c] as f64;
+            for mw in means[c].iter_mut() {
+                *mw *= inv;
+            }
+        }
+        let mut best_ch = 0;
+        let mut best_votes = 0;
+        for (ch, &v) in ch_votes[c].iter().enumerate() {
+            if v > best_votes {
+                best_votes = v;
+                best_ch = ch;
+            }
+        }
+        peak_channels[c] = best_ch;
+    }
+}
+
+/// Subtract cluster mean templates from data at each spike location.
+#[allow(clippy::too_many_arguments)]
+fn subtract_templates_multichannel<const C: usize, const W: usize, const N: usize>(
+    data: &mut [[f64; C]],
+    event_buf: &[MultiChannelEvent],
+    n_spikes: usize,
+    labels: &[usize],
+    means: &[[f64; W]; N],
+    counts: &[u32; N],
+    peak_channels: &[usize; N],
+    min_count: usize,
+    pre_samples: usize,
+) {
+    let t_len = data.len();
+    for i in 0..n_spikes {
+        let label = labels[i];
+        if label >= N || (counts[label] as usize) < min_count {
+            continue;
+        }
+        let ch = peak_channels[label];
+        if ch >= C {
+            continue;
+        }
+        let peak = event_buf[i].sample;
+        let start = peak.saturating_sub(pre_samples);
+        let end = (start + W).min(t_len);
+        for t in start..end {
+            data[t][ch] -= means[label][t - start];
+        }
+    }
+}
+
+/// Assign a waveform to the nearest cluster template by L2 distance.
+fn assign_to_nearest_template<const W: usize, const N: usize>(
+    waveform: &[f64; W],
+    means: &[[f64; W]; N],
+    counts: &[u32; N],
+    n_clusters: usize,
+) -> (usize, f64) {
+    let mut best = 0;
+    let mut best_dist = f64::MAX;
+    for c in 0..n_clusters.min(N) {
+        if counts[c] == 0 {
+            continue;
+        }
+        let mut dist = 0.0;
+        for w in 0..W {
+            let d = waveform[w] - means[c][w];
+            dist += d * d;
+        }
+        if dist < best_dist {
+            best_dist = dist;
+            best = c;
+        }
+    }
+    (best, best_dist)
+}
+
 /// Full multi-channel sorting pipeline.
 ///
 /// Pipeline: noise -> covariance -> whiten (in-place) -> detect -> dedup ->
@@ -931,7 +1050,7 @@ pub fn sort_multichannel<
     align_to_peak::<C>(data, event_buf, n_dedup, config.align_half_window);
 
     // 7. Extraction (peak channel)
-    let n_extracted =
+    let mut n_extracted =
         extract_peak_channel::<C, W>(data, event_buf, n_dedup, config.pre_samples, waveform_buf);
     if n_extracted < 2 {
         return Ok(SortResult {
@@ -1007,6 +1126,103 @@ pub fn sort_multichannel<
 
     // Cap n_clusters at N (the SortResult array size)
     let n_clusters = if n_clusters > N { N } else { n_clusters };
+
+    // 9d. Template subtraction pass: subtract known spikes, re-detect masked ones
+    if config.template_subtract && n_clusters > 0 && n_extracted > 0 {
+        let mut tmpl_means = [[0.0f64; W]; N];
+        let mut tmpl_counts = [0u32; N];
+        let mut tmpl_peak_ch = [0usize; N];
+
+        compute_cluster_means::<W, N>(
+            waveform_buf,
+            labels,
+            event_buf,
+            n_extracted,
+            n_clusters,
+            &mut tmpl_means,
+            &mut tmpl_counts,
+            &mut tmpl_peak_ch,
+        );
+
+        // Subtract templates from whitened data
+        subtract_templates_multichannel::<C, W, N>(
+            data,
+            event_buf,
+            n_extracted,
+            labels,
+            &tmpl_means,
+            &tmpl_counts,
+            &tmpl_peak_ch,
+            config.template_min_count,
+            config.pre_samples,
+        );
+
+        // Re-detect on residual
+        let remaining_buf = event_buf.len().saturating_sub(n_extracted);
+        if remaining_buf > 0 {
+            let unit_noise_re = [1.0f64; C];
+            let n_re_detected = detect_spikes_multichannel::<C>(
+                data,
+                config.threshold_multiplier,
+                &unit_noise_re,
+                config.refractory_samples,
+                &mut event_buf[n_extracted..],
+            );
+
+            if n_re_detected > 0 {
+                // Dedup re-detections
+                let n_re_dedup = deduplicate_events::<C>(
+                    &mut event_buf[n_extracted..],
+                    n_re_detected,
+                    probe,
+                    config.spatial_radius_um,
+                    config.temporal_radius,
+                );
+
+                // Filter out re-detections that overlap existing spikes
+                let mut n_new = 0usize;
+                'outer: for j in 0..n_re_dedup {
+                    let new_sample = event_buf[n_extracted + j].sample;
+                    for ev in event_buf.iter().take(n_extracted) {
+                        if new_sample.abs_diff(ev.sample) <= config.temporal_radius {
+                            continue 'outer;
+                        }
+                    }
+                    // Keep this event (compact in-place)
+                    if n_new != j {
+                        event_buf[n_extracted + n_new] = event_buf[n_extracted + j];
+                    }
+                    n_new += 1;
+                }
+
+                // Extract waveforms and assign to nearest template
+                if n_new > 0 {
+                    let remaining_wf = waveform_buf.len().saturating_sub(n_extracted);
+                    let n_to_extract = n_new.min(remaining_wf);
+                    let n_re_extracted = extract_peak_channel::<C, W>(
+                        data,
+                        &event_buf[n_extracted..],
+                        n_to_extract,
+                        config.pre_samples,
+                        &mut waveform_buf[n_extracted..],
+                    );
+
+                    for j in 0..n_re_extracted {
+                        let (best_label, _) = assign_to_nearest_template::<W, N>(
+                            &waveform_buf[n_extracted + j],
+                            &tmpl_means,
+                            &tmpl_counts,
+                            n_clusters,
+                        );
+                        if n_extracted + j < labels.len() {
+                            labels[n_extracted + j] = best_label;
+                        }
+                    }
+                    n_extracted += n_re_extracted;
+                }
+            }
+        }
+    }
 
     // 10. Quality metrics
     // Compute per-cluster: mean waveform for SNR, spike times for ISI
@@ -1480,6 +1696,8 @@ mod tests {
         assert!((config.whitening_epsilon - 1e-6).abs() < 1e-12);
         assert!((config.merge_dprime_threshold - 3.1).abs() < 1e-12);
         assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
+        assert!(config.template_subtract);
+        assert_eq!(config.template_min_count, 3);
     }
 
     #[test]
@@ -2248,5 +2466,149 @@ mod tests {
         assert_eq!(sorter.n_classified(), 0);
         assert_eq!(sorter.n_rejected(), 0);
         assert_eq!(sorter.n_templates(), 1);
+    }
+
+    #[test]
+    fn test_compute_cluster_means() {
+        // 2 clusters, W=4, N=4
+        let waveforms: alloc::vec::Vec<[f64; 4]> = vec![
+            [1.0, 2.0, 3.0, 4.0],
+            [3.0, 4.0, 5.0, 6.0],
+            [10.0, 20.0, 30.0, 40.0],
+        ];
+        let labels = [0usize, 0, 1];
+        let events = [
+            MultiChannelEvent { sample: 100, channel: 0, amplitude: 5.0 },
+            MultiChannelEvent { sample: 200, channel: 0, amplitude: 6.0 },
+            MultiChannelEvent { sample: 300, channel: 1, amplitude: 8.0 },
+        ];
+
+        let mut means = [[0.0f64; 4]; 4];
+        let mut counts = [0u32; 4];
+        let mut peak_ch = [0usize; 4];
+
+        compute_cluster_means::<4, 4>(
+            &waveforms, &labels, &events, 3, 2,
+            &mut means, &mut counts, &mut peak_ch,
+        );
+
+        assert_eq!(counts[0], 2);
+        assert_eq!(counts[1], 1);
+        // Cluster 0 mean = (1+3)/2, (2+4)/2, (3+5)/2, (4+6)/2 = 2,3,4,5
+        assert!((means[0][0] - 2.0).abs() < 1e-12);
+        assert!((means[0][1] - 3.0).abs() < 1e-12);
+        // Cluster 1 mean = 10,20,30,40
+        assert!((means[1][0] - 10.0).abs() < 1e-12);
+        assert_eq!(peak_ch[0], 0);
+        assert_eq!(peak_ch[1], 1);
+    }
+
+    #[test]
+    fn test_subtract_templates_multichannel() {
+        // 2-channel data, W=4, 1 spike at sample 5
+        let mut data = vec![[0.0f64; 2]; 20];
+        data[3] = [1.0, 0.0];
+        data[4] = [2.0, 0.0];
+        data[5] = [3.0, 0.0];
+        data[6] = [2.0, 0.0];
+
+        let events = [MultiChannelEvent { sample: 5, channel: 0, amplitude: 3.0 }];
+        let labels = [0usize];
+        let means: [[f64; 4]; 4] = [
+            [1.0, 2.0, 3.0, 2.0],
+            [0.0; 4], [0.0; 4], [0.0; 4],
+        ];
+        let counts = [5u32, 0, 0, 0];
+        let peak_ch = [0usize, 0, 0, 0];
+
+        subtract_templates_multichannel::<2, 4, 4>(
+            &mut data, &events, 1, &labels, &means, &counts, &peak_ch, 3, 2,
+        );
+
+        // pre_samples=2, so start=5-2=3, template subtracted at data[3..7] on ch 0
+        assert!((data[3][0] - 0.0).abs() < 1e-12); // 1.0 - 1.0
+        assert!((data[4][0] - 0.0).abs() < 1e-12); // 2.0 - 2.0
+        assert!((data[5][0] - 0.0).abs() < 1e-12); // 3.0 - 3.0
+        assert!((data[6][0] - 0.0).abs() < 1e-12); // 2.0 - 2.0
+        // Channel 1 untouched
+        assert!((data[3][1]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_assign_to_nearest_template() {
+        let means: [[f64; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0; 4], [0.0; 4],
+        ];
+        let counts = [10u32, 10, 0, 0];
+
+        let wf = [0.9, 0.1, 0.0, 0.0];
+        let (label, _dist) = assign_to_nearest_template::<4, 4>(&wf, &means, &counts, 2);
+        assert_eq!(label, 0);
+
+        let wf2 = [0.1, 0.9, 0.0, 0.0];
+        let (label2, _) = assign_to_nearest_template::<4, 4>(&wf2, &means, &counts, 2);
+        assert_eq!(label2, 1);
+    }
+
+    #[test]
+    fn test_sort_with_template_subtraction() {
+        // Run sorting with template_subtract on vs off on the same data
+        let mut rng = Rng::new(77);
+        let n = 5000;
+        let mut data_on = vec![[0.0f64; 2]; n];
+        for s in data_on.iter_mut() {
+            s[0] = rng.gaussian(0.0, 1.0);
+            s[1] = rng.gaussian(0.0, 1.0);
+        }
+        // Inject spikes on channel 0
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                let t = (dt as f64 - 2.0) / 1.5;
+                data_on[pos + dt][0] += -12.0 * libm::exp(-0.5 * t * t);
+            }
+            pos += 150;
+        }
+        let mut data_off = data_on.clone();
+
+        let probe = ProbeLayout::<2>::linear(25.0);
+        let max_ev = n / 15 + 2;
+
+        let mut config_on = SortConfig::default();
+        config_on.template_subtract = true;
+        let mut scratch_on = vec![0.0f64; n];
+        let mut ev_on = vec![MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; max_ev];
+        let mut wf_on = vec![[0.0f64; 8]; max_ev];
+        let mut feat_on = vec![[0.0f64; 3]; max_ev];
+        let mut lab_on = vec![0usize; max_ev];
+
+        let r_on = sort_multichannel::<2, 4, 8, 3, 64, 4>(
+            &config_on, &probe, &mut data_on, &mut scratch_on,
+            &mut ev_on, &mut wf_on, &mut feat_on, &mut lab_on,
+        );
+        assert!(r_on.is_ok());
+
+        let mut config_off = SortConfig::default();
+        config_off.template_subtract = false;
+        let mut scratch_off = vec![0.0f64; n];
+        let mut ev_off = vec![MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; max_ev];
+        let mut wf_off = vec![[0.0f64; 8]; max_ev];
+        let mut feat_off = vec![[0.0f64; 3]; max_ev];
+        let mut lab_off = vec![0usize; max_ev];
+
+        let r_off = sort_multichannel::<2, 4, 8, 3, 64, 4>(
+            &config_off, &probe, &mut data_off, &mut scratch_off,
+            &mut ev_off, &mut wf_off, &mut feat_off, &mut lab_off,
+        );
+        assert!(r_off.is_ok());
+
+        // Template subtraction should find >= as many spikes as without
+        let sr_on = r_on.unwrap();
+        let sr_off = r_off.unwrap();
+        assert!(sr_on.n_spikes >= sr_off.n_spikes,
+            "template_subtract ON ({}) should find >= spikes than OFF ({})",
+            sr_on.n_spikes, sr_off.n_spikes);
     }
 }
