@@ -54,6 +54,7 @@ use crate::whitening::{WhiteningMatrix, WhiteningMode};
 /// assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
 /// assert_eq!(config.split_min_cluster_size, 10);
 /// assert!((config.split_bimodality_threshold - 2.0).abs() < 1e-12);
+/// assert!((config.spatial_merge_dprime - 1.5).abs() < 1e-12);
 /// assert!(config.template_subtract);
 /// assert_eq!(config.template_min_count, 3);
 /// ```
@@ -85,6 +86,8 @@ pub struct SortConfig {
     pub split_min_cluster_size: usize,
     /// Bimodality threshold for cluster splitting (gap / std_dev).
     pub split_bimodality_threshold: f64,
+    /// D-prime threshold for cross-channel spatial merge.
+    pub spatial_merge_dprime: f64,
     /// Enable template subtraction pass to recover masked spikes.
     pub template_subtract: bool,
     /// Minimum spikes per cluster to build a reliable template for subtraction.
@@ -107,6 +110,7 @@ impl Default for SortConfig {
             merge_isi_threshold: 0.05,
             split_min_cluster_size: 10,
             split_bimodality_threshold: 2.0,
+            spatial_merge_dprime: 1.5,
             template_subtract: true,
             template_min_count: 3,
         }
@@ -784,6 +788,278 @@ pub fn split_clusters<const K: usize>(
     current_n
 }
 
+/// Merge clusters across channels using C-dimensional spatial amplitude profiles.
+///
+/// For each spike, the amplitude vector `data[sample]` (all C channels at the
+/// peak time) provides a natural spatial signature. Clusters from the same neuron
+/// on adjacent channels will have correlated amplitude profiles and low dprime.
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+pub fn merge_clusters_spatial<const C: usize>(
+    n_spikes: usize,
+    labels: &mut [usize],
+    data: &[[f64; C]],
+    event_buf: &[MultiChannelEvent],
+    probe: &ProbeLayout<C>,
+    n_clusters: usize,
+    dprime_threshold: f64,
+    spatial_radius_um: f64,
+    isi_threshold: f64,
+    refractory_samples: usize,
+    scratch: &mut [f64],
+) -> usize {
+    if n_clusters < 2 || n_spikes < 2 {
+        return n_clusters;
+    }
+
+    let max_k = if n_clusters > MAX_MERGE_CLUSTERS {
+        MAX_MERGE_CLUSTERS
+    } else {
+        n_clusters
+    };
+    let mut current_n = max_k;
+
+    // Find mode peak channel per cluster
+    let mut mode_ch = [0usize; MAX_MERGE_CLUSTERS];
+    let mut ch_votes = [[0u32; 64]; MAX_MERGE_CLUSTERS];
+    for s in 0..n_spikes {
+        if s >= labels.len() {
+            break;
+        }
+        let cl = labels[s];
+        if cl < current_n {
+            let ch = event_buf[s].channel;
+            if ch < 64 {
+                ch_votes[cl][ch] += 1;
+            }
+        }
+    }
+    for cl in 0..current_n {
+        let mut best = 0;
+        let mut best_v = 0;
+        for (ch, &v) in ch_votes[cl].iter().enumerate() {
+            if v > best_v {
+                best_v = v;
+                best = ch;
+            }
+        }
+        mode_ch[cl] = best;
+    }
+
+    const MAX_SPIKES: usize = 512;
+    const MAX_EXCLUDED: usize = 64;
+    let mut excluded = [(0usize, 0usize); MAX_EXCLUDED];
+    let mut n_excluded = 0usize;
+    let dim = if C > 32 { 32 } else { C };
+
+    loop {
+        if current_n < 2 {
+            break;
+        }
+
+        // Compute spatial centroids (amplitude at peak time, all channels)
+        let mut centroids = [[0.0f64; 32]; MAX_MERGE_CLUSTERS];
+        let mut counts = [0usize; MAX_MERGE_CLUSTERS];
+
+        for s in 0..n_spikes {
+            if s >= labels.len() {
+                break;
+            }
+            let cl = labels[s];
+            if cl >= current_n {
+                continue;
+            }
+            let t = event_buf[s].sample;
+            if t < data.len() {
+                counts[cl] += 1;
+                for d in 0..dim {
+                    centroids[cl][d] += data[t][d];
+                }
+            }
+        }
+        for cl in 0..current_n {
+            if counts[cl] > 0 {
+                let inv = 1.0 / counts[cl] as f64;
+                for d in 0..dim {
+                    centroids[cl][d] *= inv;
+                }
+            }
+        }
+
+        // Find best merge pair: lowest dprime among spatially proximate clusters
+        let mut best_dp = f64::MAX;
+        let mut best_i = 0usize;
+        let mut best_j = 0usize;
+
+        for i in 0..current_n {
+            if counts[i] < 2 {
+                continue;
+            }
+            for j in (i + 1)..current_n {
+                if counts[j] < 2 {
+                    continue;
+                }
+
+                // Only merge if peak channels are within spatial radius
+                let dist = probe.channel_distance(mode_ch[i], mode_ch[j]);
+                if dist > spatial_radius_um {
+                    continue;
+                }
+
+                // Check excluded
+                let mut is_excluded = false;
+                for e in 0..n_excluded {
+                    if excluded[e].0 == i && excluded[e].1 == j {
+                        is_excluded = true;
+                        break;
+                    }
+                }
+                if is_excluded {
+                    continue;
+                }
+
+                // Compute discriminant axis
+                let mut axis = [0.0f64; 32];
+                let mut axis_norm_sq = 0.0;
+                for d in 0..dim {
+                    axis[d] = centroids[j][d] - centroids[i][d];
+                    axis_norm_sq += axis[d] * axis[d];
+                }
+                if axis_norm_sq < 1e-30 {
+                    best_dp = 0.0;
+                    best_i = i;
+                    best_j = j;
+                    continue;
+                }
+                let inv_norm = 1.0 / libm::sqrt(axis_norm_sq);
+                for d in 0..dim {
+                    axis[d] *= inv_norm;
+                }
+
+                // Project spikes onto axis
+                let mut proj_a = [0.0f64; MAX_SPIKES];
+                let mut proj_b = [0.0f64; MAX_SPIKES];
+                let mut na = 0usize;
+                let mut nb = 0usize;
+
+                for s in 0..n_spikes {
+                    if s >= labels.len() {
+                        break;
+                    }
+                    let cl = labels[s];
+                    let t = event_buf[s].sample;
+                    if t >= data.len() {
+                        continue;
+                    }
+                    if cl == i && na < MAX_SPIKES {
+                        let mut dot = 0.0;
+                        for d in 0..dim {
+                            dot += data[t][d] * axis[d];
+                        }
+                        proj_a[na] = dot;
+                        na += 1;
+                    } else if cl == j && nb < MAX_SPIKES {
+                        let mut dot = 0.0;
+                        for d in 0..dim {
+                            dot += data[t][d] * axis[d];
+                        }
+                        proj_b[nb] = dot;
+                        nb += 1;
+                    }
+                }
+
+                if na < 2 || nb < 2 {
+                    continue;
+                }
+
+                if let Some(dp) = quality::d_prime(&proj_a[..na], &proj_b[..nb]) {
+                    if dp < best_dp {
+                        best_dp = dp;
+                        best_i = i;
+                        best_j = j;
+                    }
+                }
+            }
+        }
+
+        if best_dp > dprime_threshold || best_dp == f64::MAX {
+            break;
+        }
+
+        // ISI check
+        let mut n_combined = 0usize;
+        if scratch.len() >= n_spikes {
+            for s in 0..n_spikes {
+                if s >= labels.len() {
+                    break;
+                }
+                let cl = labels[s];
+                if (cl == best_i || cl == best_j) && n_combined < scratch.len() {
+                    scratch[n_combined] = event_buf[s].sample as f64;
+                    n_combined += 1;
+                }
+            }
+        }
+        if n_combined >= 2 {
+            let times = &mut scratch[..n_combined];
+            times.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+            let combined_isi =
+                quality::isi_violation_rate(times, refractory_samples as f64).unwrap_or(1.0);
+            if combined_isi > isi_threshold {
+                if n_excluded < MAX_EXCLUDED {
+                    excluded[n_excluded] = (best_i, best_j);
+                    n_excluded += 1;
+                    continue;
+                }
+                break;
+            }
+        }
+
+        // Execute merge
+        for s in 0..n_spikes {
+            if s >= labels.len() {
+                break;
+            }
+            if labels[s] == best_j {
+                labels[s] = best_i;
+            } else if labels[s] > best_j {
+                labels[s] -= 1;
+            }
+        }
+        current_n -= 1;
+
+        // Update mode channels after merge
+        for cl in 0..current_n {
+            ch_votes[cl] = [0u32; 64];
+        }
+        for s in 0..n_spikes {
+            if s >= labels.len() {
+                break;
+            }
+            let cl = labels[s];
+            if cl < current_n {
+                let ch = event_buf[s].channel;
+                if ch < 64 {
+                    ch_votes[cl][ch] += 1;
+                }
+            }
+        }
+        for cl in 0..current_n {
+            let mut best = 0;
+            let mut best_v = 0;
+            for (ch, &v) in ch_votes[cl].iter().enumerate() {
+                if v > best_v {
+                    best_v = v;
+                    best = ch;
+                }
+            }
+            mode_ch[cl] = best;
+        }
+        n_excluded = 0;
+    }
+
+    current_n
+}
+
 /// Compute mean waveform per cluster, spike count, and most common peak channel.
 #[allow(clippy::too_many_arguments)]
 fn compute_cluster_means<const W: usize, const N: usize>(
@@ -1115,6 +1391,21 @@ pub fn sort_multichannel<
         config.refractory_samples,
         scratch,
         K,
+    );
+
+    // 9b2. Cross-channel spatial merge using amplitude profiles
+    let n_clusters = merge_clusters_spatial::<C>(
+        n_extracted,
+        labels,
+        data,
+        event_buf,
+        probe,
+        n_clusters,
+        config.spatial_merge_dprime,
+        config.spatial_radius_um,
+        config.merge_isi_threshold,
+        config.refractory_samples,
+        scratch,
     );
 
     // 9c. Split bimodal clusters
