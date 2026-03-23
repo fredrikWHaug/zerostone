@@ -908,7 +908,7 @@ proptest! {
 
         let result = merge_clusters::<3>(
             n_spikes, &mut labels, &feature_buf, &event_buf,
-            n_clusters, 1.5, 0.2, 10, &mut scratch,
+            n_clusters, 1.5, 0.2, 10, &mut scratch, 3,
         );
         prop_assert!(
             result <= n_clusters,
@@ -946,7 +946,7 @@ proptest! {
 
         let new_n = merge_clusters::<3>(
             n_spikes, &mut labels, &feature_buf, &event_buf,
-            n_clusters, 1.5, 0.2, 10, &mut scratch,
+            n_clusters, 1.5, 0.2, 10, &mut scratch, 3,
         );
         for (i, &lbl) in labels[..n_spikes].iter().enumerate() {
             prop_assert!(

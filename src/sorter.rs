@@ -315,7 +315,7 @@ const MAX_MERGE_CLUSTERS: usize = 32;
 /// let mut scratch = [0.0f64; 6];
 /// let new_n = merge_clusters(
 ///     6, &mut labels, &features, &events, 2,
-///     1.5, 0.05, 15, &mut scratch,
+///     1.5, 0.05, 15, &mut scratch, 2,
 /// );
 /// assert_eq!(new_n, 1);
 /// assert!(labels.iter().all(|&l| l == 0));
@@ -331,6 +331,7 @@ pub fn merge_clusters<const K: usize>(
     isi_threshold: f64,
     refractory_samples: usize,
     scratch: &mut [f64],
+    merge_dims: usize,
 ) -> usize {
     if n_clusters < 2 || n_spikes < 2 {
         return n_clusters;
@@ -369,7 +370,8 @@ pub fn merge_clusters<const K: usize>(
         // Compute centroids for each cluster
         let mut centroids = [[0.0f64; 32]; MAX_MERGE_CLUSTERS];
         let mut counts = [0usize; MAX_MERGE_CLUSTERS];
-        let dim = if K > 32 { 32 } else { K };
+        // Use caller-specified dims (excludes channel feature when appropriate)
+        let dim = if merge_dims > 32 { 32 } else { merge_dims };
 
         for s in 0..n_spikes {
             if s >= labels.len() {
@@ -1112,6 +1114,7 @@ pub fn sort_multichannel<
         config.merge_isi_threshold,
         config.refractory_samples,
         scratch,
+        K,
     );
 
     // 9c. Split bimodal clusters
@@ -1144,6 +1147,39 @@ pub fn sort_multichannel<
             &mut tmpl_peak_ch,
         );
 
+        // Compute mean within-cluster L2 distance for rejection threshold
+        let mut mean_dist = [0.0f64; N];
+        for i in 0..n_extracted {
+            let label = labels[i];
+            if label < n_clusters && label < N {
+                let mut d = 0.0;
+                for w in 0..W {
+                    let diff = waveform_buf[i][w] - tmpl_means[label][w];
+                    d += diff * diff;
+                }
+                mean_dist[label] += d;
+            }
+        }
+        for c in 0..n_clusters.min(N) {
+            if tmpl_counts[c] > 0 {
+                mean_dist[c] /= tmpl_counts[c] as f64;
+            }
+        }
+        // Max acceptable distance: 3x the mean within-cluster distance
+        let mut max_accept_dist = 0.0f64;
+        let mut n_valid = 0;
+        for c in 0..n_clusters.min(N) {
+            if tmpl_counts[c] >= config.template_min_count as u32 {
+                max_accept_dist += mean_dist[c];
+                n_valid += 1;
+            }
+        }
+        if n_valid > 0 {
+            max_accept_dist = (max_accept_dist / n_valid as f64) * 3.0;
+        } else {
+            max_accept_dist = f64::MAX;
+        }
+
         // Subtract templates from whitened data
         subtract_templates_multichannel::<C, W, N>(
             data,
@@ -1157,7 +1193,7 @@ pub fn sort_multichannel<
             config.pre_samples,
         );
 
-        // Re-detect on residual
+        // Re-detect on residual (same threshold -- lower would flood with noise)
         let remaining_buf = event_buf.len().saturating_sub(n_extracted);
         if remaining_buf > 0 {
             let unit_noise_re = [1.0f64; C];
@@ -1207,18 +1243,29 @@ pub fn sort_multichannel<
                         &mut waveform_buf[n_extracted..],
                     );
 
+                    let mut n_accepted = 0usize;
                     for j in 0..n_re_extracted {
-                        let (best_label, _) = assign_to_nearest_template::<W, N>(
+                        let (best_label, dist) = assign_to_nearest_template::<W, N>(
                             &waveform_buf[n_extracted + j],
                             &tmpl_means,
                             &tmpl_counts,
                             n_clusters,
                         );
-                        if n_extracted + j < labels.len() {
-                            labels[n_extracted + j] = best_label;
+                        if dist > max_accept_dist {
+                            continue; // reject: too far from any template
                         }
+                        // Compact accepted spikes
+                        let dst = n_extracted + n_accepted;
+                        if dst != n_extracted + j {
+                            event_buf[dst] = event_buf[n_extracted + j];
+                            waveform_buf[dst] = waveform_buf[n_extracted + j];
+                        }
+                        if dst < labels.len() {
+                            labels[dst] = best_label;
+                        }
+                        n_accepted += 1;
                     }
-                    n_extracted += n_re_extracted;
+                    n_extracted += n_accepted;
                 }
             }
         }
@@ -1544,6 +1591,7 @@ mod kani_proofs {
             isi_thresh,
             15,
             &mut scratch,
+            2,
         );
         assert!(new_n <= 3, "cluster count must not increase");
     }
@@ -1945,6 +1993,7 @@ mod tests {
             0.05,
             15,
             &mut scratch,
+            2,
         );
         assert_eq!(new_n, 1, "Identical clusters should merge, got {}", new_n);
         assert!(
@@ -2009,6 +2058,7 @@ mod tests {
             0.05,
             15,
             &mut scratch,
+            2,
         );
         assert_eq!(
             new_n, 2,
@@ -2074,6 +2124,7 @@ mod tests {
             0.05,
             15,
             &mut scratch,
+            2,
         );
         assert_eq!(
             new_n, 2,
@@ -2115,6 +2166,7 @@ mod tests {
             0.05,
             15,
             &mut scratch,
+            2,
         );
         assert_eq!(new_n, 1, "Single cluster should remain unchanged");
     }
@@ -2136,6 +2188,7 @@ mod tests {
             0.05,
             15,
             &mut scratch,
+            2,
         );
         assert_eq!(new_n, 0);
     }
@@ -2214,6 +2267,7 @@ mod tests {
             0.05,
             15,
             &mut scratch,
+            2,
         );
         assert_eq!(new_n, 2, "Should merge 0+1, keep 2 separate, got {}", new_n);
         // Cluster 2 (originally) should now be at index 1
@@ -2302,6 +2356,7 @@ mod tests {
             0.05,
             15,
             &mut scratch,
+            2,
         );
         assert_eq!(new_n, 3, "Should merge 1+2 into 3 clusters, got {}", new_n);
         // Cluster 0 stays at 0
