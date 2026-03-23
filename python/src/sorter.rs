@@ -42,6 +42,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     merge_isi_threshold (float): ISI violation threshold for cluster merging. Default: 0.05.
 ///     split_min_cluster_size (int): Minimum spikes per cluster to attempt splitting. Default: 10.
 ///     split_bimodality_threshold (float): Gap/std threshold for cluster splitting. Default: 2.0.
+///     spatial_merge_dprime (float): D-prime threshold for cross-channel spatial merge. Default: 1.5.
 ///     template_subtract (bool): Enable template subtraction to recover masked spikes. Default: True.
 ///     template_min_count (int): Minimum spikes per cluster to build a subtraction template. Default: 3.
 ///
@@ -80,6 +81,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     merge_isi_threshold = 0.05,
     split_min_cluster_size = 10,
     split_bimodality_threshold = 2.0,
+    spatial_merge_dprime = 1.5,
     template_subtract = true,
     template_min_count = 3,
 ))]
@@ -101,6 +103,7 @@ fn sort_multichannel<'py>(
     merge_isi_threshold: f64,
     split_min_cluster_size: usize,
     split_bimodality_threshold: f64,
+    spatial_merge_dprime: f64,
     template_subtract: bool,
     template_min_count: usize,
 ) -> PyResult<PyObject> {
@@ -123,6 +126,7 @@ fn sort_multichannel<'py>(
         merge_isi_threshold,
         split_min_cluster_size,
         split_bimodality_threshold,
+        spatial_merge_dprime,
         template_subtract,
         template_min_count,
     };
