@@ -45,6 +45,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     spatial_merge_dprime (float): D-prime threshold for cross-channel spatial merge. Default: 1.5.
 ///     template_subtract (bool): Enable template subtraction to recover masked spikes. Default: True.
 ///     template_min_count (int): Minimum spikes per cluster to build a subtraction template. Default: 3.
+///     min_cluster_snr (float): Minimum SNR for cluster auto-curation. Default: 2.5.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -84,6 +85,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     spatial_merge_dprime = 1.5,
     template_subtract = true,
     template_min_count = 3,
+    min_cluster_snr = 2.5,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -106,6 +108,7 @@ fn sort_multichannel<'py>(
     spatial_merge_dprime: f64,
     template_subtract: bool,
     template_min_count: usize,
+    min_cluster_snr: f64,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -129,6 +132,7 @@ fn sort_multichannel<'py>(
         spatial_merge_dprime,
         template_subtract,
         template_min_count,
+        min_cluster_snr,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
