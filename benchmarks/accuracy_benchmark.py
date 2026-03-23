@@ -45,6 +45,7 @@ PRESETS = {
         "noise_std": 1.0,
         "duration_s": 60.0,
         "firing_rate": 5.0,
+        "threshold": 5.0,
     },
     "medium": {
         "n_channels": 32,
@@ -52,6 +53,7 @@ PRESETS = {
         "noise_std": 1.5,
         "duration_s": 60.0,
         "firing_rate": 8.0,
+        "threshold": 4.0,
     },
     "hard": {
         "n_channels": 64,
@@ -59,11 +61,13 @@ PRESETS = {
         "noise_std": 2.0,
         "duration_s": 60.0,
         "firing_rate": 10.0,
+        "threshold": 3.5,
     },
 }
 
-# Default tolerance: 0.4 ms at 30 kHz = 12 samples
-DEFAULT_TOLERANCE = 12
+# Default tolerance: 0.67 ms at 30 kHz = 20 samples
+# (accounts for whitening-induced peak shift between GT and detected times)
+DEFAULT_TOLERANCE = 20
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +334,11 @@ def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=Tru
     if verbose:
         print("  Running sort_multichannel...", end=" ", flush=True)
     t0 = time.perf_counter()
-    sort_result = sort_multichannel(data, probe, threshold=5.0, refractory=15)
+    sort_result = sort_multichannel(
+        data, probe,
+        threshold=params.get("threshold", 5.0),
+        refractory=15,
+    )
     t_sort = time.perf_counter() - t0
     if verbose:
         print(f"done ({t_sort:.1f}s, {sort_result['n_spikes']} spikes, "

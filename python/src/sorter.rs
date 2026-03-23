@@ -33,12 +33,12 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     refractory (int): Minimum samples between detections per channel. Default: 15.
 ///     spatial_radius (float): Deduplication radius in micrometers. Default: 75.0.
 ///     temporal_radius (int): Deduplication radius in samples. Default: 5.
-///     align_half_window (int): Half-window for fine peak alignment. Default: 5.
-///     pre_samples (int): Samples before peak in extracted waveforms. Default: 16.
-///     cluster_threshold (float): Distance threshold for creating new clusters. Default: 3.0.
+///     align_half_window (int): Half-window for fine peak alignment. Default: 15.
+///     pre_samples (int): Samples before peak in extracted waveforms. Default: 20.
+///     cluster_threshold (float): Distance threshold for creating new clusters. Default: 5.0.
 ///     cluster_max_count (int): Maximum observation count per cluster centroid. Default: 1000.
 ///     whitening_epsilon (float): Regularization for whitening eigenvalues. Default: 1e-6.
-///     merge_dprime_threshold (float): D-prime threshold for cluster merging. Default: 1.5.
+///     merge_dprime_threshold (float): D-prime threshold for cluster merging. Default: 3.5.
 ///     merge_isi_threshold (float): ISI violation threshold for cluster merging. Default: 0.05.
 ///     split_min_cluster_size (int): Minimum spikes per cluster to attempt splitting. Default: 10.
 ///     split_bimodality_threshold (float): Gap/std threshold for cluster splitting. Default: 2.0.
@@ -69,12 +69,12 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     refractory = 15,
     spatial_radius = 75.0,
     temporal_radius = 5,
-    align_half_window = 5,
-    pre_samples = 16,
-    cluster_threshold = 3.0,
+    align_half_window = 15,
+    pre_samples = 20,
+    cluster_threshold = 5.0,
     cluster_max_count = 1000,
     whitening_epsilon = 1e-6,
-    merge_dprime_threshold = 1.5,
+    merge_dprime_threshold = 3.5,
     merge_isi_threshold = 0.05,
     split_min_cluster_size = 10,
     split_bimodality_threshold = 2.0,
@@ -119,9 +119,10 @@ fn sort_multichannel<'py>(
         split_bimodality_threshold,
     };
 
-    // W=32, K=3, WM=1024, N=16
-    const W: usize = 32;
-    const K: usize = 3;
+    // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
+    // WM=W*W=2304, N=16
+    const W: usize = 48;
+    const K: usize = 4;
     const N: usize = 16;
 
     // Upper bound on events
@@ -152,7 +153,7 @@ fn sort_multichannel<'py>(
             let mut labels = vec![0usize; max_events];
 
             let result = super::probe::with_probe_ref::<$c, _, _>(&probe, |zs_probe| {
-                zs_sort::<$c, $cm, W, K, 1024, N>(
+                zs_sort::<$c, $cm, W, K, 2304, N>(
                     &config,
                     zs_probe,
                     &mut data_owned,

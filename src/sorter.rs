@@ -50,7 +50,7 @@ use crate::whitening::{WhiteningMatrix, WhiteningMode};
 /// let config = SortConfig::default();
 /// assert!((config.threshold_multiplier - 5.0).abs() < 1e-12);
 /// assert_eq!(config.refractory_samples, 15);
-/// assert!((config.merge_dprime_threshold - 1.5).abs() < 1e-12);
+/// assert!((config.merge_dprime_threshold - 3.5).abs() < 1e-12);
 /// assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
 /// assert_eq!(config.split_min_cluster_size, 10);
 /// assert!((config.split_bimodality_threshold - 2.0).abs() < 1e-12);
@@ -92,12 +92,12 @@ impl Default for SortConfig {
             refractory_samples: 15,
             spatial_radius_um: 75.0,
             temporal_radius: 5,
-            align_half_window: 5,
-            pre_samples: 16,
-            cluster_threshold: 3.0,
+            align_half_window: 15,
+            pre_samples: 20,
+            cluster_threshold: 5.0,
             cluster_max_count: 1000,
             whitening_epsilon: 1e-6,
-            merge_dprime_threshold: 1.5,
+            merge_dprime_threshold: 3.5,
             merge_isi_threshold: 0.05,
             split_min_cluster_size: 10,
             split_bimodality_threshold: 2.0,
@@ -341,12 +341,19 @@ pub fn merge_clusters<const K: usize>(
     // two cluster centroids. MAX_SPIKES_PER_CLUSTER limits stack usage.
     const MAX_SPIKES: usize = 512;
 
+    // Track pairs that failed ISI check so we skip them in subsequent iterations.
+    // Stored as (i, j) with i < j. Cleared after each successful merge since
+    // indices shift.
+    const MAX_EXCLUDED: usize = 64;
+    let mut excluded = [(0usize, 0usize); MAX_EXCLUDED];
+    let mut n_excluded = 0usize;
+
     loop {
         if current_n < 2 {
             break;
         }
 
-        // Find the pair with the smallest d-prime
+        // Find the pair with the smallest d-prime (skipping excluded pairs)
         let mut best_dp = f64::MAX;
         let mut best_i = 0usize;
         let mut best_j = 0usize;
@@ -385,6 +392,20 @@ pub fn merge_clusters<const K: usize>(
             }
             for j in (i + 1)..current_n {
                 if counts[j] < 2 {
+                    continue;
+                }
+
+                // Skip excluded pairs
+                let mut is_excluded = false;
+                let mut e = 0;
+                while e < n_excluded {
+                    if excluded[e].0 == i && excluded[e].1 == j {
+                        is_excluded = true;
+                        break;
+                    }
+                    e += 1;
+                }
+                if is_excluded {
                     continue;
                 }
 
@@ -476,9 +497,13 @@ pub fn merge_clusters<const K: usize>(
             let combined_isi =
                 quality::isi_violation_rate(times, refractory_samples as f64).unwrap_or(1.0);
             if combined_isi > isi_threshold {
-                // Merging would create too many ISI violations.
-                // Mark this pair as ineligible by breaking (greedy -- we tried
-                // the best pair and it failed, so stop).
+                // Merging would create too many ISI violations -- exclude this
+                // pair and try the next-best pair instead of stopping all merges.
+                if n_excluded < MAX_EXCLUDED {
+                    excluded[n_excluded] = (best_i, best_j);
+                    n_excluded += 1;
+                    continue;
+                }
                 break;
             }
         }
@@ -495,6 +520,8 @@ pub fn merge_clusters<const K: usize>(
             }
         }
         current_n -= 1;
+        // Clear excluded pairs since indices shifted after merge
+        n_excluded = 0;
     }
 
     current_n
@@ -926,6 +953,22 @@ pub fn sort_multichannel<
         pca.transform(&waveform_buf[i], &mut feature_buf[i])?;
     }
 
+    // 8b. Encode detection channel as a feature dimension.
+    //
+    // After whitening, single-channel waveform shapes become similar across
+    // channels, so PCA on peak-channel waveforms alone cannot distinguish
+    // units on different channels. Replacing the least-important PCA
+    // component (last dimension) with the normalized channel index provides
+    // spatial discrimination. The scale factor controls how strongly channel
+    // identity influences clustering relative to waveform shape.
+    if K >= 3 {
+        let channel_scale = 20.0;
+        for i in 0..n_extracted {
+            let ch = event_buf[i].channel;
+            feature_buf[i][K - 1] = (ch as f64 / C as f64) * channel_scale;
+        }
+    }
+
     // 9. Clustering
     let mut km = OnlineKMeans::<K, N>::new(config.cluster_max_count);
     km.set_create_threshold(config.cluster_threshold);
@@ -961,6 +1004,9 @@ pub fn sort_multichannel<
         config.split_min_cluster_size,
         config.split_bimodality_threshold,
     );
+
+    // Cap n_clusters at N (the SortResult array size)
+    let n_clusters = if n_clusters > N { N } else { n_clusters };
 
     // 10. Quality metrics
     // Compute per-cluster: mean waveform for SNR, spike times for ISI
@@ -1427,12 +1473,12 @@ mod tests {
         assert_eq!(config.refractory_samples, 15);
         assert!((config.spatial_radius_um - 75.0).abs() < 1e-12);
         assert_eq!(config.temporal_radius, 5);
-        assert_eq!(config.align_half_window, 5);
-        assert_eq!(config.pre_samples, 16);
-        assert!((config.cluster_threshold - 3.0).abs() < 1e-12);
+        assert_eq!(config.align_half_window, 15);
+        assert_eq!(config.pre_samples, 20);
+        assert!((config.cluster_threshold - 5.0).abs() < 1e-12);
         assert_eq!(config.cluster_max_count, 1000);
         assert!((config.whitening_epsilon - 1e-6).abs() < 1e-12);
-        assert!((config.merge_dprime_threshold - 1.5).abs() < 1e-12);
+        assert!((config.merge_dprime_threshold - 3.5).abs() < 1e-12);
         assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
     }
 
