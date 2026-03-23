@@ -38,7 +38,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     cluster_threshold (float): Distance threshold for creating new clusters. Default: 5.0.
 ///     cluster_max_count (int): Maximum observation count per cluster centroid. Default: 1000.
 ///     whitening_epsilon (float): Regularization for whitening eigenvalues. Default: 1e-6.
-///     merge_dprime_threshold (float): D-prime threshold for cluster merging. Default: 3.5.
+///     merge_dprime_threshold (float): D-prime threshold for cluster merging. Default: 3.1.
 ///     merge_isi_threshold (float): ISI violation threshold for cluster merging. Default: 0.05.
 ///     split_min_cluster_size (int): Minimum spikes per cluster to attempt splitting. Default: 10.
 ///     split_bimodality_threshold (float): Gap/std threshold for cluster splitting. Default: 2.0.
@@ -74,7 +74,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     cluster_threshold = 5.0,
     cluster_max_count = 1000,
     whitening_epsilon = 1e-6,
-    merge_dprime_threshold = 3.5,
+    merge_dprime_threshold = 3.1,
     merge_isi_threshold = 0.05,
     split_min_cluster_size = 10,
     split_bimodality_threshold = 2.0,
@@ -120,10 +120,10 @@ fn sort_multichannel<'py>(
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
-    // WM=W*W=2304, N=16
+    // WM=W*W=2304, N=32 (one cluster per channel on 32ch probes)
     const W: usize = 48;
     const K: usize = 4;
-    const N: usize = 16;
+    const N: usize = 32;
 
     // Upper bound on events
     let max_events = n_samples / refractory.max(1) + n_channels;

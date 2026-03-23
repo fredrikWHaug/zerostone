@@ -50,7 +50,7 @@ use crate::whitening::{WhiteningMatrix, WhiteningMode};
 /// let config = SortConfig::default();
 /// assert!((config.threshold_multiplier - 5.0).abs() < 1e-12);
 /// assert_eq!(config.refractory_samples, 15);
-/// assert!((config.merge_dprime_threshold - 3.5).abs() < 1e-12);
+/// assert!((config.merge_dprime_threshold - 3.1).abs() < 1e-12);
 /// assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
 /// assert_eq!(config.split_min_cluster_size, 10);
 /// assert!((config.split_bimodality_threshold - 2.0).abs() < 1e-12);
@@ -97,7 +97,7 @@ impl Default for SortConfig {
             cluster_threshold: 5.0,
             cluster_max_count: 1000,
             whitening_epsilon: 1e-6,
-            merge_dprime_threshold: 3.5,
+            merge_dprime_threshold: 3.1,
             merge_isi_threshold: 0.05,
             split_min_cluster_size: 10,
             split_bimodality_threshold: 2.0,
@@ -962,7 +962,7 @@ pub fn sort_multichannel<
     // spatial discrimination. The scale factor controls how strongly channel
     // identity influences clustering relative to waveform shape.
     if K >= 3 {
-        let channel_scale = 20.0;
+        let channel_scale = config.cluster_threshold * C as f64;
         for i in 0..n_extracted {
             let ch = event_buf[i].channel;
             feature_buf[i][K - 1] = (ch as f64 / C as f64) * channel_scale;
@@ -1478,7 +1478,7 @@ mod tests {
         assert!((config.cluster_threshold - 5.0).abs() < 1e-12);
         assert_eq!(config.cluster_max_count, 1000);
         assert!((config.whitening_epsilon - 1e-6).abs() < 1e-12);
-        assert!((config.merge_dprime_threshold - 3.5).abs() < 1e-12);
+        assert!((config.merge_dprime_threshold - 3.1).abs() < 1e-12);
         assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
     }
 
