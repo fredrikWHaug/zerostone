@@ -6,7 +6,7 @@
 
 use std::time::Instant;
 use zerostone::probe::ProbeLayout;
-use zerostone::sorter::{sort_multichannel, SortConfig};
+use zerostone::sorter::{sort_multichannel, DetectionMode, SortConfig};
 use zerostone::spike_sort::MultiChannelEvent;
 use zerostone::{BiquadCoeffs, Complex, Fft, IirFilter, ThresholdDetector, WelchPsd, WindowType};
 
@@ -136,6 +136,9 @@ fn bench_regression_sort_multichannel() {
     let config = SortConfig {
         threshold_multiplier: 4.0,
         pre_samples: 4,
+        detection_mode: DetectionMode::Amplitude,
+        ccg_merge: false,
+        ccg_template_corr_threshold: 0.5,
         ..SortConfig::default()
     };
     let probe = ProbeLayout::<2>::linear(25.0);

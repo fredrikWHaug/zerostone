@@ -151,7 +151,9 @@ pub use filter::{
 pub use hilbert::HilbertTransform;
 pub use ica::{ContrastFunction, Ica, IcaError};
 pub use interpolate::{InterpolationMethod, Interpolator};
-pub use isi::{autocorrelogram, isi_cv, local_variation, IsiHistogram};
+pub use isi::{
+    autocorrelogram, cross_correlogram, has_refractory_dip, isi_cv, local_variation, IsiHistogram,
+};
 pub use kalman::{KalmanError, KalmanFilter};
 pub use lda::{Lda, LdaError};
 pub use localize::{center_of_mass, center_of_mass_threshold, localize_spike, monopole_localize};
@@ -176,13 +178,14 @@ pub use riemannian::{
 pub use rms::WindowedRms;
 pub use router::ChannelRouter;
 pub use sorter::{
-    estimate_noise_multichannel, merge_clusters, sort_multichannel, split_clusters, ClusterInfo,
-    OnlineSorter, SortConfig, SortResult,
+    ccg_merge_clusters, estimate_noise_multichannel, merge_clusters, sort_multichannel,
+    split_clusters, ClusterInfo, DetectionMode, OnlineSorter, SortConfig, SortResult,
 };
 pub use spike_sort::{
     align_to_peak, combine_features, deduplicate_events, detect_spikes, detect_spikes_multichannel,
     estimate_noise_mad, extract_multichannel, extract_peak_channel, extract_spatial_features,
-    MultiChannelEvent, SortError, SpikeCluster, TemplateMatch, WaveformExtractor, WaveformPca,
+    neo_transform, sneo_transform, MultiChannelEvent, SortError, SpikeCluster, TemplateMatch,
+    WaveformExtractor, WaveformPca,
 };
 pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;

@@ -9,7 +9,7 @@ use zerostone::localize::{center_of_mass, center_of_mass_threshold};
 use zerostone::metrics::compare_spike_trains;
 use zerostone::probe::ProbeLayout;
 use zerostone::quality::{isi_violation_rate, silhouette_score};
-use zerostone::sorter::{sort_multichannel, SortConfig};
+use zerostone::sorter::{sort_multichannel, DetectionMode, SortConfig};
 use zerostone::spike_sort::{
     deduplicate_events, detect_spikes_multichannel, MultiChannelEvent, SortError,
 };
@@ -128,6 +128,9 @@ fn sort_all_zeros() {
 fn sort_very_high_threshold() {
     let config = SortConfig {
         threshold_multiplier: 1000.0,
+        detection_mode: DetectionMode::Amplitude,
+        ccg_merge: false,
+        ccg_template_corr_threshold: 0.5,
         ..SortConfig::default()
     };
     let probe = ProbeLayout::<2>::linear(25.0);
@@ -523,6 +526,9 @@ fn sort_template_subtract_no_spikes() {
     let config = SortConfig {
         threshold_multiplier: 1000.0, // impossibly high to get 0 spikes
         template_subtract: true,
+        detection_mode: DetectionMode::Amplitude,
+        ccg_merge: false,
+        ccg_template_corr_threshold: 0.5,
         ..SortConfig::default()
     };
     let probe = ProbeLayout::<2>::linear(25.0);
@@ -573,6 +579,9 @@ fn sort_template_subtract_single_cluster() {
     let config = SortConfig {
         threshold_multiplier: 3.0,
         template_subtract: true,
+        detection_mode: DetectionMode::Amplitude,
+        ccg_merge: false,
+        ccg_template_corr_threshold: 0.5,
         ..SortConfig::default()
     };
     let probe = ProbeLayout::<2>::linear(25.0);
@@ -621,6 +630,9 @@ fn sort_template_subtract_identical_spikes() {
     let config = SortConfig {
         threshold_multiplier: 3.0,
         template_subtract: true,
+        detection_mode: DetectionMode::Amplitude,
+        ccg_merge: false,
+        ccg_template_corr_threshold: 0.5,
         ..SortConfig::default()
     };
     let probe = ProbeLayout::<2>::linear(25.0);
@@ -695,6 +707,9 @@ fn sort_template_vs_no_template() {
     let config_no = SortConfig {
         threshold_multiplier: 4.0,
         template_subtract: false,
+        detection_mode: DetectionMode::Amplitude,
+        ccg_merge: false,
+        ccg_template_corr_threshold: 0.5,
         ..SortConfig::default()
     };
     let mut data_no = data.clone();
@@ -726,6 +741,9 @@ fn sort_template_vs_no_template() {
     let config_yes = SortConfig {
         threshold_multiplier: 4.0,
         template_subtract: true,
+        detection_mode: DetectionMode::Amplitude,
+        ccg_merge: false,
+        ccg_template_corr_threshold: 0.5,
         ..SortConfig::default()
     };
     let mut data_yes = data.clone();

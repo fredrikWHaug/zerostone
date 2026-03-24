@@ -46,6 +46,10 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     template_subtract (bool): Enable template subtraction to recover masked spikes. Default: True.
 ///     template_min_count (int): Minimum spikes per cluster to build a subtraction template. Default: 3.
 ///     min_cluster_snr (float): Minimum SNR for cluster auto-curation. Default: 2.5.
+///     detection_mode (str): Detection mode: "amplitude", "neo", or "sneo". Default: "amplitude".
+///     sneo_smooth_window (int): Half-width of triangular smoothing window for SNEO mode. Default: 3.
+///     ccg_merge (bool): Enable CCG-based cluster merging to fix over-splitting. Default: False.
+///     ccg_template_corr_threshold (float): Template NCC threshold for CCG merge. Default: 0.5.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -86,6 +90,10 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     template_subtract = true,
     template_min_count = 3,
     min_cluster_snr = 2.5,
+    detection_mode = "amplitude",
+    sneo_smooth_window = 3,
+    ccg_merge = false,
+    ccg_template_corr_threshold = 0.5,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -109,11 +117,28 @@ fn sort_multichannel<'py>(
     template_subtract: bool,
     template_min_count: usize,
     min_cluster_snr: f64,
+    detection_mode: &str,
+    sneo_smooth_window: usize,
+    ccg_merge: bool,
+    ccg_template_corr_threshold: f64,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
     let n_channels = shape[1];
     let data_slice = data.as_slice()?;
+
+    let det_mode = match detection_mode {
+        "amplitude" => zerostone::sorter::DetectionMode::Amplitude,
+        "neo" => zerostone::sorter::DetectionMode::Neo,
+        "sneo" => zerostone::sorter::DetectionMode::Sneo {
+            smooth_window: sneo_smooth_window,
+        },
+        _ => {
+            return Err(PyValueError::new_err(
+                "detection_mode must be 'amplitude', 'neo', or 'sneo'",
+            ))
+        }
+    };
 
     let config = SortConfig {
         threshold_multiplier: threshold,
@@ -133,6 +158,9 @@ fn sort_multichannel<'py>(
         template_subtract,
         template_min_count,
         min_cluster_snr,
+        detection_mode: det_mode,
+        ccg_merge,
+        ccg_template_corr_threshold,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),

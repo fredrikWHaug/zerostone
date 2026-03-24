@@ -169,6 +169,42 @@ fn autocorrelogram<'py>(
     Ok(PyArray1::from_owned_array(py, Array1::from_vec(output)))
 }
 
+/// Compute a cross-correlogram between two spike trains.
+///
+/// For each spike in train_a, counts how many spikes in train_b fall into
+/// each absolute time lag bin. Reveals whether two units share a refractory
+/// period (indicating they are the same neuron, over-split by clustering).
+///
+/// Args:
+///     train_a (np.ndarray): 1D float64 array of sorted spike times.
+///     train_b (np.ndarray): 1D float64 array of sorted spike times.
+///     bin_width (float): Width of each lag bin (same units as spike times).
+///     max_lag (float): Maximum lag to compute.
+///
+/// Returns:
+///     np.ndarray: 1D uint64 array of cross-correlogram counts.
+#[pyfunction]
+fn cross_correlogram<'py>(
+    py: Python<'py>,
+    train_a: PyReadonlyArray1<f64>,
+    train_b: PyReadonlyArray1<f64>,
+    bin_width: f64,
+    max_lag: f64,
+) -> PyResult<Bound<'py, PyArray1<u64>>> {
+    if bin_width <= 0.0 {
+        return Err(PyValueError::new_err("bin_width must be positive"));
+    }
+    if max_lag <= 0.0 {
+        return Err(PyValueError::new_err("max_lag must be positive"));
+    }
+    let times_a = train_a.as_slice()?;
+    let times_b = train_b.as_slice()?;
+    let n_bins = (max_lag / bin_width) as usize;
+    let mut output = vec![0u64; n_bins];
+    isi::cross_correlogram(times_a, times_b, bin_width, max_lag, &mut output);
+    Ok(PyArray1::from_owned_array(py, Array1::from_vec(output)))
+}
+
 /// Register ISI analysis functions.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(isi_cv, m)?)?;
@@ -176,5 +212,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(isi_histogram, m)?)?;
     m.add_function(wrap_pyfunction!(burst_index, m)?)?;
     m.add_function(wrap_pyfunction!(autocorrelogram, m)?)?;
+    m.add_function(wrap_pyfunction!(cross_correlogram, m)?)?;
     Ok(())
 }

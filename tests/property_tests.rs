@@ -13,8 +13,8 @@ use zerostone::probe::ProbeLayout;
 use zerostone::quality;
 use zerostone::riemannian;
 use zerostone::sorter::{
-    estimate_noise_multichannel, merge_clusters, sort_multichannel, split_clusters, OnlineSorter,
-    SortConfig,
+    estimate_noise_multichannel, merge_clusters, sort_multichannel, split_clusters, DetectionMode,
+    OnlineSorter, SortConfig,
 };
 use zerostone::spike_sort::{
     align_to_peak, combine_features, compute_adaptive_thresholds, deduplicate_events,
@@ -832,6 +832,9 @@ proptest! {
             threshold_multiplier: 4.0,
             pre_samples: 2,
             refractory_samples: 10,
+            detection_mode: DetectionMode::Amplitude,
+            ccg_merge: false,
+            ccg_template_corr_threshold: 0.5,
             ..SortConfig::default()
         };
         let probe = ProbeLayout::<2>::linear(25.0);
@@ -1587,6 +1590,9 @@ proptest! {
 
         let config = SortConfig {
             template_subtract: true,
+            detection_mode: DetectionMode::Amplitude,
+            ccg_merge: false,
+            ccg_template_corr_threshold: 0.5,
             ..SortConfig::default()
         };
         let max_events = n / config.refractory_samples.max(1) + 2;
