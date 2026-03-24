@@ -1130,6 +1130,19 @@ fn subtract_templates_multichannel<const C: usize, const W: usize, const N: usiz
     min_count: usize,
     pre_samples: usize,
 ) {
+    // Precompute template norms squared for amplitude scaling
+    let mut norms_sq = [0.0f64; N];
+    for c in 0..N {
+        if counts[c] == 0 {
+            continue;
+        }
+        let mut s = 0.0;
+        for val in means[c].iter() {
+            s += val * val;
+        }
+        norms_sq[c] = s;
+    }
+
     let t_len = data.len();
     for i in 0..n_spikes {
         let label = labels[i];
@@ -1143,8 +1156,23 @@ fn subtract_templates_multichannel<const C: usize, const W: usize, const N: usiz
         let peak = event_buf[i].sample;
         let start = peak.saturating_sub(pre_samples);
         let end = (start + W).min(t_len);
-        for t in start..end {
-            data[t][ch] -= means[label][t - start];
+        let n_valid = end - start;
+
+        // Per-spike amplitude scaling: alpha = dot(data, template) / ||template||^2
+        // This handles natural amplitude variability in single-unit spikes
+        let mut dot = 0.0;
+        for w in 0..n_valid {
+            dot += data[start + w][ch] * means[label][w];
+        }
+        let alpha = if norms_sq[label] > 1e-30 {
+            // Clamp to [0.3, 3.0] to prevent pathological scaling
+            (dot / norms_sq[label]).clamp(0.3, 3.0)
+        } else {
+            1.0
+        };
+
+        for w in 0..n_valid {
+            data[start + w][ch] -= alpha * means[label][w];
         }
     }
 }
@@ -1488,7 +1516,9 @@ pub fn sort_multichannel<
             config.pre_samples,
         );
 
-        // Re-detect on residual (same threshold -- lower would flood with noise)
+        // Re-detect on residual at same threshold. After subtracting known
+        // templates, masked spikes (temporal overlap) become detectable.
+        // Using the same threshold avoids flooding with noise detections.
         let remaining_buf = event_buf.len().saturating_sub(n_extracted);
         if remaining_buf > 0 {
             let unit_noise_re = [1.0f64; C];
