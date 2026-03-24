@@ -10,7 +10,7 @@
 
 use zerostone::localize::{center_of_mass, center_of_mass_threshold};
 use zerostone::probe::ProbeLayout;
-use zerostone::sorter::{sort_multichannel, SortConfig};
+use zerostone::sorter::{sort_multichannel, DetectionMode, SortConfig};
 use zerostone::spike_sort::{deduplicate_events, detect_spikes_multichannel, MultiChannelEvent};
 use zerostone::whitening::{apply_whitening, WhiteningMatrix, WhiteningMode};
 use zerostone::{BiquadCoeffs, Complex, Fft, IirFilter, ThresholdDetector, WelchPsd, WindowType};
@@ -358,6 +358,9 @@ fn replay_sort_multichannel() {
 
     let config = SortConfig {
         pre_samples: 4,
+        detection_mode: DetectionMode::Amplitude,
+        ccg_merge: false,
+        ccg_template_corr_threshold: 0.5,
         ..SortConfig::default()
     };
     let probe = ProbeLayout::<2>::linear(25.0);

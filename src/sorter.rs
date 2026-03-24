@@ -31,6 +31,7 @@
 //! assert!(noise[1] > 0.0);
 //! ```
 
+use crate::isi;
 use crate::online_kmeans::OnlineKMeans;
 use crate::probe::ProbeLayout;
 use crate::quality;
@@ -39,6 +40,30 @@ use crate::spike_sort::{
     MultiChannelEvent, SortError, WaveformPca,
 };
 use crate::whitening::{WhiteningMatrix, WhiteningMode};
+
+/// Detection mode for the spike sorting pipeline.
+///
+/// Controls how threshold crossings are identified in the whitened data.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::sorter::DetectionMode;
+///
+/// let mode = DetectionMode::Amplitude;
+/// assert_eq!(mode, DetectionMode::Amplitude);
+/// let sneo = DetectionMode::Sneo { smooth_window: 3 };
+/// assert_eq!(sneo, DetectionMode::Sneo { smooth_window: 3 });
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetectionMode {
+    /// Standard negative-amplitude threshold crossing (default).
+    Amplitude,
+    /// Nonlinear Energy Operator: `psi[n] = x[n]^2 - x[n-1]*x[n+1]`.
+    Neo,
+    /// Smoothed NEO with triangular window of given half-width.
+    Sneo { smooth_window: usize },
+}
 
 /// Configuration for the multi-channel sorting pipeline.
 ///
@@ -58,6 +83,7 @@ use crate::whitening::{WhiteningMatrix, WhiteningMode};
 /// assert!(config.template_subtract);
 /// assert_eq!(config.template_min_count, 3);
 /// assert!((config.min_cluster_snr - 2.5).abs() < 1e-12);
+/// assert_eq!(config.detection_mode, zerostone::sorter::DetectionMode::Amplitude);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -95,6 +121,13 @@ pub struct SortConfig {
     pub template_min_count: usize,
     /// Minimum cluster SNR for auto-curation. Clusters below this are removed.
     pub min_cluster_snr: f64,
+    /// Detection mode: Amplitude (default), NEO, or SNEO.
+    pub detection_mode: DetectionMode,
+    /// Enable CCG-based cluster merging after d-prime and spatial merge.
+    /// Merges cluster pairs with high template correlation and no refractory dip.
+    pub ccg_merge: bool,
+    /// Template correlation threshold for CCG merge candidates.
+    pub ccg_template_corr_threshold: f64,
 }
 
 impl Default for SortConfig {
@@ -117,6 +150,9 @@ impl Default for SortConfig {
             template_subtract: true,
             template_min_count: 3,
             min_cluster_snr: 2.5,
+            detection_mode: DetectionMode::Amplitude,
+            ccg_merge: false,
+            ccg_template_corr_threshold: 0.5,
         }
     }
 }
@@ -1064,6 +1100,216 @@ pub fn merge_clusters_spatial<const C: usize>(
     current_n
 }
 
+/// Merge over-split clusters using cross-correlogram (CCG) refractoriness test.
+///
+/// For all cluster pairs whose mean waveform templates have normalized
+/// cross-correlation above `corr_threshold`, computes the CCG and checks
+/// for a refractory dip. Pairs with high template similarity and no
+/// refractory dip are merged (they are likely over-split fragments of
+/// the same neuron).
+///
+/// This follows the Kilosort4 pattern, which found CCG-based merge to be
+/// the single strongest contributor to sorting accuracy.
+///
+/// # Arguments
+///
+/// * `n_spikes` - Number of valid spikes
+/// * `labels` - Cluster label per spike (modified in place)
+/// * `waveform_buf` - Waveform per spike (for template computation)
+/// * `event_buf` - Spike events (for spike times)
+/// * `n_clusters` - Current number of clusters
+/// * `corr_threshold` - Minimum template NCC to consider a merge (e.g., 0.5)
+/// * `sample_rate` - Sampling rate in Hz (for CCG bin width computation)
+///
+/// # Returns
+///
+/// The new number of clusters after CCG merging.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::sorter::ccg_merge_clusters;
+/// use zerostone::spike_sort::MultiChannelEvent;
+///
+/// // Two clusters from the same neuron (similar waveforms, no refractory dip)
+/// let mut labels = [0, 0, 0, 1, 1, 1, 0, 1, 0, 1];
+/// let waveforms = [[1.0; 16]; 10];
+/// let events: Vec<_> = (0..10).map(|i| MultiChannelEvent {
+///     sample: i * 100, channel: 0, amplitude: 5.0,
+/// }).collect();
+/// let new_n = ccg_merge_clusters::<16, 32>(
+///     10, &mut labels, &waveforms, &events, 2, 0.5, 30000.0,
+/// );
+/// assert!(new_n <= 2);
+/// ```
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+pub fn ccg_merge_clusters<const W: usize, const N: usize>(
+    n_spikes: usize,
+    labels: &mut [usize],
+    waveform_buf: &[[f64; W]],
+    event_buf: &[MultiChannelEvent],
+    n_clusters: usize,
+    corr_threshold: f64,
+    sample_rate: f64,
+) -> usize {
+    if n_clusters < 2 || n_spikes < 4 {
+        return n_clusters;
+    }
+
+    let max_k = if n_clusters > MAX_MERGE_CLUSTERS {
+        MAX_MERGE_CLUSTERS
+    } else {
+        n_clusters
+    };
+
+    let mut current_n = max_k;
+
+    // CCG parameters
+    let bin_width_s = 0.5e-3; // 0.5 ms bins
+    let max_lag_s = 25.0e-3; // 25 ms max lag
+    let refractory_bins = 2; // first 1ms (2 bins of 0.5ms) is the refractory zone
+
+    loop {
+        if current_n < 2 {
+            break;
+        }
+
+        // Compute mean waveforms for current clusters
+        let mut means = [[0.0f64; W]; MAX_MERGE_CLUSTERS];
+        let mut counts = [0usize; MAX_MERGE_CLUSTERS];
+        for s in 0..n_spikes {
+            if s >= labels.len() {
+                break;
+            }
+            let cl = labels[s];
+            if cl >= current_n {
+                continue;
+            }
+            counts[cl] += 1;
+            for w in 0..W {
+                means[cl][w] += waveform_buf[s][w];
+            }
+        }
+        for cl in 0..current_n {
+            if counts[cl] > 0 {
+                let inv = 1.0 / counts[cl] as f64;
+                for w in 0..W {
+                    means[cl][w] *= inv;
+                }
+            }
+        }
+
+        // Find best merge candidate: highest template correlation above threshold
+        let mut best_corr = corr_threshold;
+        let mut best_i = 0;
+        let mut best_j = 0;
+        let mut found = false;
+
+        for i in 0..current_n {
+            if counts[i] < 2 {
+                continue;
+            }
+            // Precompute norm of template i
+            let mut norm_i_sq = 0.0;
+            for w in 0..W {
+                norm_i_sq += means[i][w] * means[i][w];
+            }
+            let norm_i = libm::sqrt(norm_i_sq);
+            if norm_i < 1e-15 {
+                continue;
+            }
+
+            for j in (i + 1)..current_n {
+                if counts[j] < 2 {
+                    continue;
+                }
+                // Template NCC
+                let mut dot = 0.0;
+                let mut norm_j_sq = 0.0;
+                for w in 0..W {
+                    dot += means[i][w] * means[j][w];
+                    norm_j_sq += means[j][w] * means[j][w];
+                }
+                let norm_j = libm::sqrt(norm_j_sq);
+                if norm_j < 1e-15 {
+                    continue;
+                }
+                let ncc = dot / (norm_i * norm_j);
+                if ncc > best_corr {
+                    best_corr = ncc;
+                    best_i = i;
+                    best_j = j;
+                    found = true;
+                }
+            }
+        }
+
+        if !found {
+            break;
+        }
+
+        // Collect spike times for each cluster (in seconds)
+        const MAX_TIMES: usize = 512;
+        let mut times_a = [0.0f64; MAX_TIMES];
+        let mut times_b = [0.0f64; MAX_TIMES];
+        let mut n_a = 0;
+        let mut n_b = 0;
+        let inv_sr = 1.0 / sample_rate;
+
+        for s in 0..n_spikes {
+            if s >= labels.len() {
+                break;
+            }
+            if labels[s] == best_i && n_a < MAX_TIMES {
+                times_a[n_a] = event_buf[s].sample as f64 * inv_sr;
+                n_a += 1;
+            } else if labels[s] == best_j && n_b < MAX_TIMES {
+                times_b[n_b] = event_buf[s].sample as f64 * inv_sr;
+                n_b += 1;
+            }
+        }
+
+        // Sort spike times
+        times_a[..n_a]
+            .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+        times_b[..n_b]
+            .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+
+        // Compute CCG
+        const CCG_BINS: usize = 50;
+        let mut ccg = [0u64; CCG_BINS];
+        isi::cross_correlogram(
+            &times_a[..n_a],
+            &times_b[..n_b],
+            bin_width_s,
+            max_lag_s,
+            &mut ccg,
+        );
+
+        // Check for refractory dip: if present, these are distinct neurons -- do NOT merge
+        if isi::has_refractory_dip(&ccg, refractory_bins) {
+            // Skip this pair and try next-best. For simplicity, break the loop.
+            // (A more sophisticated version would track excluded pairs like merge_clusters.)
+            break;
+        }
+
+        // No refractory dip: merge (same neuron, over-split)
+        for s in 0..n_spikes {
+            if s >= labels.len() {
+                break;
+            }
+            if labels[s] == best_j {
+                labels[s] = best_i;
+            } else if labels[s] > best_j {
+                labels[s] -= 1;
+            }
+        }
+        current_n -= 1;
+    }
+
+    current_n
+}
+
 /// Compute mean waveform per cluster, spike count, and most common peak channel.
 #[allow(clippy::too_many_arguments)]
 fn compute_cluster_means<const W: usize, const N: usize>(
@@ -1316,14 +1562,127 @@ pub fn sort_multichannel<
     }
 
     // 4. Detection (on whitened data, noise ~ 1.0 per channel)
-    let unit_noise = [1.0f64; C];
-    let n_detected = detect_spikes_multichannel::<C>(
-        data,
-        config.threshold_multiplier,
-        &unit_noise,
-        config.refractory_samples,
-        event_buf,
-    );
+    //
+    // For NEO/SNEO modes, we apply the energy operator per channel into scratch,
+    // estimate noise on the transformed signal, and detect on the energy signal.
+    // The detected spike times still index into the original (whitened) data.
+    let n_detected = match config.detection_mode {
+        DetectionMode::Amplitude => {
+            let unit_noise = [1.0f64; C];
+            detect_spikes_multichannel::<C>(
+                data,
+                config.threshold_multiplier,
+                &unit_noise,
+                config.refractory_samples,
+                event_buf,
+            )
+        }
+        DetectionMode::Neo | DetectionMode::Sneo { .. } => {
+            use crate::spike_sort::{neo_transform, sneo_transform};
+            let smooth_w = match config.detection_mode {
+                DetectionMode::Sneo { smooth_window } => smooth_window,
+                _ => 0,
+            };
+            // Apply NEO/SNEO per channel, detect on energy signal.
+            // We build a temporary energy array per channel in scratch,
+            // estimate its noise via MAD, and detect threshold crossings.
+            // Spike times are offset by +1 to map back to the original data indices.
+            let mut total = 0usize;
+            let mut ch = 0;
+            while ch < C {
+                // Extract single-channel data into scratch
+                let s_len = scratch.len().min(t_len);
+                for t in 0..s_len {
+                    scratch[t] = data[t][ch];
+                }
+                // Apply NEO or SNEO (output into the second half of scratch)
+                let half = s_len / 2;
+                let (src, dst) = scratch.split_at_mut(half);
+                let n_energy = if smooth_w > 0 {
+                    sneo_transform(&src[..s_len.min(half)], dst, smooth_w)
+                } else {
+                    neo_transform(&src[..s_len.min(half)], dst)
+                };
+                if n_energy < 2 {
+                    ch += 1;
+                    continue;
+                }
+                // Estimate noise on energy signal via MAD
+                // Reuse a portion of scratch for MAD computation
+                let energy = &dst[..n_energy];
+                let mut abs_sum = 0.0;
+                let mut abs_count = 0;
+                for &v in energy.iter() {
+                    if v.is_finite() {
+                        abs_sum += libm::fabs(v);
+                        abs_count += 1;
+                    }
+                }
+                let energy_noise = if abs_count > 0 {
+                    // Approximate MAD: mean(|x|) * sqrt(pi/2) / 0.6745
+                    // For non-Gaussian energy signal, use mean absolute value as proxy
+                    let mean_abs = abs_sum / abs_count as f64;
+                    if mean_abs > 1e-15 {
+                        mean_abs
+                    } else {
+                        1.0
+                    }
+                } else {
+                    1.0
+                };
+                let thresh = config.threshold_multiplier * energy_noise;
+                // Detect positive threshold crossings on energy signal
+                // (NEO/SNEO output is positive for spikes)
+                let mut i = 0;
+                while i < n_energy {
+                    if energy[i] > thresh {
+                        let end = if i + config.refractory_samples < n_energy {
+                            i + config.refractory_samples
+                        } else {
+                            n_energy
+                        };
+                        let mut max_idx = i;
+                        let mut max_val = energy[i];
+                        let mut j = i + 1;
+                        while j < end {
+                            if energy[j] > max_val {
+                                max_val = energy[j];
+                                max_idx = j;
+                            }
+                            j += 1;
+                        }
+                        if total < event_buf.len() {
+                            // Offset by +1 to map NEO index back to original data
+                            let sample = max_idx + 1;
+                            event_buf[total] = MultiChannelEvent {
+                                sample,
+                                channel: ch,
+                                amplitude: libm::fabs(data[sample.min(t_len - 1)][ch]),
+                            };
+                            total += 1;
+                        }
+                        i = end;
+                    } else {
+                        i += 1;
+                    }
+                }
+                ch += 1;
+            }
+            // Sort events by sample index (insertion sort, stable)
+            let mut k = 1;
+            while k < total {
+                let key = event_buf[k];
+                let mut pos = k;
+                while pos > 0 && event_buf[pos - 1].sample > key.sample {
+                    event_buf[pos] = event_buf[pos - 1];
+                    pos -= 1;
+                }
+                event_buf[pos] = key;
+                k += 1;
+            }
+            total
+        }
+    };
     if n_detected < 2 {
         return Ok(SortResult {
             n_spikes: n_detected,
@@ -1449,6 +1808,21 @@ pub fn sort_multichannel<
         config.split_min_cluster_size,
         config.split_bimodality_threshold,
     );
+
+    // 9c2. CCG-based cluster merge: merge over-split clusters that lack refractory dip
+    let n_clusters = if config.ccg_merge && n_clusters > 1 {
+        ccg_merge_clusters::<W, N>(
+            n_extracted,
+            labels,
+            waveform_buf,
+            event_buf,
+            n_clusters,
+            config.ccg_template_corr_threshold,
+            30000.0, // TODO: accept sample_rate in SortConfig
+        )
+    } else {
+        n_clusters
+    };
 
     // Cap n_clusters at N (the SortResult array size)
     let mut n_clusters = if n_clusters > N { N } else { n_clusters };
@@ -2490,6 +2864,9 @@ mod tests {
             threshold_multiplier: 4.0,
             pre_samples: 2,
             refractory_samples: 10,
+            detection_mode: DetectionMode::Amplitude,
+            ccg_merge: false,
+            ccg_template_corr_threshold: 0.5,
             ..SortConfig::default()
         };
 
@@ -3261,6 +3638,9 @@ mod tests {
 
         let config_on = SortConfig {
             template_subtract: true,
+            detection_mode: DetectionMode::Amplitude,
+            ccg_merge: false,
+            ccg_template_corr_threshold: 0.5,
             ..SortConfig::default()
         };
         let mut scratch_on = vec![0.0f64; n];
@@ -3290,6 +3670,9 @@ mod tests {
 
         let config_off = SortConfig {
             template_subtract: false,
+            detection_mode: DetectionMode::Amplitude,
+            ccg_merge: false,
+            ccg_template_corr_threshold: 0.5,
             ..SortConfig::default()
         };
         let mut scratch_off = vec![0.0f64; n];

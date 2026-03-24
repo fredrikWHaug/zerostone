@@ -306,6 +306,98 @@ pub fn local_variation(spike_times: &[f64]) -> f64 {
     3.0 * sum / (n_isi - 1) as f64
 }
 
+/// Compute a cross-correlogram between two sorted spike trains.
+///
+/// For each spike in `train_a`, counts how many spikes in `train_b` fall into
+/// each lag bin based on their absolute time difference. Both positive and
+/// negative lags are considered, but stored by absolute lag (symmetric).
+///
+/// # Arguments
+///
+/// * `train_a` - Sorted spike times (ascending order)
+/// * `train_b` - Sorted spike times (ascending order)
+/// * `bin_width` - Width of each lag bin (same units as spike times)
+/// * `max_lag` - Maximum lag to compute (same units as spike times)
+/// * `output` - Output buffer for the cross-correlogram (length >= max_lag / bin_width)
+///
+/// Returns the number of bins filled in `output`.
+pub fn cross_correlogram(
+    train_a: &[f64],
+    train_b: &[f64],
+    bin_width: f64,
+    max_lag: f64,
+    output: &mut [u64],
+) -> usize {
+    let n_bins = (max_lag / bin_width) as usize;
+    let n_bins = if n_bins < output.len() {
+        n_bins
+    } else {
+        output.len()
+    };
+
+    for b in output.iter_mut().take(n_bins) {
+        *b = 0;
+    }
+
+    for &ta in train_a.iter() {
+        for &tb in train_b.iter() {
+            let dt = tb - ta;
+            let abs_dt = if dt < 0.0 { -dt } else { dt };
+            if abs_dt >= max_lag {
+                // If tb is past max_lag ahead of ta, further
+                // values will only increase dt, so break.
+                if dt >= max_lag {
+                    break;
+                }
+                continue;
+            }
+            // Skip zero-lag self-pairs (same time in both trains)
+            if dt == 0.0 {
+                continue;
+            }
+            let bin = (abs_dt / bin_width) as usize;
+            if bin < n_bins {
+                output[bin] += 1;
+            }
+        }
+    }
+
+    n_bins
+}
+
+/// Check whether a correlogram histogram shows a refractory dip.
+///
+/// A refractory dip means the mean count in the first `n_refractory_bins` bins
+/// is less than 50% of the mean count in the next `n_refractory_bins` bins
+/// (the baseline region).
+///
+/// Returns `false` if the histogram is shorter than `2 * n_refractory_bins`
+/// or if the baseline mean is zero.
+pub fn has_refractory_dip(histogram: &[u64], n_refractory_bins: usize) -> bool {
+    if histogram.len() < 2 * n_refractory_bins {
+        return false;
+    }
+
+    let mut refractory_sum = 0u64;
+    for &val in histogram.iter().take(n_refractory_bins) {
+        refractory_sum += val;
+    }
+
+    let mut baseline_sum = 0u64;
+    for &val in histogram[n_refractory_bins..2 * n_refractory_bins].iter() {
+        baseline_sum += val;
+    }
+
+    if baseline_sum == 0 {
+        return false;
+    }
+
+    let refractory_mean = refractory_sum as f64 / n_refractory_bins as f64;
+    let baseline_mean = baseline_sum as f64 / n_refractory_bins as f64;
+
+    refractory_mean < 0.5 * baseline_mean
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,5 +558,60 @@ mod tests {
         let mut hist = IsiHistogram::<10>::new(0.01);
         hist.add_interval(-0.005);
         assert_eq!(hist.total_count(), 0);
+    }
+
+    #[test]
+    fn test_cross_correlogram_identical_trains() {
+        // CCG of identical trains should look like an autocorrelogram
+        let train = [0.0, 0.010, 0.020, 0.030, 0.040];
+        let mut output = [0u64; 10];
+        let n = cross_correlogram(&train, &train, 0.005, 0.050, &mut output);
+        assert_eq!(n, 10);
+        // Self-CCG at lag ~10ms should have counts
+        assert!(output[2] > 0, "Expected counts at 10ms lag");
+    }
+
+    #[test]
+    fn test_cross_correlogram_no_overlap() {
+        // Two trains with no spikes within max_lag of each other
+        let train_a = [0.0, 0.010, 0.020];
+        let train_b = [1.0, 1.010, 1.020]; // 1 second away
+        let mut output = [0u64; 10];
+        let n = cross_correlogram(&train_a, &train_b, 0.005, 0.050, &mut output);
+        assert_eq!(n, 10);
+        for &v in &output[..n] {
+            assert_eq!(v, 0, "No overlap expected");
+        }
+    }
+
+    #[test]
+    fn test_cross_correlogram_empty() {
+        let train_a: [f64; 0] = [];
+        let train_b = [0.0, 0.010];
+        let mut output = [0u64; 10];
+        let n = cross_correlogram(&train_a, &train_b, 0.005, 0.050, &mut output);
+        for &v in &output[..n] {
+            assert_eq!(v, 0);
+        }
+    }
+
+    #[test]
+    fn test_has_refractory_dip_with_dip() {
+        // First 2 bins have very low counts, next 2 bins have high counts
+        let histogram = [0, 1, 20, 25, 18, 22, 19, 21, 20, 23];
+        assert!(has_refractory_dip(&histogram, 2));
+    }
+
+    #[test]
+    fn test_has_refractory_dip_no_dip() {
+        // Uniform histogram - no refractory dip
+        let histogram = [20, 19, 21, 20, 18, 22, 19, 21, 20, 23];
+        assert!(!has_refractory_dip(&histogram, 2));
+    }
+
+    #[test]
+    fn test_has_refractory_dip_too_short() {
+        let histogram = [0, 1, 2];
+        assert!(!has_refractory_dip(&histogram, 2));
     }
 }

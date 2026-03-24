@@ -437,6 +437,123 @@ pub struct SpikeCluster<const C: usize, const W: usize> {
     pub count: usize,
 }
 
+/// Compute the Nonlinear Energy Operator (Teager-Kaiser).
+///
+/// psi\[n\] = x\[n\]^2 - x\[n-1\] * x\[n+1\]
+///
+/// The NEO highlights rapid changes in both amplitude and frequency,
+/// making it effective for spike detection in extracellular recordings.
+/// Output length is `signal.len() - 2` since the first and last samples
+/// cannot be computed.
+///
+/// Returns the number of output samples written. Returns 0 if
+/// `signal.len() < 3` or `output` is too small.
+pub fn neo_transform(signal: &[f64], output: &mut [f64]) -> usize {
+    let n = signal.len();
+    if n < 3 {
+        return 0;
+    }
+    let out_len = n - 2;
+    if output.len() < out_len {
+        return 0;
+    }
+    let mut i = 0;
+    while i < out_len {
+        output[i] = signal[i + 1] * signal[i + 1] - signal[i] * signal[i + 2];
+        i += 1;
+    }
+    out_len
+}
+
+/// Compute the Smoothed Nonlinear Energy Operator (SNEO).
+///
+/// First applies the NEO transform, then smooths with a triangular
+/// (Bartlett) window of half-width `smooth_window`. The triangular
+/// kernel weights are `w[k] = 1.0 - |k| / (smooth_window + 1)` for
+/// k in \[-smooth_window, smooth_window\].
+///
+/// With `smooth_window = 0` the output is identical to raw NEO.
+///
+/// Returns the number of output samples written (same as NEO:
+/// `signal.len() - 2`). Returns 0 if `signal.len() < 3` or `output`
+/// is too small.
+pub fn sneo_transform(signal: &[f64], output: &mut [f64], smooth_window: usize) -> usize {
+    let n = neo_transform(signal, output);
+    if n == 0 || smooth_window == 0 {
+        return n;
+    }
+
+    // Compute normalisation factor for the triangular window.
+    let denom = (smooth_window + 1) as f64;
+    let mut norm = 0.0;
+    {
+        let mut k = -(smooth_window as i64);
+        while k <= smooth_window as i64 {
+            let w = 1.0 - libm::fabs(k as f64) / denom;
+            norm += w;
+            k += 1;
+        }
+    }
+
+    // Smooth in-place by reading from output and writing back.
+    // We process from the end to avoid overwriting values we still need,
+    // but a triangular window is symmetric so we need a small temporary
+    // accumulator approach. Since this is no_std with no heap, we
+    // compute each smoothed value by scanning the window each time.
+    // To allow in-place operation we work backwards through the buffer,
+    // but since the window is symmetric the direction does not matter
+    // -- we just need to not read a value we already overwrote. The
+    // simplest correct approach: copy NEO into a second pass variable
+    // by processing right-to-left and storing results from right-to-left
+    // (the rightmost values are read by fewer future iterations).
+    //
+    // Actually, since we read a neighbourhood for each output and the
+    // window is symmetric, a single-pass in either direction will read
+    // values that have not yet been overwritten only if we go from
+    // high-to-low. But the leftmost outputs read rightward neighbours
+    // that are still original. Going right-to-left: output[i] reads
+    // output[i-smooth_window..=i+smooth_window]. If we write i first
+    // (largest i), those to its right are already written (but we don't
+    // need them since they're past the window). Wait -- the *left*
+    // neighbours of a high i are still original. So right-to-left works
+    // only if smooth_window == 0. For general smooth_window we need a
+    // two-pass or scratch approach.
+    //
+    // With no heap: do two half-passes. First pass (left to right)
+    // computes smoothed values and stores them shifted by smooth_window
+    // positions, reading original data. But that risks overwriting.
+    //
+    // Simplest correct no_std approach: swap the buffer in chunks.
+    // Given the real-time / embedded context and typical smooth_window
+    // values of 1-5, we use an O(n * smooth_window) recompute approach
+    // where we keep track of what was overwritten by saving the last
+    // `2*smooth_window` original values in a small circular buffer.
+    //
+    // Even simpler: since we have the output buffer and the original
+    // signal, we can recompute each NEO value on-the-fly from signal
+    // during the smoothing pass, avoiding in-place aliasing entirely.
+    let mut i = 0;
+    while i < n {
+        let mut sum = 0.0;
+        let mut k = -(smooth_window as i64);
+        while k <= smooth_window as i64 {
+            let j = i as i64 + k;
+            if j >= 0 && (j as usize) < n {
+                let w = 1.0 - libm::fabs(k as f64) / denom;
+                // Recompute NEO[j] from signal to avoid in-place aliasing.
+                let jj = j as usize;
+                let neo_j = signal[jj + 1] * signal[jj + 1] - signal[jj] * signal[jj + 2];
+                sum += w * neo_j;
+            }
+            k += 1;
+        }
+        output[i] = sum / norm;
+        i += 1;
+    }
+
+    n
+}
+
 /// Estimate noise standard deviation using the Median Absolute Deviation.
 ///
 /// sigma = median(|x|) / 0.6745
@@ -1542,6 +1659,45 @@ mod kani_proofs {
         while i < 4 {
             assert!(output[0][i].is_finite(), "output must be finite");
             i += 1;
+        }
+    }
+}
+
+#[cfg(kani)]
+mod neo_proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn verify_neo_transform_no_panic() {
+        let len: usize = kani::any();
+        kani::assume(len <= 8);
+        let signal = [0.0f64; 8];
+        let mut output = [0.0f64; 8];
+        let n = neo_transform(&signal[..len], &mut output);
+        assert!(n <= len);
+        if len >= 3 {
+            assert!(n == len - 2);
+        } else {
+            assert!(n == 0);
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn verify_neo_output_finite() {
+        let len: usize = kani::any();
+        kani::assume(len >= 3 && len <= 6);
+        let mut signal = [0.0f64; 6];
+        for i in 0..len {
+            signal[i] = kani::any();
+            kani::assume(signal[i].is_finite());
+            kani::assume(signal[i].abs() < 1e6);
+        }
+        let mut output = [0.0f64; 6];
+        let n = neo_transform(&signal[..len], &mut output);
+        for i in 0..n {
+            assert!(output[i].is_finite());
         }
     }
 }
@@ -2735,6 +2891,108 @@ mod tests {
                 "empty data: channel {} should get min_threshold, got {}",
                 ch,
                 thresholds[ch]
+            );
+        }
+    }
+
+    #[test]
+    fn test_neo_transform_basic() {
+        // For constant signal, NEO should be ~0
+        let signal = [1.0; 10];
+        let mut output = [0.0; 10];
+        let n = neo_transform(&signal, &mut output);
+        assert_eq!(n, 8);
+        for &v in &output[..n] {
+            assert!(
+                v.abs() < 1e-12,
+                "NEO of constant signal should be 0, got {}",
+                v
+            );
+        }
+    }
+
+    #[test]
+    fn test_neo_transform_spike() {
+        // A sharp spike should produce high NEO output
+        let mut signal = [0.0; 20];
+        signal[10] = -10.0;
+        let mut output = [0.0; 20];
+        let n = neo_transform(&signal, &mut output);
+        assert_eq!(n, 18);
+        // NEO at the spike location (index 10 maps to output index 9) should be large
+        assert!(
+            output[9] > 50.0,
+            "NEO at spike should be large, got {}",
+            output[9]
+        );
+    }
+
+    #[test]
+    fn test_neo_transform_short() {
+        let signal = [1.0, 2.0]; // too short
+        let mut output = [0.0; 2];
+        let n = neo_transform(&signal, &mut output);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn test_neo_output_nonnegative_for_sine() {
+        // For a pure sinusoid, NEO output is non-negative (Teager-Kaiser property)
+        let mut signal = [0.0; 100];
+        for i in 0..100 {
+            signal[i] = libm::sin(2.0 * core::f64::consts::PI * 0.1 * i as f64);
+        }
+        let mut output = [0.0; 100];
+        let n = neo_transform(&signal, &mut output);
+        for &v in &output[..n] {
+            // Allow small numerical error
+            assert!(
+                v > -1e-10,
+                "NEO of sinusoid should be non-negative, got {}",
+                v
+            );
+        }
+    }
+
+    #[test]
+    fn test_sneo_transform_basic() {
+        let mut signal = [0.0; 20];
+        signal[10] = -10.0;
+        let mut output = [0.0; 20];
+        let n = sneo_transform(&signal, &mut output, 2);
+        assert_eq!(n, 18);
+        // SNEO should still show a peak near the spike
+        let mut max_val = 0.0;
+        let mut max_idx = 0;
+        for i in 0..n {
+            if output[i] > max_val {
+                max_val = output[i];
+                max_idx = i;
+            }
+        }
+        assert!(max_val > 0.0, "SNEO should have a positive peak");
+        // Peak should be near index 9 (spike at sample 10, offset by 1 for NEO)
+        assert!(
+            (max_idx as i32 - 9).unsigned_abs() <= 2,
+            "SNEO peak should be near spike location"
+        );
+    }
+
+    #[test]
+    fn test_sneo_smooth_zero_equals_neo() {
+        let mut signal = [0.0; 20];
+        signal[5] = -5.0;
+        signal[15] = -8.0;
+        let mut neo_out = [0.0; 20];
+        let mut sneo_out = [0.0; 20];
+        let n1 = neo_transform(&signal, &mut neo_out);
+        let n2 = sneo_transform(&signal, &mut sneo_out, 0);
+        assert_eq!(n1, n2);
+        for i in 0..n1 {
+            assert!(
+                (neo_out[i] - sneo_out[i]).abs() < 1e-12,
+                "SNEO with window=0 should equal NEO at index {}",
+                i
             );
         }
     }
