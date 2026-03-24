@@ -330,3 +330,139 @@ class TestOnlineSorterInSorter:
         sorter.add_template([1.0, 0.0, 0.0])
         with pytest.raises(ValueError, match="3"):
             sorter.classify([1.0, 2.0])
+
+
+# ---- Template subtraction integration tests ----
+
+
+class TestTemplateSubtraction:
+    def test_template_subtract_flag_accepted(self):
+        """Verify template_subtract parameter is accepted."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(100)
+        data = rng.standard_normal((5000, 4))
+        for t in range(200, 4000, 200):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, template_subtract=True
+        )
+        assert result["n_spikes"] >= 0
+        assert result["n_clusters"] >= 0
+
+    def test_template_subtract_disabled(self):
+        """Sorting with template_subtract=False should also work."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(101)
+        data = rng.standard_normal((5000, 4))
+        for t in range(200, 4000, 200):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, template_subtract=False
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_template_subtract_finds_more_spikes(self):
+        """Template subtraction should find >= as many spikes as without."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(102)
+        data = rng.standard_normal((10000, 4))
+        # Inject overlapping spikes at nearby times
+        for t in range(200, 9000, 100):
+            data[t, 0] += -15.0
+            if t + 20 < 10000:
+                data[t + 20, 1] += -12.0
+
+        data_copy = data.copy()
+        r_no = zbci.sort_multichannel(
+            data, probe, threshold=4.0, template_subtract=False
+        )
+        r_yes = zbci.sort_multichannel(
+            data_copy, probe, threshold=4.0, template_subtract=True
+        )
+        assert r_yes["n_spikes"] >= r_no["n_spikes"]
+
+    def test_template_min_count_param(self):
+        """Verify template_min_count parameter is accepted."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(103)
+        data = rng.standard_normal((5000, 4))
+        for t in range(200, 4000, 200):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0,
+            template_subtract=True, template_min_count=5,
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_template_subtract_deterministic(self):
+        """Template subtraction should be deterministic."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(104)
+        data = rng.standard_normal((8000, 4))
+        for t in range(200, 7000, 200):
+            data[t, 0] += -15.0
+        data2 = data.copy()
+
+        r1 = zbci.sort_multichannel(
+            data, probe, threshold=4.0, template_subtract=True
+        )
+        r2 = zbci.sort_multichannel(
+            data2, probe, threshold=4.0, template_subtract=True
+        )
+        assert r1["n_spikes"] == r2["n_spikes"]
+        assert r1["n_clusters"] == r2["n_clusters"]
+        np.testing.assert_array_equal(r1["labels"], r2["labels"])
+        np.testing.assert_array_equal(r1["spike_times"], r2["spike_times"])
+
+    def test_template_subtract_valid_labels(self):
+        """All labels should be < n_clusters after template subtraction."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(105)
+        data = rng.standard_normal((8000, 4))
+        for t in range(200, 7000, 150):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, template_subtract=True
+        )
+        if result["n_spikes"] > 0:
+            assert np.all(result["labels"] < result["n_clusters"])
+            assert np.all(result["labels"] >= 0)
+
+    def test_min_cluster_snr_param(self):
+        """Verify min_cluster_snr parameter is accepted."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(106)
+        data = rng.standard_normal((5000, 4))
+        for t in range(200, 4000, 200):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, min_cluster_snr=3.0,
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_spatial_merge_dprime_param(self):
+        """Verify spatial_merge_dprime parameter is accepted."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(107)
+        data = rng.standard_normal((5000, 4))
+        for t in range(200, 4000, 200):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, spatial_merge_dprime=2.0,
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_template_subtract_32ch(self):
+        """Template subtraction should work on 32-channel data."""
+        probe = zbci.ProbeLayout.linear(32, 25.0)
+        rng = np.random.default_rng(108)
+        data = rng.standard_normal((10000, 32))
+        for t in range(200, 9000, 200):
+            data[t, 5] += -15.0
+            data[t, 6] += -10.0  # spatial spread
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, template_subtract=True
+        )
+        assert result["n_spikes"] >= 0
+        if result["n_spikes"] > 0:
+            assert np.all(result["labels"] < result["n_clusters"])
