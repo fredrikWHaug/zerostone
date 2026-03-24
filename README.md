@@ -37,7 +37,19 @@ mdm.fit(covariance_matrices, labels)
 predictions = mdm.predict(test_covariances)
 ```
 
-Supports all three major BCI paradigms: motor imagery (CSP), SSVEP (CCA), and P300/ERP (xDAWN). Includes sklearn-compatible wrappers, spike sorting with online k-means, XDF/EDF file readers, phase-amplitude coupling, entropy measures, ERSP, and Granger causality. See [`python/README.md`](python/README.md) for the full feature list.
+Supports all three major BCI paradigms: motor imagery (CSP), SSVEP (CCA), and P300/ERP (xDAWN). Includes sklearn-compatible wrappers, spike sorting with template subtraction, XDF/EDF file readers, phase-amplitude coupling, entropy measures, ERSP, and Granger causality. See [`python/README.md`](python/README.md) for the full feature list.
+
+### Spike Sorting Accuracy
+
+Synthetic benchmarks with known ground truth (seed=42, 60s recordings, 30 kHz):
+
+| Preset | Ch | Units | Accuracy | Precision | Recall |
+|--------|----|-------|----------|-----------|--------|
+| easy   | 32 | 5     | **94.8%** | 99.1%    | 95.6%  |
+| medium | 32 | 10    | **57.1%** | 81.9%    | 65.3%  |
+| hard   | 64 | 20    | **25.1%** | 50.2%    | 33.4%  |
+
+Pipeline: noise estimation, spatial whitening, threshold detection, deduplication, peak alignment, PCA, online k-means, cluster merge/split, template subtraction with per-spike amplitude scaling, SNR auto-curation. See [`benchmarks/benchmark_results.md`](benchmarks/benchmark_results.md) for analysis.
 
 ### BCI Competition IV 2a Results
 
