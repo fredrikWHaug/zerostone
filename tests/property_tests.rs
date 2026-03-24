@@ -1547,4 +1547,139 @@ proptest! {
             }
         }
     }
+
+    // ---------------------------------------------------------------
+    // Template subtraction + spatial merge properties
+    // ---------------------------------------------------------------
+
+    /// sort_multichannel with template_subtract=true produces valid labels
+    /// (all labels < n_clusters).
+    #[test]
+    fn sort_template_subtract_labels_valid(
+        seed in 0u64..100,
+    ) {
+        use zerostone::sorter::SortConfig;
+        use zerostone::probe::ProbeLayout;
+        use zerostone::spike_sort::MultiChannelEvent;
+
+        // Build deterministic noisy data with an injected spike
+        let probe = ProbeLayout::<2>::linear(25.0);
+        let n = 256;
+        let mut data: Vec<[f64; 2]> = Vec::with_capacity(n);
+        let mut xor = seed | 1;
+        for i in 0..n {
+            xor ^= xor << 13;
+            xor ^= xor >> 7;
+            xor ^= xor << 17;
+            let v0 = (xor as f64) / (u64::MAX as f64) * 2.0 - 1.0;
+            xor ^= xor << 13;
+            xor ^= xor >> 7;
+            xor ^= xor << 17;
+            let v1 = (xor as f64) / (u64::MAX as f64) * 2.0 - 1.0;
+            // Inject spike-like feature at sample 128
+            let spike = if (120..140).contains(&i) {
+                -8.0 * (-(((i as f64) - 130.0) / 3.0).powi(2)).exp()
+            } else {
+                0.0
+            };
+            data.push([v0 + spike, v1]);
+        }
+
+        let config = SortConfig {
+            template_subtract: true,
+            ..SortConfig::default()
+        };
+        let max_events = n / config.refractory_samples.max(1) + 2;
+        let mut scratch = vec![0.0f64; n];
+        let mut events = vec![
+            MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 };
+            max_events
+        ];
+        let mut waveforms = vec![[0.0f64; 48]; max_events];
+        let mut features = vec![[0.0f64; 4]; max_events];
+        let mut labels = vec![0usize; max_events];
+
+        let result = zerostone::sorter::sort_multichannel::<2, 4, 48, 4, 2304, 32>(
+            &config, &probe, &mut data, &mut scratch,
+            &mut events, &mut waveforms, &mut features, &mut labels,
+        );
+
+        if let Ok(sr) = result {
+            for &l in labels[..sr.n_spikes].iter() {
+                prop_assert!(l < sr.n_clusters.max(1),
+                    "label {} must be < n_clusters {}", l, sr.n_clusters);
+            }
+        }
+    }
+
+    /// merge_clusters_spatial never increases the cluster count.
+    #[test]
+    fn spatial_merge_never_increases_clusters(
+        n_clusters in 2usize..6,
+        n_spikes in 4usize..20,
+    ) {
+        use zerostone::sorter::merge_clusters_spatial;
+        use zerostone::spike_sort::MultiChannelEvent;
+        use zerostone::probe::ProbeLayout;
+
+        let probe = ProbeLayout::<2>::linear(25.0);
+        let data: Vec<[f64; 2]> = (0..100).map(|i| [(i as f64) * 0.01, (i as f64) * -0.01]).collect();
+        let mut labels: Vec<usize> = (0..n_spikes).map(|i| i % n_clusters).collect();
+        let events: Vec<MultiChannelEvent> = (0..n_spikes)
+            .map(|i| MultiChannelEvent {
+                sample: (i * 5 + 10).min(99),
+                channel: i % 2,
+                amplitude: 5.0,
+            })
+            .collect();
+        let mut scratch = vec![0.0f64; n_spikes];
+
+        let new_n = merge_clusters_spatial::<2>(
+            n_spikes, &mut labels, &data, &events, &probe,
+            n_clusters, 1.5, 75.0, 0.05, 15, &mut scratch,
+        );
+        prop_assert!(new_n <= n_clusters,
+            "spatial merge output {} must be <= input {}", new_n, n_clusters);
+    }
+
+    /// Lowering the d-prime threshold for spatial merge should merge at least as
+    /// many clusters as a higher threshold (monotonicity).
+    #[test]
+    fn spatial_merge_monotone_in_threshold(
+        n_clusters in 2usize..6,
+    ) {
+        use zerostone::sorter::merge_clusters_spatial;
+        use zerostone::spike_sort::MultiChannelEvent;
+        use zerostone::probe::ProbeLayout;
+
+        let probe = ProbeLayout::<2>::linear(25.0);
+        let n_spikes = 16;
+        let data: Vec<[f64; 2]> = (0..100).map(|i| [(i as f64) * 0.01, (i as f64) * -0.01]).collect();
+        let events: Vec<MultiChannelEvent> = (0..n_spikes)
+            .map(|i| MultiChannelEvent {
+                sample: (i * 5 + 10).min(99),
+                channel: i % 2,
+                amplitude: 5.0,
+            })
+            .collect();
+
+        // High threshold (less merging)
+        let mut labels_high: Vec<usize> = (0..n_spikes).map(|i| i % n_clusters).collect();
+        let mut scratch_high = vec![0.0f64; n_spikes];
+        let n_high = merge_clusters_spatial::<2>(
+            n_spikes, &mut labels_high, &data, &events, &probe,
+            n_clusters, 5.0, 75.0, 0.05, 15, &mut scratch_high,
+        );
+
+        // Low threshold (more merging)
+        let mut labels_low: Vec<usize> = (0..n_spikes).map(|i| i % n_clusters).collect();
+        let mut scratch_low = vec![0.0f64; n_spikes];
+        let n_low = merge_clusters_spatial::<2>(
+            n_spikes, &mut labels_low, &data, &events, &probe,
+            n_clusters, 0.5, 75.0, 0.05, 15, &mut scratch_low,
+        );
+
+        prop_assert!(n_low <= n_high,
+            "lower dprime threshold should merge more: n_low={} > n_high={}", n_low, n_high);
+    }
 }
