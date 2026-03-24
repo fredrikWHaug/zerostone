@@ -2047,6 +2047,218 @@ mod kani_proofs {
         assert!(cfg.split_min_cluster_size > 0);
         assert!(cfg.split_bimodality_threshold > 0.0);
     }
+
+    /// Prove that for any finite data and template values, the per-spike
+    /// amplitude scaling alpha = (dot / norms_sq).clamp(0.3, 3.0) is always
+    /// finite and within [0.3, 3.0].
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn verify_amplitude_scaling_finite() {
+        // C=2, W=4, N=2
+        // Build arbitrary finite data and template values
+        let d0: f64 = kani::any();
+        let d1: f64 = kani::any();
+        let d2: f64 = kani::any();
+        let d3: f64 = kani::any();
+        let t0: f64 = kani::any();
+        let t1: f64 = kani::any();
+        let t2: f64 = kani::any();
+        let t3: f64 = kani::any();
+
+        kani::assume(d0.is_finite() && d0 >= -1e6 && d0 <= 1e6);
+        kani::assume(d1.is_finite() && d1 >= -1e6 && d1 <= 1e6);
+        kani::assume(d2.is_finite() && d2 >= -1e6 && d2 <= 1e6);
+        kani::assume(d3.is_finite() && d3 >= -1e6 && d3 <= 1e6);
+        kani::assume(t0.is_finite() && t0 >= -1e6 && t0 <= 1e6);
+        kani::assume(t1.is_finite() && t1 >= -1e6 && t1 <= 1e6);
+        kani::assume(t2.is_finite() && t2 >= -1e6 && t2 <= 1e6);
+        kani::assume(t3.is_finite() && t3 >= -1e6 && t3 <= 1e6);
+
+        let data = [d0, d1, d2, d3];
+        let template = [t0, t1, t2, t3];
+
+        // Compute norms_sq (same as subtract_templates_multichannel)
+        let mut norms_sq = 0.0f64;
+        for val in template.iter() {
+            norms_sq += val * val;
+        }
+
+        // Compute dot product (same as subtract_templates_multichannel)
+        let mut dot = 0.0f64;
+        for w in 0..4 {
+            dot += data[w] * template[w];
+        }
+
+        // Compute alpha (same logic as in subtract_templates_multichannel)
+        let alpha = if norms_sq > 1e-30 {
+            (dot / norms_sq).clamp(0.3, 3.0)
+        } else {
+            1.0
+        };
+
+        assert!(alpha.is_finite(), "alpha must be finite");
+        assert!(alpha >= 0.3, "alpha must be >= 0.3");
+        assert!(alpha <= 3.0, "alpha must be <= 3.0");
+    }
+
+    /// Prove that `subtract_templates_multichannel` never panics for valid
+    /// inputs (valid label indices, valid channel indices). C=2, W=4, N=2.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn verify_subtract_templates_no_panic() {
+        // Build small arbitrary data: 6 time samples x 2 channels
+        let mut data = [[0.0f64; 2]; 6];
+        let d0: f64 = kani::any();
+        let d1: f64 = kani::any();
+        let d2: f64 = kani::any();
+        let d3: f64 = kani::any();
+        kani::assume(d0.is_finite() && d0 >= -1e3 && d0 <= 1e3);
+        kani::assume(d1.is_finite() && d1 >= -1e3 && d1 <= 1e3);
+        kani::assume(d2.is_finite() && d2 >= -1e3 && d2 <= 1e3);
+        kani::assume(d3.is_finite() && d3 >= -1e3 && d3 <= 1e3);
+        data[2][0] = d0;
+        data[3][0] = d1;
+        data[2][1] = d2;
+        data[3][1] = d3;
+
+        // Template means: 2 clusters, W=4 each
+        let m0: f64 = kani::any();
+        let m1: f64 = kani::any();
+        kani::assume(m0.is_finite() && m0 >= -1e3 && m0 <= 1e3);
+        kani::assume(m1.is_finite() && m1 >= -1e3 && m1 <= 1e3);
+        let means: [[f64; 4]; 2] = [[m0, m1, 0.5, -0.5], [0.3, -0.3, m0, m1]];
+
+        // Spike events: 2 spikes
+        let s0: usize = kani::any();
+        let s1: usize = kani::any();
+        let ch0: usize = kani::any();
+        let ch1: usize = kani::any();
+        let l0: usize = kani::any();
+        let l1: usize = kani::any();
+
+        kani::assume(s0 < 6 && s1 < 6);
+        kani::assume(ch0 < 2 && ch1 < 2);
+        kani::assume(l0 < 2 && l1 < 2);
+
+        let events = [
+            crate::spike_sort::MultiChannelEvent {
+                sample: s0,
+                channel: ch0,
+                amplitude: 5.0,
+            },
+            crate::spike_sort::MultiChannelEvent {
+                sample: s1,
+                channel: ch1,
+                amplitude: 5.0,
+            },
+        ];
+        let labels = [l0, l1];
+        let counts: [u32; 2] = [5, 5];
+        let peak_channels: [usize; 2] = [ch0, ch1];
+
+        subtract_templates_multichannel::<2, 4, 2>(
+            &mut data,
+            &events,
+            2,
+            &labels,
+            &means,
+            &counts,
+            &peak_channels,
+            1, // min_count
+            1, // pre_samples
+        );
+        // If we reach here, the function did not panic
+    }
+
+    /// Prove that `merge_clusters` output n_clusters <= input n_clusters.
+    /// K=3 feature dimensions, 3 input clusters.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn verify_merge_clusters_count_bounded() {
+        let l0: usize = kani::any();
+        let l1: usize = kani::any();
+        let l2: usize = kani::any();
+        let l3: usize = kani::any();
+        let l4: usize = kani::any();
+        let l5: usize = kani::any();
+
+        kani::assume(l0 < 3 && l1 < 3 && l2 < 3);
+        kani::assume(l3 < 3 && l4 < 3 && l5 < 3);
+
+        let mut labels = [l0, l1, l2, l3, l4, l5];
+
+        // Arbitrary feature values for 6 spikes with K=3 dimensions
+        let f0: f64 = kani::any();
+        let f1: f64 = kani::any();
+        kani::assume(f0.is_finite() && f0 >= -1e3 && f0 <= 1e3);
+        kani::assume(f1.is_finite() && f1 >= -1e3 && f1 <= 1e3);
+
+        let features = [
+            [f0, 0.0, 0.0],
+            [f1, 0.0, 0.0],
+            [0.0, f0, 0.0],
+            [0.0, f1, 0.0],
+            [0.0, 0.0, f0],
+            [0.0, 0.0, f1],
+        ];
+        let events = [
+            crate::spike_sort::MultiChannelEvent {
+                sample: 100,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            crate::spike_sort::MultiChannelEvent {
+                sample: 200,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            crate::spike_sort::MultiChannelEvent {
+                sample: 300,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            crate::spike_sort::MultiChannelEvent {
+                sample: 400,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            crate::spike_sort::MultiChannelEvent {
+                sample: 500,
+                channel: 0,
+                amplitude: 5.0,
+            },
+            crate::spike_sort::MultiChannelEvent {
+                sample: 600,
+                channel: 0,
+                amplitude: 5.0,
+            },
+        ];
+        let mut scratch = [0.0f64; 6];
+
+        let dp_thresh: f64 = kani::any();
+        let isi_thresh: f64 = kani::any();
+        kani::assume(dp_thresh.is_finite() && dp_thresh >= 0.0 && dp_thresh <= 100.0);
+        kani::assume(isi_thresh.is_finite() && isi_thresh >= 0.0 && isi_thresh <= 1.0);
+
+        let input_n: usize = 3;
+        let output_n = merge_clusters::<3>(
+            6,
+            &mut labels,
+            &features,
+            &events,
+            input_n,
+            dp_thresh,
+            isi_thresh,
+            15,
+            &mut scratch,
+            3,
+        );
+        assert!(output_n <= input_n, "merge must not increase cluster count");
+        assert!(
+            output_n >= 1 || input_n == 0,
+            "merge must preserve at least 1 cluster"
+        );
+    }
 }
 
 #[cfg(test)]
