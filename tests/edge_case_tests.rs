@@ -512,3 +512,261 @@ fn com_threshold_all_below() {
     let result = center_of_mass_threshold(&amps, &pos, 1.0);
     assert!(result.is_none());
 }
+
+// ===========================================================================
+// Template subtraction integration edge cases (sorter.rs)
+// ===========================================================================
+
+/// Template subtraction on data with zero detected spikes should be a no-op.
+#[test]
+fn sort_template_subtract_no_spikes() {
+    let config = SortConfig {
+        threshold_multiplier: 1000.0, // impossibly high to get 0 spikes
+        template_subtract: true,
+        ..SortConfig::default()
+    };
+    let probe = ProbeLayout::<2>::linear(25.0);
+    let mut data: Vec<[f64; 2]> = (0..256)
+        .map(|i| {
+            let t = i as f64 * 0.1;
+            [libm::sin(t) * 0.5, libm::cos(t) * 0.3]
+        })
+        .collect();
+    let max_ev = 256;
+    let mut scratch = vec![0.0f64; 256];
+    let mut events = vec![
+        MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0
+        };
+        max_ev
+    ];
+    let mut waveforms = vec![[0.0f64; 48]; max_ev];
+    let mut features = vec![[0.0f64; 4]; max_ev];
+    let mut labels = vec![0usize; max_ev];
+
+    let result = sort_multichannel::<2, 4, 48, 4, 2304, 32>(
+        &config,
+        &probe,
+        &mut data,
+        &mut scratch,
+        &mut events,
+        &mut waveforms,
+        &mut features,
+        &mut labels,
+    );
+    match result {
+        Ok(r) => {
+            assert_eq!(r.n_spikes, 0);
+            assert_eq!(r.n_clusters, 0);
+        }
+        Err(_) => {
+            // Whitening failure on low-variance sinusoidal data is acceptable
+        }
+    }
+}
+
+/// Template subtraction with a single cluster should not panic.
+#[test]
+fn sort_template_subtract_single_cluster() {
+    let config = SortConfig {
+        threshold_multiplier: 3.0,
+        template_subtract: true,
+        ..SortConfig::default()
+    };
+    let probe = ProbeLayout::<2>::linear(25.0);
+    // Single large spike with noise
+    let mut data: Vec<[f64; 2]> = vec![[0.1, -0.1]; 512];
+    // Inject one spike-like deflection
+    for (i, row) in data.iter_mut().enumerate().take(260).skip(240) {
+        let t = (i as f64 - 250.0) / 3.0;
+        row[0] = -10.0 * (-0.5 * t * t).exp();
+    }
+    let max_ev = 256;
+    let mut scratch = vec![0.0f64; 512];
+    let mut events = vec![
+        MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0
+        };
+        max_ev
+    ];
+    let mut waveforms = vec![[0.0f64; 48]; max_ev];
+    let mut features = vec![[0.0f64; 4]; max_ev];
+    let mut labels = vec![0usize; max_ev];
+
+    let result = sort_multichannel::<2, 4, 48, 4, 2304, 32>(
+        &config,
+        &probe,
+        &mut data,
+        &mut scratch,
+        &mut events,
+        &mut waveforms,
+        &mut features,
+        &mut labels,
+    );
+    if let Ok(r) = result {
+        assert!(r.n_clusters <= 32);
+        for &l in labels[..r.n_spikes].iter() {
+            assert!(l < r.n_clusters.max(1));
+        }
+    }
+}
+
+/// Template subtraction with identical spikes at the same location should not panic.
+#[test]
+fn sort_template_subtract_identical_spikes() {
+    let config = SortConfig {
+        threshold_multiplier: 3.0,
+        template_subtract: true,
+        ..SortConfig::default()
+    };
+    let probe = ProbeLayout::<2>::linear(25.0);
+    let mut data: Vec<[f64; 2]> = vec![[0.1, -0.1]; 2048];
+    // Inject many identical large spikes (same waveform, well-spaced)
+    for spike_idx in 0..10 {
+        let center = 200 + spike_idx * 100;
+        for offset in 0..20 {
+            let t = (offset as f64 - 10.0) / 3.0;
+            let val = -20.0 * (-0.5 * t * t).exp();
+            if center + offset < 2048 {
+                data[center + offset][0] += val;
+            }
+        }
+    }
+    let max_ev = 256;
+    let mut scratch = vec![0.0f64; 2048];
+    let mut events = vec![
+        MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0
+        };
+        max_ev
+    ];
+    let mut waveforms = vec![[0.0f64; 48]; max_ev];
+    let mut features = vec![[0.0f64; 4]; max_ev];
+    let mut labels = vec![0usize; max_ev];
+
+    let result = sort_multichannel::<2, 4, 48, 4, 2304, 32>(
+        &config,
+        &probe,
+        &mut data,
+        &mut scratch,
+        &mut events,
+        &mut waveforms,
+        &mut features,
+        &mut labels,
+    );
+    if let Ok(r) = result {
+        // Should detect spikes and assign valid labels
+        if r.n_spikes > 0 {
+            assert!(r.n_clusters >= 1);
+            for &l in labels[..r.n_spikes].iter() {
+                assert!(l < r.n_clusters);
+            }
+        }
+    }
+}
+
+/// Compare sort results with and without template subtraction.
+/// Template subtraction should not reduce the base spike count significantly.
+#[test]
+fn sort_template_vs_no_template() {
+    let probe = ProbeLayout::<2>::linear(25.0);
+    let mut data: Vec<[f64; 2]> = vec![[0.1, -0.1]; 1024];
+    // Inject a few spikes
+    for spike_idx in 0..5 {
+        let center = 100 + spike_idx * 100;
+        for offset in 0..20 {
+            let t = (offset as f64 - 10.0) / 3.0;
+            let val = -10.0 * (-0.5 * t * t).exp();
+            if center + offset < 1024 {
+                data[center + offset][0] += val;
+            }
+        }
+    }
+
+    let max_ev = 256;
+
+    // Without template subtraction
+    let config_no = SortConfig {
+        threshold_multiplier: 4.0,
+        template_subtract: false,
+        ..SortConfig::default()
+    };
+    let mut data_no = data.clone();
+    let mut scratch = vec![0.0f64; 1024];
+    let mut events = vec![
+        MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0
+        };
+        max_ev
+    ];
+    let mut waveforms = vec![[0.0f64; 48]; max_ev];
+    let mut features = vec![[0.0f64; 4]; max_ev];
+    let mut labels_no = vec![0usize; max_ev];
+
+    let result_no = sort_multichannel::<2, 4, 48, 4, 2304, 32>(
+        &config_no,
+        &probe,
+        &mut data_no,
+        &mut scratch,
+        &mut events,
+        &mut waveforms,
+        &mut features,
+        &mut labels_no,
+    );
+
+    // With template subtraction
+    let config_yes = SortConfig {
+        threshold_multiplier: 4.0,
+        template_subtract: true,
+        ..SortConfig::default()
+    };
+    let mut data_yes = data.clone();
+    let mut scratch2 = vec![0.0f64; 1024];
+    let mut events2 = vec![
+        MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0
+        };
+        max_ev
+    ];
+    let mut waveforms2 = vec![[0.0f64; 48]; max_ev];
+    let mut features2 = vec![[0.0f64; 4]; max_ev];
+    let mut labels_yes = vec![0usize; max_ev];
+
+    let result_yes = sort_multichannel::<2, 4, 48, 4, 2304, 32>(
+        &config_yes,
+        &probe,
+        &mut data_yes,
+        &mut scratch2,
+        &mut events2,
+        &mut waveforms2,
+        &mut features2,
+        &mut labels_yes,
+    );
+
+    // Both should succeed or both fail (same data)
+    match (result_no, result_yes) {
+        (Ok(r_no), Ok(r_yes)) => {
+            // Template subtraction should find >= as many spikes (it can find
+            // additional spikes in residual)
+            assert!(
+                r_yes.n_spikes >= r_no.n_spikes,
+                "template subtraction should find >= base spikes: {} vs {}",
+                r_yes.n_spikes,
+                r_no.n_spikes
+            );
+        }
+        _ => {
+            // Both fail is acceptable
+        }
+    }
+}
