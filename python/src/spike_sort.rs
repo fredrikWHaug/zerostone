@@ -1290,8 +1290,8 @@ fn combine_features<'py>(
         }
     }
 
-    let arr = Array2::from_shape_vec((n, t), output)
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let arr =
+        Array2::from_shape_vec((n, t), output).map_err(|e| PyValueError::new_err(e.to_string()))?;
     Ok(PyArray2::from_owned_array(py, arr))
 }
 
@@ -1337,10 +1337,7 @@ fn extract_spatial_features<'py>(
             let typed_data: &[[f64; $c]] = {
                 assert!(data_slice.len() == n_samples * $c);
                 unsafe {
-                    core::slice::from_raw_parts(
-                        data_slice.as_ptr() as *const [f64; $c],
-                        n_samples,
-                    )
+                    core::slice::from_raw_parts(data_slice.as_ptr() as *const [f64; $c], n_samples)
                 }
             };
             let mut pos_arr = [[0.0f64; 2]; $c];
@@ -1350,7 +1347,11 @@ fn extract_spatial_features<'py>(
             }
             let mut output = vec![[0.0f64; 2]; n_events];
             let n = zs::extract_spatial_features::<$c>(
-                typed_data, &ev, n_events, &pos_arr, &mut output,
+                typed_data,
+                &ev,
+                n_events,
+                &pos_arr,
+                &mut output,
             );
             let mut flat = Vec::with_capacity(n * 2);
             for i in 0..n {
