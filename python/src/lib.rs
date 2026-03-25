@@ -33,11 +33,12 @@ mod probe;
 mod quality;
 mod resampling;
 mod riemannian;
-mod spatial;
 mod sorter;
+mod spatial;
 mod spectral;
 mod spike_sort;
 mod stats;
+mod streaming;
 mod sync;
 mod template_subtract;
 mod utils;
@@ -505,6 +506,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Drift estimation
     drift::register(m)?;
+
+    // Streaming sorter
+    streaming::register(m)?;
 
     // Window functions
     window::register(m)?;
