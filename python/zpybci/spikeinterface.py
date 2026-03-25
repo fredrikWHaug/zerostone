@@ -80,7 +80,7 @@ def _recording_to_numpy(recording):
     return np.ascontiguousarray(traces, dtype=np.float64), recording.get_sampling_frequency()
 
 
-_SUPPORTED_CHANNELS = {2, 4, 8, 16, 32, 64}
+_SUPPORTED_CHANNELS = {4, 8, 16, 32, 64, 128}
 
 _DEFAULT_PARAMS = {
     "threshold": 5.0,
@@ -93,6 +93,9 @@ _DEFAULT_PARAMS = {
     "cluster_max_count": 1000,
     "whitening_epsilon": 1e-6,
     "probe_pitch": 25.0,
+    "detection_mode": "amplitude",
+    "sneo_smooth_window": 3,
+    "ccg_merge": False,
 }
 
 _PARAM_DESCRIPTIONS = {
@@ -106,6 +109,9 @@ _PARAM_DESCRIPTIONS = {
     "cluster_max_count": "Maximum observation count per cluster centroid.",
     "whitening_epsilon": "Regularization for whitening eigenvalues.",
     "probe_pitch": "Inter-electrode pitch in micrometers (for linear probe fallback).",
+    "detection_mode": "Detection mode: 'amplitude', 'neo', or 'sneo'.",
+    "sneo_smooth_window": "SNEO smoothing window (only for detection_mode='sneo').",
+    "ccg_merge": "Enable CCG-based cluster merging to reduce over-splitting.",
 }
 
 
@@ -186,6 +192,9 @@ def _sort_recording(recording, params):
         cluster_threshold=params["cluster_threshold"],
         cluster_max_count=params["cluster_max_count"],
         whitening_epsilon=params["whitening_epsilon"],
+        detection_mode=params["detection_mode"],
+        sneo_smooth_window=params["sneo_smooth_window"],
+        ccg_merge=params["ccg_merge"],
     )
 
     n_spikes = sort_result["n_spikes"]

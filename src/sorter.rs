@@ -1437,12 +1437,18 @@ fn assign_to_nearest_template<const W: usize, const N: usize>(
         if counts[c] == 0 {
             continue;
         }
+        // Early-exit squared distance: bail if partial sum exceeds current best
         let mut dist = 0.0;
+        let mut bail = false;
         for w in 0..W {
             let d = waveform[w] - means[c][w];
             dist += d * d;
+            if dist > best_dist {
+                bail = true;
+                break;
+            }
         }
-        if dist < best_dist {
+        if !bail && dist < best_dist {
             best_dist = dist;
             best = c;
         }
@@ -1608,28 +1614,51 @@ pub fn sort_multichannel<
                     ch += 1;
                     continue;
                 }
-                // Threshold for NEO/SNEO energy signal.
-                // After whitening, per-channel noise ~ N(0,1).
-                // NEO[n] = x[n]^2 - x[n-1]*x[n+1].
-                // For unit-variance Gaussian: mean(NEO) ~ 1, std(NEO) ~ sqrt(6).
-                // We estimate both from the data to handle non-ideal whitening.
-                // Threshold = mean + T * std (same semantics as amplitude mode).
+                // Threshold via robust percentile estimation (median + MAD).
+                // Use first min(n_energy, 2000) samples as calibration window.
+                // Median and MAD resist spike contamination (50% breakdown).
+                // thresh = median + T * MAD / 0.6745
                 let energy = &dst[..n_energy];
-                let mut esum = 0.0;
-                let mut esum2 = 0.0;
-                for &v in energy.iter() {
-                    esum += v;
-                    esum2 += v * v;
-                }
-                let (emean, estd) = if n_energy > 1 {
-                    let m = esum / n_energy as f64;
-                    let var = esum2 / n_energy as f64 - m * m;
-                    let s = if var > 0.0 { libm::sqrt(var) } else { 1.0 };
-                    (m, s)
+                const CAL_LEN: usize = 2000;
+                let cal_n = if n_energy < CAL_LEN {
+                    n_energy
                 } else {
-                    (1.0, 1.0)
+                    CAL_LEN
                 };
-                let thresh = emean + config.threshold_multiplier * estd;
+                let mut cal_buf = [0.0f64; CAL_LEN];
+                let mut ci = 0;
+                while ci < cal_n {
+                    cal_buf[ci] = energy[ci];
+                    ci += 1;
+                }
+                cal_buf[..cal_n].sort_unstable_by(|a, b| {
+                    a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
+                });
+                let median = if cal_n < 2 {
+                    1.0
+                } else if cal_n % 2 == 1 {
+                    cal_buf[cal_n / 2]
+                } else {
+                    (cal_buf[cal_n / 2 - 1] + cal_buf[cal_n / 2]) * 0.5
+                };
+                // MAD = median(|x - median|)
+                ci = 0;
+                while ci < cal_n {
+                    cal_buf[ci] = libm::fabs(cal_buf[ci] - median);
+                    ci += 1;
+                }
+                cal_buf[..cal_n].sort_unstable_by(|a, b| {
+                    a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
+                });
+                let mad = if cal_n < 2 {
+                    1.0
+                } else if cal_n % 2 == 1 {
+                    cal_buf[cal_n / 2]
+                } else {
+                    (cal_buf[cal_n / 2 - 1] + cal_buf[cal_n / 2]) * 0.5
+                };
+                let sigma = if mad > 0.0 { mad / 0.6745 } else { 1.0 };
+                let thresh = median + config.threshold_multiplier * sigma;
                 // Detect positive threshold crossings on energy signal
                 // (NEO/SNEO output is positive for spikes)
                 let mut i = 0;
@@ -1974,12 +2003,28 @@ pub fn sort_multichannel<
         // for template-shaped waveforms using normalized cross-correlation.
         // This recovers weak units (SNR 2-4) that fall below the amplitude
         // threshold but whose waveform shape matches a known template.
+        //
+        // Optimizations over naive sliding:
+        // - Sorted spike times + binary search for overlap check (O(log n) vs O(n))
+        // - Early amplitude check before expensive NCC computation
+        // - Adaptive step: skip by W/2 when amplitude is negligible
         let remaining_ncc = event_buf.len().saturating_sub(n_extracted);
         let remaining_wf_ncc = waveform_buf.len().saturating_sub(n_extracted);
         if remaining_ncc > 0 && remaining_wf_ncc > 0 {
             let ncc_threshold = 0.7;
             let half_thresh = config.threshold_multiplier * 0.5;
             let mut n_ncc_found = 0usize;
+
+            // Build sorted spike sample indices for binary search overlap check.
+            // Reuse scratch buffer (already available, large enough for spike times).
+            let n_existing = n_extracted;
+            let sorted_times_n = n_existing.min(scratch.len());
+            for i in 0..sorted_times_n {
+                scratch[i] = event_buf[i].sample as f64;
+            }
+            scratch[..sorted_times_n]
+                .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+            let overlap_radius = (config.temporal_radius + W / 2) as f64;
 
             for c in 0..n_clusters.min(N) {
                 if (tmpl_counts[c] as usize) < config.template_min_count {
@@ -1998,20 +2043,40 @@ pub fn sort_multichannel<
                 if t_norm < 1e-15 {
                     continue;
                 }
+                // NCC threshold squared for early rejection:
+                // ncc = dot / (r_norm * t_norm) > thresh  iff  dot^2 > thresh^2 * r_norm_sq * t_norm_sq
+                let ncc_thresh_sq = ncc_threshold * ncc_threshold;
+                let t_norm_sq_thresh = ncc_thresh_sq * t_norm_sq;
 
                 // Slide template across residual on peak channel
                 let pre = config.pre_samples;
                 let step = config.refractory_samples.max(W / 2);
                 let mut pos = pre;
                 while pos + W <= t_len {
-                    // Check if this position overlaps an existing spike
-                    let mut overlaps = false;
-                    for ev in event_buf.iter().take(n_extracted + n_ncc_found) {
-                        if pos.abs_diff(ev.sample) <= config.temporal_radius + W / 2 {
-                            overlaps = true;
-                            break;
+                    // Early amplitude check: if peak sample is negligible, skip ahead
+                    let peak_amp = libm::fabs(data[pos][ch]);
+                    if peak_amp < half_thresh {
+                        // Adaptive step: skip more aggressively in quiet regions
+                        pos += W / 4;
+                        continue;
+                    }
+
+                    // Binary search overlap check on sorted spike times
+                    let pos_f = pos as f64;
+                    let lo = pos_f - overlap_radius;
+                    let hi = pos_f + overlap_radius;
+                    // Find first spike time >= lo
+                    let mut left = 0usize;
+                    let mut right = sorted_times_n;
+                    while left < right {
+                        let mid = left + (right - left) / 2;
+                        if scratch[mid] < lo {
+                            left = mid + 1;
+                        } else {
+                            right = mid;
                         }
                     }
+                    let overlaps = left < sorted_times_n && scratch[left] <= hi;
                     if overlaps {
                         pos += step;
                         continue;
@@ -2026,6 +2091,13 @@ pub fn sort_multichannel<
                         dot += rv * tmpl_means[c][w];
                         r_norm_sq += rv * rv;
                     }
+
+                    // Early rejection: dot^2 < thresh^2 * r_norm_sq * t_norm_sq means ncc < threshold
+                    if dot * dot < t_norm_sq_thresh * r_norm_sq || dot <= 0.0 {
+                        pos += 1;
+                        continue;
+                    }
+
                     let r_norm = libm::sqrt(r_norm_sq);
                     let ncc = if r_norm > 1e-15 {
                         dot / (r_norm * t_norm)
@@ -2033,10 +2105,7 @@ pub fn sort_multichannel<
                         0.0
                     };
 
-                    // Also check the residual has meaningful energy (above half threshold)
-                    let peak_amp = libm::fabs(data[pos][ch]);
-
-                    if ncc > ncc_threshold && peak_amp > half_thresh {
+                    if ncc > ncc_threshold {
                         let idx = n_extracted + n_ncc_found;
                         if idx < event_buf.len() && idx < waveform_buf.len() && idx < labels.len() {
                             event_buf[idx] = MultiChannelEvent {

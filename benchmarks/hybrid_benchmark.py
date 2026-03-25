@@ -32,7 +32,9 @@ except ImportError:
 from zpybci.spikeinterface import run_zerostone
 
 
-def run_benchmark(num_channels, num_units, duration_s, seed, threshold):
+def run_benchmark(num_channels, num_units, duration_s, seed, threshold,
+                  detection_mode="amplitude", sneo_smooth_window=3,
+                  ccg_merge=False):
     """Run a single benchmark configuration.
 
     Parameters
@@ -47,14 +49,24 @@ def run_benchmark(num_channels, num_units, duration_s, seed, threshold):
         Random seed.
     threshold : float
         Detection threshold in MAD units.
+    detection_mode : str
+        Detection mode: "amplitude", "neo", or "sneo".
+    sneo_smooth_window : int
+        SNEO smoothing window size.
+    ccg_merge : bool
+        Enable CCG-based cluster merging.
 
     Returns
     -------
     dict
         Benchmark results with accuracy metrics.
     """
+    mode_str = detection_mode
+    if ccg_merge:
+        mode_str += "+ccg"
+
     print(f"\n{'=' * 60}")
-    print(f"  SpikeInterface Hybrid Benchmark")
+    print(f"  SpikeInterface Hybrid Benchmark (detection={mode_str})")
     print(f"  {num_channels} channels, {num_units} units, {duration_s}s, seed={seed}")
     print(f"{'=' * 60}")
 
@@ -96,6 +108,9 @@ def run_benchmark(num_channels, num_units, duration_s, seed, threshold):
         threshold=threshold,
         align_half_window=15,
         pre_samples=20,
+        detection_mode=detection_mode,
+        sneo_smooth_window=sneo_smooth_window,
+        ccg_merge=ccg_merge,
     )
     t_sort = time.time() - t0
     zs_units = sorting_zs.get_unit_ids()
@@ -183,6 +198,23 @@ def main():
         action="store_true",
         help="Run easy (5 units), medium (10 units), hard (20 units)",
     )
+    parser.add_argument(
+        "--detection-mode",
+        choices=["amplitude", "neo", "sneo"],
+        default="amplitude",
+        help="Detection mode (default: amplitude).",
+    )
+    parser.add_argument(
+        "--sneo-smooth-window",
+        type=int,
+        default=3,
+        help="SNEO smoothing window (default: 3).",
+    )
+    parser.add_argument(
+        "--ccg-merge",
+        action="store_true",
+        help="Enable CCG-based cluster merging.",
+    )
     args = parser.parse_args()
 
     results = []
@@ -199,6 +231,9 @@ def main():
                 duration_s=args.duration,
                 seed=args.seed,
                 threshold=cfg["threshold"],
+                detection_mode=args.detection_mode,
+                sneo_smooth_window=args.sneo_smooth_window,
+                ccg_merge=args.ccg_merge,
             )
             results.append(r)
 
@@ -222,6 +257,9 @@ def main():
             duration_s=args.duration,
             seed=args.seed,
             threshold=args.threshold,
+            detection_mode=args.detection_mode,
+            sneo_smooth_window=args.sneo_smooth_window,
+            ccg_merge=args.ccg_merge,
         )
 
 
