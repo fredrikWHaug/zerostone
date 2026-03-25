@@ -111,6 +111,8 @@ pub mod riemannian;
 mod rms;
 mod router;
 pub mod sorter;
+#[cfg(feature = "alloc")]
+pub mod sorter_dyn;
 pub mod spike_sort;
 mod stats;
 mod stft;

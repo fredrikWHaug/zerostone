@@ -43,7 +43,7 @@ class TestModuleImport:
         """Supported channel counts are defined."""
         from zpybci.spikeinterface import _SUPPORTED_CHANNELS
 
-        assert _SUPPORTED_CHANNELS == {2, 4, 8, 16, 32, 64}
+        assert _SUPPORTED_CHANNELS == {4, 8, 16, 32, 64, 128}
 
 
 class TestParameterValidation:
@@ -306,11 +306,11 @@ class TestRunZerostone:
         )
         assert hasattr(sorting, "get_unit_ids")
 
-    def test_two_channel_recording(self):
-        """Minimum supported channel count (2) works."""
+    def test_four_channel_recording(self):
+        """Minimum supported channel count (4) works."""
         from zpybci.spikeinterface import run_zerostone
 
-        recording = _make_recording(n_channels=2, duration=0.5)
+        recording = _make_recording(n_channels=4, duration=0.5)
         sorting = run_zerostone(recording, threshold=8.0)
         assert hasattr(sorting, "get_unit_ids")
 

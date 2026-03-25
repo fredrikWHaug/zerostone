@@ -27,7 +27,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///
 /// Args:
 ///     data (np.ndarray): 2D float64 array of shape ``(n_samples, n_channels)``.
-///         Supported channel counts: 2, 4, 8, 16, 32, 64.
+///         Supported channel counts: 2, 4, 8, 16, 32, 64, 128.
 ///     probe (ProbeLayout): Probe geometry for spatial deduplication.
 ///     threshold (float): Detection threshold in MAD units. Default: 5.0.
 ///     refractory (int): Minimum samples between detections per channel. Default: 15.
@@ -221,8 +221,9 @@ fn sort_multichannel<'py>(
         16 => do_sort!(16, 256),
         32 => do_sort!(32, 1024),
         64 => do_sort!(64, 4096),
+        128 => do_sort!(128, 16384),
         _ => Err(PyValueError::new_err(
-            "n_channels must be 2, 4, 8, 16, 32, or 64",
+            "n_channels must be 2, 4, 8, 16, 32, 64, or 128",
         )),
     }
 }
