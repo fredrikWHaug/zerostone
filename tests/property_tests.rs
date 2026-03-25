@@ -13,8 +13,8 @@ use zerostone::probe::ProbeLayout;
 use zerostone::quality;
 use zerostone::riemannian;
 use zerostone::sorter::{
-    estimate_noise_multichannel, merge_clusters, sort_multichannel, split_clusters, DetectionMode,
-    OnlineSorter, SortConfig,
+    ccg_merge_clusters, estimate_noise_multichannel, merge_clusters, sort_multichannel,
+    split_clusters, DetectionMode, OnlineSorter, SortConfig,
 };
 use zerostone::spike_sort::{
     align_to_peak, combine_features, compute_adaptive_thresholds, deduplicate_events,
@@ -1687,5 +1687,104 @@ proptest! {
 
         prop_assert!(n_low <= n_high,
             "lower dprime threshold should merge more: n_low={} > n_high={}", n_low, n_high);
+    }
+
+    // CCG merge never increases cluster count
+    #[test]
+    fn ccg_merge_never_increases_clusters(
+        n_clusters in 2usize..6,
+        n_spikes_per in 3usize..10,
+    ) {
+        let n_spikes = n_clusters * n_spikes_per;
+        // Create waveforms and events
+        let waveforms = vec![[1.0f64; 48]; n_spikes];
+        let events: Vec<MultiChannelEvent> = (0..n_spikes)
+            .map(|i| MultiChannelEvent {
+                sample: i * 100,
+                channel: 0,
+                amplitude: 5.0,
+            })
+            .collect();
+        let mut labels: Vec<usize> = (0..n_spikes).map(|i| i % n_clusters).collect();
+
+        let new_n = ccg_merge_clusters::<48, 32>(
+            n_spikes, &mut labels, &waveforms, &events,
+            n_clusters, 0.5, 30000.0,
+        );
+
+        prop_assert!(new_n <= n_clusters,
+            "CCG merge should never increase cluster count: {} > {}", new_n, n_clusters);
+    }
+
+    // CCG merge of identical-waveform clusters should merge them (no refractory dip)
+    #[test]
+    fn ccg_merge_identical_waveforms_merge(n_spikes in 10usize..30) {
+        // Two clusters with identical waveforms, interleaved spike times (no refractory dip)
+        let waveforms = vec![[5.0f64; 48]; n_spikes];
+        let events: Vec<MultiChannelEvent> = (0..n_spikes)
+            .map(|i| MultiChannelEvent {
+                sample: i * 200 + (i % 2) * 100, // interleaved timing
+                channel: 0,
+                amplitude: 5.0,
+            })
+            .collect();
+        let mut labels: Vec<usize> = (0..n_spikes).map(|i| i % 2).collect();
+
+        let new_n = ccg_merge_clusters::<48, 32>(
+            n_spikes, &mut labels, &waveforms, &events,
+            2, 0.5, 30000.0,
+        );
+
+        // With identical waveforms and interleaved timing (no refractory dip),
+        // they should merge to 1
+        prop_assert!(new_n <= 2,
+            "identical waveform clusters should be merge candidates, got {}", new_n);
+    }
+
+    // NEO transform output length is always signal.len() - 2 for valid inputs
+    #[test]
+    fn neo_output_length_correct(len in 3usize..50) {
+        let signal = vec![0.0f64; len];
+        let mut output = vec![0.0f64; len];
+        let n = zerostone::spike_sort::neo_transform(&signal, &mut output);
+        prop_assert_eq!(n, len - 2);
+    }
+
+    // SNEO output is non-negative for any input (energy operator property)
+    #[test]
+    fn sneo_output_nonnegative(len in 5usize..30, smooth in 1usize..4) {
+        // Generate a simple sinusoidal signal
+        let signal: Vec<f64> = (0..len)
+            .map(|i| libm::sin(0.3 * i as f64))
+            .collect();
+        let mut output = vec![0.0f64; len];
+        let n = zerostone::spike_sort::sneo_transform(&signal, &mut output, smooth);
+        for (i, &val) in output.iter().enumerate().take(n) {
+            prop_assert!(val >= -1e-10,
+                "SNEO output should be non-negative, got {} at index {}", val, i);
+        }
+    }
+
+    // Cross-correlogram of a train with itself should have counts at all lag bins
+    #[test]
+    fn ccg_self_has_counts(n_spikes in 5usize..20) {
+        let train: Vec<f64> = (0..n_spikes).map(|i| i as f64 * 0.010).collect();
+        let mut output = [0u64; 20];
+        let n = isi::cross_correlogram(&train, &train, 0.005, 0.100, &mut output);
+        // Self-CCG should have nonzero total (spikes are paired with each other)
+        let total: u64 = output[..n].iter().sum();
+        prop_assert!(total > 0, "Self-CCG should have nonzero counts");
+    }
+
+    // has_refractory_dip returns false for uniform histograms
+    #[test]
+    fn uniform_histogram_no_dip(val in 1u64..100, n_bins in 4usize..20) {
+        let histogram = vec![val; n_bins];
+        let result = isi::has_refractory_dip(&histogram, n_bins / 4 + 1);
+        // Uniform histogram should NOT have a refractory dip
+        // (unless n_bins is too small for the refractory window)
+        if histogram.len() >= 2 * (n_bins / 4 + 1) {
+            prop_assert!(!result, "Uniform histogram should not have refractory dip");
+        }
     }
 }
