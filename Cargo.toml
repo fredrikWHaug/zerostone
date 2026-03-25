@@ -7,6 +7,10 @@ license = "GPL-3.0"
 keywords = ["bci", "signal-processing", "dsp", "neuroscience", "no-std"]
 categories = ["science", "no-std::no-alloc", "embedded"]
 
+[features]
+default = []
+alloc = []
+
 [dependencies]
 libm = "0.2"
 
