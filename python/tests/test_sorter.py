@@ -466,3 +466,297 @@ class TestTemplateSubtraction:
         assert result["n_spikes"] >= 0
         if result["n_spikes"] > 0:
             assert np.all(result["labels"] < result["n_clusters"])
+
+
+class TestDetectionModes:
+    """Tests for NEO/SNEO detection modes."""
+
+    def test_amplitude_mode_accepted(self):
+        """Verify detection_mode='amplitude' is accepted."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(200)
+        data = rng.standard_normal((5000, 4))
+        data[1000, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, detection_mode="amplitude"
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_neo_mode_accepted(self):
+        """Verify detection_mode='neo' is accepted."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(201)
+        data = rng.standard_normal((5000, 4))
+        data[1000, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, detection_mode="neo"
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_sneo_mode_accepted(self):
+        """Verify detection_mode='sneo' is accepted."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(202)
+        data = rng.standard_normal((5000, 4))
+        data[1000, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, detection_mode="sneo", sneo_smooth_window=3
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_invalid_detection_mode_raises(self):
+        """Verify invalid detection_mode raises ValueError."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        data = np.random.randn(5000, 4)
+        try:
+            zbci.sort_multichannel(data, probe, detection_mode="invalid")
+            assert False, "Should have raised"
+        except ValueError:
+            pass
+
+    def test_sneo_smooth_window_param(self):
+        """Verify sneo_smooth_window parameter is accepted."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(203)
+        data = rng.standard_normal((5000, 4))
+        data[1000, 0] += -15.0
+        for w in [1, 3, 5, 7]:
+            result = zbci.sort_multichannel(
+                data.copy(), probe, threshold=4.0, detection_mode="sneo",
+                sneo_smooth_window=w
+            )
+            assert result["n_spikes"] >= 0
+
+    def test_sneo_detects_spikes(self):
+        """SNEO should detect clear spikes."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(204)
+        data = rng.standard_normal((5000, 4)) * 0.3
+        for t in range(500, 4500, 500):
+            data[t, 0] += -10.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, detection_mode="sneo"
+        )
+        assert result["n_spikes"] >= 1
+
+
+class TestCCGMerge:
+    """Tests for CCG-based cluster merging."""
+
+    def test_ccg_merge_flag_accepted(self):
+        """Verify ccg_merge parameter is accepted."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(300)
+        data = rng.standard_normal((5000, 4))
+        data[1000, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, ccg_merge=True
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_ccg_merge_disabled(self):
+        """Verify ccg_merge=False works (default)."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(301)
+        data = rng.standard_normal((5000, 4))
+        data[1000, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, ccg_merge=False
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_ccg_template_corr_threshold(self):
+        """Verify ccg_template_corr_threshold parameter is accepted."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(302)
+        data = rng.standard_normal((5000, 4))
+        for t in range(200, 4000, 200):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, ccg_merge=True,
+            ccg_template_corr_threshold=0.3
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_ccg_merge_reduces_clusters(self):
+        """CCG merge with low threshold should merge at least as many as without."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(303)
+        data = rng.standard_normal((8000, 4)) * 0.5
+        for t in range(200, 7000, 200):
+            data[t, 0] += -12.0
+        result_no = zbci.sort_multichannel(
+            data.copy(), probe, threshold=4.0, ccg_merge=False
+        )
+        result_yes = zbci.sort_multichannel(
+            data.copy(), probe, threshold=4.0, ccg_merge=True,
+            ccg_template_corr_threshold=0.3
+        )
+        assert result_yes["n_clusters"] <= result_no["n_clusters"]
+
+
+class TestCrossCorrelogram:
+    """Tests for cross-correlogram Python binding."""
+
+    def test_basic(self):
+        """Cross-correlogram of known trains."""
+        train_a = np.array([0.0, 0.010, 0.020, 0.030])
+        train_b = np.array([0.005, 0.015, 0.025, 0.035])
+        ccg = zbci.cross_correlogram(train_a, train_b, 0.005, 0.050)
+        assert ccg.shape[0] == 10
+        assert ccg.sum() > 0
+
+    def test_identical_trains(self):
+        """Self-CCG should have counts."""
+        train = np.array([0.0, 0.010, 0.020, 0.030, 0.040])
+        ccg = zbci.cross_correlogram(train, train, 0.005, 0.050)
+        assert ccg.sum() > 0
+
+    def test_no_overlap(self):
+        """Distant trains should produce zero CCG."""
+        train_a = np.array([0.0, 0.010])
+        train_b = np.array([10.0, 10.010])
+        ccg = zbci.cross_correlogram(train_a, train_b, 0.005, 0.050)
+        assert ccg.sum() == 0
+
+    def test_empty_train(self):
+        """Empty train should produce zero CCG."""
+        train_a = np.array([], dtype=np.float64)
+        train_b = np.array([0.0, 0.010])
+        ccg = zbci.cross_correlogram(train_a, train_b, 0.005, 0.050)
+        assert ccg.sum() == 0
+
+    def test_invalid_bin_width(self):
+        """Negative bin_width should raise."""
+        try:
+            zbci.cross_correlogram(
+                np.array([0.0]), np.array([0.0]), -1.0, 0.050
+            )
+            assert False, "Should have raised"
+        except ValueError:
+            pass
+
+    def test_invalid_max_lag(self):
+        """Negative max_lag should raise."""
+        try:
+            zbci.cross_correlogram(
+                np.array([0.0]), np.array([0.0]), 0.005, -1.0
+            )
+            assert False, "Should have raised"
+        except ValueError:
+            pass
+
+
+# ---- StreamingSorter tests ----
+
+
+class TestStreamingSorter:
+    def test_create_4ch(self):
+        """Create a 4-channel streaming sorter."""
+        sorter = zbci.StreamingSorter(4)
+        assert sorter.n_templates == 0
+        assert sorter.segment_count == 0
+
+    def test_create_with_params(self):
+        """Create with custom parameters."""
+        sorter = zbci.StreamingSorter(
+            8, decay=0.9, threshold=4.0, detection_mode="neo"
+        )
+        assert sorter.n_templates == 0
+
+    def test_invalid_channels(self):
+        """Invalid channel count should raise."""
+        with pytest.raises(ValueError, match="must be 4, 8, 16, or 32"):
+            zbci.StreamingSorter(3)
+
+    def test_invalid_detection_mode(self):
+        """Invalid detection mode should raise."""
+        with pytest.raises(ValueError):
+            zbci.StreamingSorter(4, detection_mode="invalid")
+
+    def test_feed_basic(self):
+        """Feed a segment and get result dict."""
+        rng = np.random.default_rng(42)
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        sorter = zbci.StreamingSorter(4)
+        data = rng.standard_normal((5000, 4))
+        result = sorter.feed(data, probe)
+        assert "n_spikes" in result
+        assert "n_clusters" in result
+        assert "labels" in result
+        assert "spike_times" in result
+        assert "spike_channels" in result
+        assert "clusters" in result
+        assert sorter.segment_count == 1
+
+    def test_feed_multiple_segments(self):
+        """Feeding multiple segments increments segment_count."""
+        rng = np.random.default_rng(123)
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        sorter = zbci.StreamingSorter(4)
+        for _ in range(3):
+            data = rng.standard_normal((5000, 4))
+            sorter.feed(data, probe)
+        assert sorter.segment_count == 3
+
+    def test_feed_wrong_channels(self):
+        """Feeding data with wrong channel count should raise."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        sorter = zbci.StreamingSorter(4)
+        data = np.random.randn(5000, 8)
+        with pytest.raises(ValueError, match="expected 4 channels"):
+            sorter.feed(data, probe)
+
+    def test_feed_with_spikes(self):
+        """Feed data with injected spikes and check detection."""
+        rng = np.random.default_rng(99)
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        sorter = zbci.StreamingSorter(4, threshold=4.0)
+        data = rng.standard_normal((10000, 4)) * 0.3
+        # Inject spikes
+        for pos in range(1000, 9000, 200):
+            data[pos, 0] -= 8.0
+        result = sorter.feed(data, probe)
+        assert result["n_spikes"] > 0
+
+    def test_reset(self):
+        """Reset clears templates and segment count."""
+        rng = np.random.default_rng(55)
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        sorter = zbci.StreamingSorter(4)
+        data = rng.standard_normal((5000, 4))
+        sorter.feed(data, probe)
+        assert sorter.segment_count == 1
+        sorter.reset()
+        assert sorter.segment_count == 0
+        assert sorter.n_templates == 0
+
+    def test_8ch(self):
+        """8-channel streaming sort."""
+        rng = np.random.default_rng(77)
+        probe = zbci.ProbeLayout.linear(8, 25.0)
+        sorter = zbci.StreamingSorter(8)
+        data = rng.standard_normal((5000, 8))
+        result = sorter.feed(data, probe)
+        assert "n_spikes" in result
+        assert sorter.segment_count == 1
+
+    def test_sneo_mode(self):
+        """Streaming sorter with SNEO detection mode."""
+        sorter = zbci.StreamingSorter(
+            4, detection_mode="sneo", sneo_smooth_window=5
+        )
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal((5000, 4))
+        result = sorter.feed(data, probe)
+        assert "n_spikes" in result
+
+    def test_ccg_merge_flag(self):
+        """Streaming sorter accepts ccg_merge flag."""
+        sorter = zbci.StreamingSorter(4, ccg_merge=True)
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal((5000, 4))
+        result = sorter.feed(data, probe)
+        assert "n_spikes" in result
