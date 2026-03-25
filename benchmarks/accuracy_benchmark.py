@@ -277,7 +277,9 @@ def compute_accuracy(gt_spike_times, gt_labels, sorted_times, sorted_labels,
 # ---------------------------------------------------------------------------
 # Benchmark runner
 # ---------------------------------------------------------------------------
-def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=True):
+def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=True,
+                  detection_mode="amplitude", sneo_smooth_window=3,
+                  ccg_merge=False):
     """Run a single benchmark at the given difficulty level.
 
     Parameters
@@ -290,6 +292,12 @@ def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=Tru
         Sample tolerance for spike matching.
     verbose : bool
         Print progress messages.
+    detection_mode : str
+        Detection mode: "amplitude", "neo", or "sneo".
+    sneo_smooth_window : int
+        SNEO smoothing window size.
+    ccg_merge : bool
+        Enable CCG-based cluster merging.
 
     Returns
     -------
@@ -298,9 +306,13 @@ def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=Tru
     params = PRESETS[preset_name]
     n_ch = params["n_channels"]
 
+    mode_str = detection_mode
+    if ccg_merge:
+        mode_str += "+ccg"
+
     if verbose:
         print(f"\n{'='*60}")
-        print(f"  Benchmark: {preset_name}")
+        print(f"  Benchmark: {preset_name} (detection={mode_str})")
         print(f"  {n_ch} channels, {params['n_units']} units, "
               f"noise_std={params['noise_std']}, "
               f"firing_rate={params['firing_rate']} Hz, "
@@ -338,6 +350,9 @@ def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=Tru
         data, probe,
         threshold=params.get("threshold", 5.0),
         refractory=15,
+        detection_mode=detection_mode,
+        sneo_smooth_window=sneo_smooth_window,
+        ccg_merge=ccg_merge,
     )
     t_sort = time.perf_counter() - t0
     if verbose:
@@ -475,6 +490,23 @@ def main():
         default=DEFAULT_TOLERANCE,
         help=f"Spike matching tolerance in samples (default: {DEFAULT_TOLERANCE}).",
     )
+    parser.add_argument(
+        "--detection-mode",
+        choices=["amplitude", "neo", "sneo"],
+        default="amplitude",
+        help="Detection mode (default: amplitude).",
+    )
+    parser.add_argument(
+        "--sneo-smooth-window",
+        type=int,
+        default=3,
+        help="SNEO smoothing window (default: 3).",
+    )
+    parser.add_argument(
+        "--ccg-merge",
+        action="store_true",
+        help="Enable CCG-based cluster merging.",
+    )
     args = parser.parse_args()
 
     if args.all:
@@ -486,7 +518,12 @@ def main():
 
     results = []
     for preset in presets_to_run:
-        result = run_benchmark(preset, seed=args.seed, tolerance=args.tolerance)
+        result = run_benchmark(
+            preset, seed=args.seed, tolerance=args.tolerance,
+            detection_mode=args.detection_mode,
+            sneo_smooth_window=args.sneo_smooth_window,
+            ccg_merge=args.ccg_merge,
+        )
         print_results(result)
         results.append(result)
 
