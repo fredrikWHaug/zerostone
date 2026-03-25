@@ -5,8 +5,8 @@ use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArr
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use zerostone::whitening::{
-    estimate_noise_covariance as zs_estimate_noise_covariance, WhiteningMatrix as ZsWhiteningMatrix,
-    WhiteningMode,
+    estimate_noise_covariance as zs_estimate_noise_covariance,
+    WhiteningMatrix as ZsWhiteningMatrix, WhiteningMode,
 };
 
 // --- Macro for const-generic dispatch ---
@@ -238,10 +238,7 @@ fn estimate_noise_covariance<'py>(
             let typed_data: &[[f64; $c]] = {
                 assert!(data_slice.len() == n_samples * $c);
                 unsafe {
-                    core::slice::from_raw_parts(
-                        data_slice.as_ptr() as *const [f64; $c],
-                        n_samples,
-                    )
+                    core::slice::from_raw_parts(data_slice.as_ptr() as *const [f64; $c], n_samples)
                 }
             };
             let mut noise_arr = [0.0f64; $c];

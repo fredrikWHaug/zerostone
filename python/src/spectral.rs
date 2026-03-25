@@ -577,7 +577,9 @@ impl MultiBandPower {
             (1024, 8) => MultiBandPowerInner::N1024C8(ZsMultiBandPower::new(sample_rate)),
             (1024, 16) => MultiBandPowerInner::N1024C16(ZsMultiBandPower::new(sample_rate)),
             (1024, 32) => MultiBandPowerInner::N1024C32(ZsMultiBandPower::new(sample_rate)),
-            (1024, 64) => MultiBandPowerInner::N1024C64(Box::new(ZsMultiBandPower::new(sample_rate))),
+            (1024, 64) => {
+                MultiBandPowerInner::N1024C64(Box::new(ZsMultiBandPower::new(sample_rate)))
+            }
             _ => return Err(PyValueError::new_err(
                 "fft_size must be 256, 512, or 1024 and channels must be 1, 4, 8, 16, 32, or 64",
             )),
