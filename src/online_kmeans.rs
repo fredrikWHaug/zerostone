@@ -317,15 +317,16 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
 
     fn find_nearest(&self, point: &[f64; D]) -> (usize, f64) {
         let mut best = 0;
-        let mut best_dist = f64::MAX;
+        let mut best_dist_sq = f64::MAX;
         for i in 0..self.n_active {
-            let dist = euclidean_dist(&self.centroids[i], point);
-            if dist < best_dist {
-                best_dist = dist;
+            let dist_sq = euclidean_dist_sq_early(&self.centroids[i], point, best_dist_sq);
+            if dist_sq < best_dist_sq {
+                best_dist_sq = dist_sq;
                 best = i;
             }
         }
-        (best, best_dist)
+        // Return actual distance (sqrt) for threshold comparisons
+        (best, libm::sqrt(best_dist_sq))
     }
 
     fn centroid_distance(&self, i: usize, j: usize) -> f64 {
@@ -355,6 +356,24 @@ fn euclidean_dist<const D: usize>(a: &[f64; D], b: &[f64; D]) -> f64 {
         sum += diff * diff;
     }
     libm::sqrt(sum)
+}
+
+/// Squared Euclidean distance with early exit.
+///
+/// Returns the squared distance between `a` and `b`, but bails out early
+/// if the partial sum exceeds `best_sq`. This avoids computing all D
+/// dimensions when the point is clearly farther than the current best.
+#[inline]
+fn euclidean_dist_sq_early<const D: usize>(a: &[f64; D], b: &[f64; D], best_sq: f64) -> f64 {
+    let mut sum = 0.0;
+    for d in 0..D {
+        let diff = a[d] - b[d];
+        sum += diff * diff;
+        if sum > best_sq {
+            return sum; // early exit: already worse
+        }
+    }
+    sum
 }
 
 #[cfg(test)]
