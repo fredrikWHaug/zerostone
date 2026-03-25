@@ -1286,14 +1286,15 @@ pub fn ccg_merge_clusters<const W: usize, const N: usize>(
             &mut ccg,
         );
 
-        // Check for refractory dip: if present, these are distinct neurons -- do NOT merge
-        if isi::has_refractory_dip(&ccg, refractory_bins) {
-            // Skip this pair and try next-best. For simplicity, break the loop.
-            // (A more sophisticated version would track excluded pairs like merge_clusters.)
+        // Check for refractory dip: if present, these are the same neuron split
+        // into two clusters (the neuron's refractory period appears in the CCG).
+        // If NO dip, they are distinct neurons firing independently -- do NOT merge.
+        if !isi::has_refractory_dip(&ccg, refractory_bins) {
+            // No dip = independent neurons. Skip this pair.
             break;
         }
 
-        // No refractory dip: merge (same neuron, over-split)
+        // Refractory dip present: same neuron, over-split -- merge
         for s in 0..n_spikes {
             if s >= labels.len() {
                 break;
@@ -1607,30 +1608,28 @@ pub fn sort_multichannel<
                     ch += 1;
                     continue;
                 }
-                // Estimate noise on energy signal via MAD
-                // Reuse a portion of scratch for MAD computation
+                // Threshold for NEO/SNEO energy signal.
+                // After whitening, per-channel noise ~ N(0,1).
+                // NEO[n] = x[n]^2 - x[n-1]*x[n+1].
+                // For unit-variance Gaussian: mean(NEO) ~ 1, std(NEO) ~ sqrt(6).
+                // We estimate both from the data to handle non-ideal whitening.
+                // Threshold = mean + T * std (same semantics as amplitude mode).
                 let energy = &dst[..n_energy];
-                let mut abs_sum = 0.0;
-                let mut abs_count = 0;
+                let mut esum = 0.0;
+                let mut esum2 = 0.0;
                 for &v in energy.iter() {
-                    if v.is_finite() {
-                        abs_sum += libm::fabs(v);
-                        abs_count += 1;
-                    }
+                    esum += v;
+                    esum2 += v * v;
                 }
-                let energy_noise = if abs_count > 0 {
-                    // Approximate MAD: mean(|x|) * sqrt(pi/2) / 0.6745
-                    // For non-Gaussian energy signal, use mean absolute value as proxy
-                    let mean_abs = abs_sum / abs_count as f64;
-                    if mean_abs > 1e-15 {
-                        mean_abs
-                    } else {
-                        1.0
-                    }
+                let (emean, estd) = if n_energy > 1 {
+                    let m = esum / n_energy as f64;
+                    let var = esum2 / n_energy as f64 - m * m;
+                    let s = if var > 0.0 { libm::sqrt(var) } else { 1.0 };
+                    (m, s)
                 } else {
-                    1.0
+                    (1.0, 1.0)
                 };
-                let thresh = config.threshold_multiplier * energy_noise;
+                let thresh = emean + config.threshold_multiplier * estd;
                 // Detect positive threshold crossings on energy signal
                 // (NEO/SNEO output is positive for spikes)
                 let mut i = 0;
@@ -1967,6 +1966,98 @@ pub fn sort_multichannel<
                     n_extracted += n_accepted;
                 }
             }
+        }
+
+        // 9e. Template-based NCC residual detection.
+        //
+        // After amplitude-threshold residual re-detection, scan the residual
+        // for template-shaped waveforms using normalized cross-correlation.
+        // This recovers weak units (SNR 2-4) that fall below the amplitude
+        // threshold but whose waveform shape matches a known template.
+        let remaining_ncc = event_buf.len().saturating_sub(n_extracted);
+        let remaining_wf_ncc = waveform_buf.len().saturating_sub(n_extracted);
+        if remaining_ncc > 0 && remaining_wf_ncc > 0 {
+            let ncc_threshold = 0.7;
+            let half_thresh = config.threshold_multiplier * 0.5;
+            let mut n_ncc_found = 0usize;
+
+            for c in 0..n_clusters.min(N) {
+                if (tmpl_counts[c] as usize) < config.template_min_count {
+                    continue;
+                }
+                let ch = tmpl_peak_ch[c];
+                if ch >= C {
+                    continue;
+                }
+                // Precompute template norm
+                let mut t_norm_sq = 0.0;
+                for &tv in tmpl_means[c].iter() {
+                    t_norm_sq += tv * tv;
+                }
+                let t_norm = libm::sqrt(t_norm_sq);
+                if t_norm < 1e-15 {
+                    continue;
+                }
+
+                // Slide template across residual on peak channel
+                let pre = config.pre_samples;
+                let step = config.refractory_samples.max(W / 2);
+                let mut pos = pre;
+                while pos + W <= t_len {
+                    // Check if this position overlaps an existing spike
+                    let mut overlaps = false;
+                    for ev in event_buf.iter().take(n_extracted + n_ncc_found) {
+                        if pos.abs_diff(ev.sample) <= config.temporal_radius + W / 2 {
+                            overlaps = true;
+                            break;
+                        }
+                    }
+                    if overlaps {
+                        pos += step;
+                        continue;
+                    }
+
+                    // Compute NCC between residual window and template
+                    let start = pos - pre;
+                    let mut dot = 0.0;
+                    let mut r_norm_sq = 0.0;
+                    for w in 0..W {
+                        let rv = data[start + w][ch];
+                        dot += rv * tmpl_means[c][w];
+                        r_norm_sq += rv * rv;
+                    }
+                    let r_norm = libm::sqrt(r_norm_sq);
+                    let ncc = if r_norm > 1e-15 {
+                        dot / (r_norm * t_norm)
+                    } else {
+                        0.0
+                    };
+
+                    // Also check the residual has meaningful energy (above half threshold)
+                    let peak_amp = libm::fabs(data[pos][ch]);
+
+                    if ncc > ncc_threshold && peak_amp > half_thresh {
+                        let idx = n_extracted + n_ncc_found;
+                        if idx < event_buf.len() && idx < waveform_buf.len() && idx < labels.len() {
+                            event_buf[idx] = MultiChannelEvent {
+                                sample: pos,
+                                channel: ch,
+                                amplitude: peak_amp,
+                            };
+                            // Extract waveform
+                            for w in 0..W {
+                                waveform_buf[idx][w] = data[start + w][ch];
+                            }
+                            labels[idx] = c;
+                            n_ncc_found += 1;
+                        }
+                        pos += step;
+                    } else {
+                        pos += 1;
+                    }
+                }
+            }
+            n_extracted += n_ncc_found;
         }
     }
 

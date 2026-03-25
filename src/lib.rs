@@ -114,6 +114,7 @@ pub mod sorter;
 pub mod spike_sort;
 mod stats;
 mod stft;
+pub mod streaming;
 mod sync;
 pub mod template_subtract;
 pub mod wavelet;
@@ -189,6 +190,7 @@ pub use spike_sort::{
 };
 pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;
+pub use streaming::StreamingSorter;
 pub use sync::{ClockOffset, LinearDrift, OffsetBuffer, SampleClock};
 pub use template_subtract::{PeelResult, TemplateSubtractor};
 pub use wavelet::{morlet_coefficient, wavelet_half_width, Cwt, MultiChannelCwt, WaveletType};
