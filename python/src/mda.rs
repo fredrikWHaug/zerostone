@@ -29,8 +29,8 @@ fn read_mda(py: Python<'_>, path: &str) -> PyResult<PyObject> {
     let bytes = std::fs::read(path)
         .map_err(|e| PyValueError::new_err(format!("Failed to read {}: {}", path, e)))?;
 
-    let header = mda::parse_mda_header(&bytes)
-        .ok_or_else(|| PyValueError::new_err("Invalid MDA header"))?;
+    let header =
+        mda::parse_mda_header(&bytes).ok_or_else(|| PyValueError::new_err("Invalid MDA header"))?;
 
     let n = mda::mda_num_elements(&header);
     let mut data = vec![0.0f64; n];

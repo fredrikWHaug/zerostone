@@ -268,43 +268,40 @@ impl AdaptiveThresholdDetector {
     ///     >>> det = AdaptiveThresholdDetector(channels=8, multiplier=4.0, refractory=100, min_samples=500)
     #[new]
     fn new(channels: usize, multiplier: f32, refractory: u32, min_samples: u64) -> PyResult<Self> {
-        let inner = match channels {
-            1 => AdaptiveThresholdDetectorInner::Ch1(ZsAdaptiveThresholdDetector::new(
-                multiplier,
-                refractory,
-                min_samples,
-            )),
-            4 => AdaptiveThresholdDetectorInner::Ch4(ZsAdaptiveThresholdDetector::new(
-                multiplier,
-                refractory,
-                min_samples,
-            )),
-            8 => AdaptiveThresholdDetectorInner::Ch8(ZsAdaptiveThresholdDetector::new(
-                multiplier,
-                refractory,
-                min_samples,
-            )),
-            16 => AdaptiveThresholdDetectorInner::Ch16(ZsAdaptiveThresholdDetector::new(
-                multiplier,
-                refractory,
-                min_samples,
-            )),
-            32 => AdaptiveThresholdDetectorInner::Ch32(Box::new(ZsAdaptiveThresholdDetector::new(
-                multiplier,
-                refractory,
-                min_samples,
-            ))),
-            64 => AdaptiveThresholdDetectorInner::Ch64(Box::new(ZsAdaptiveThresholdDetector::new(
-                multiplier,
-                refractory,
-                min_samples,
-            ))),
-            _ => {
-                return Err(PyValueError::new_err(
-                    "channels must be 1, 4, 8, 16, 32, or 64 for AdaptiveThresholdDetector",
-                ))
-            }
-        };
+        let inner =
+            match channels {
+                1 => AdaptiveThresholdDetectorInner::Ch1(ZsAdaptiveThresholdDetector::new(
+                    multiplier,
+                    refractory,
+                    min_samples,
+                )),
+                4 => AdaptiveThresholdDetectorInner::Ch4(ZsAdaptiveThresholdDetector::new(
+                    multiplier,
+                    refractory,
+                    min_samples,
+                )),
+                8 => AdaptiveThresholdDetectorInner::Ch8(ZsAdaptiveThresholdDetector::new(
+                    multiplier,
+                    refractory,
+                    min_samples,
+                )),
+                16 => AdaptiveThresholdDetectorInner::Ch16(ZsAdaptiveThresholdDetector::new(
+                    multiplier,
+                    refractory,
+                    min_samples,
+                )),
+                32 => AdaptiveThresholdDetectorInner::Ch32(Box::new(
+                    ZsAdaptiveThresholdDetector::new(multiplier, refractory, min_samples),
+                )),
+                64 => AdaptiveThresholdDetectorInner::Ch64(Box::new(
+                    ZsAdaptiveThresholdDetector::new(multiplier, refractory, min_samples),
+                )),
+                _ => {
+                    return Err(PyValueError::new_err(
+                        "channels must be 1, 4, 8, 16, 32, or 64 for AdaptiveThresholdDetector",
+                    ))
+                }
+            };
 
         Ok(Self {
             inner,
