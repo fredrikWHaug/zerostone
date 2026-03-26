@@ -2,6 +2,7 @@ use proptest::prelude::*;
 use zerostone::connectivity;
 use zerostone::drift::{estimate_drift_from_positions, DriftEstimator};
 use zerostone::entropy;
+use zerostone::gmm::GaussianMixture;
 use zerostone::isi;
 use zerostone::kalman::KalmanFilter;
 use zerostone::linalg::Matrix;
@@ -1907,5 +1908,85 @@ proptest! {
         let snr = bank.template_snr(0);
         prop_assert!(snr > 0.0, "template SNR should be positive, got {}", snr);
         prop_assert!(snr.is_finite(), "template SNR should be finite");
+    }
+
+    // --- GMM property tests ---
+
+    /// GMM predict always returns a valid component index.
+    #[test]
+    fn gmm_predict_valid_index(
+        x0 in -10.0f64..10.0,
+        x1 in -10.0f64..10.0,
+    ) {
+        let mut gmm = GaussianMixture::<2, 4>::new(1e-4);
+        let centroids = [[3.0, 0.0], [-3.0, 0.0]];
+        gmm.init_from_centroids(&centroids, 2);
+        // Need to fit so Cholesky is computed
+        let data = [[3.0, 0.0], [3.1, 0.1], [-3.0, 0.0], [-3.1, -0.1]];
+        let labels = [0, 0, 1, 1];
+        gmm.init_from_labels(&data, &labels, 2);
+        gmm.fit(&data, 5);
+        let (k, p) = gmm.predict(&[x0, x1]);
+        prop_assert!(k < 2, "predicted cluster {} >= n_components 2", k);
+        prop_assert!(p >= 0.0, "posterior probability {} < 0", p);
+        prop_assert!(p <= 1.0 + 1e-10, "posterior probability {} > 1", p);
+    }
+
+    /// GMM fit produces finite log-likelihood for finite data.
+    #[test]
+    fn gmm_fit_finite_ll(
+        offsets in proptest::collection::vec(-5.0f64..5.0, 8),
+    ) {
+        let mut gmm = GaussianMixture::<2, 4>::new(1e-3);
+        // Two clusters centered at +3, -3 with random perturbations
+        let data = [
+            [3.0 + offsets[0], offsets[1]],
+            [3.0 + offsets[2], offsets[3]],
+            [-3.0 + offsets[4], offsets[5]],
+            [-3.0 + offsets[6], offsets[7]],
+        ];
+        let labels = [0, 0, 1, 1];
+        gmm.init_from_labels(&data, &labels, 2);
+        let ll = gmm.fit(&data, 5);
+        prop_assert!(ll.is_finite(), "log-likelihood should be finite, got {}", ll);
+    }
+
+    /// GMM relabel does not change labels for well-separated clusters.
+    #[test]
+    fn gmm_well_separated_stable(
+        noise in proptest::collection::vec(-0.3f64..0.3, 8),
+    ) {
+        let mut gmm = GaussianMixture::<2, 4>::new(1e-4);
+        let data = [
+            [10.0 + noise[0], noise[1]],
+            [10.0 + noise[2], noise[3]],
+            [-10.0 + noise[4], noise[5]],
+            [-10.0 + noise[6], noise[7]],
+        ];
+        let labels = [0, 0, 1, 1];
+        gmm.init_from_labels(&data, &labels, 2);
+        gmm.fit(&data, 10);
+        let mut test_labels = [0, 0, 1, 1];
+        let changed = gmm.relabel(&data, &mut test_labels);
+        prop_assert_eq!(changed, 0, "well-separated clusters should be stable");
+    }
+
+    /// GMM BIC is finite after fit.
+    #[test]
+    fn gmm_bic_finite(
+        offsets in proptest::collection::vec(-2.0f64..2.0, 8),
+    ) {
+        let mut gmm = GaussianMixture::<2, 4>::new(1e-3);
+        let data = [
+            [5.0 + offsets[0], offsets[1]],
+            [5.0 + offsets[2], offsets[3]],
+            [-5.0 + offsets[4], offsets[5]],
+            [-5.0 + offsets[6], offsets[7]],
+        ];
+        let labels = [0, 0, 1, 1];
+        gmm.init_from_labels(&data, &labels, 2);
+        gmm.fit(&data, 5);
+        let bic = gmm.bic(&data);
+        prop_assert!(bic.is_finite(), "BIC should be finite, got {}", bic);
     }
 }

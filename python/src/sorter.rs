@@ -98,6 +98,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     ccg_template_corr_threshold = 0.5,
     template_subtract_passes = 2,
     isi_split_threshold = 0.1,
+    gmm_refine = false,
+    gmm_max_iter = 10,
     matched_filter_detect = false,
     matched_filter_threshold = 4.0,
 ))]
@@ -129,6 +131,8 @@ fn sort_multichannel<'py>(
     ccg_template_corr_threshold: f64,
     template_subtract_passes: usize,
     isi_split_threshold: f64,
+    gmm_refine: bool,
+    gmm_max_iter: usize,
     matched_filter_detect: bool,
     matched_filter_threshold: f64,
 ) -> PyResult<PyObject> {
@@ -173,6 +177,8 @@ fn sort_multichannel<'py>(
         ccg_template_corr_threshold,
         template_subtract_passes,
         isi_split_threshold,
+        gmm_refine,
+        gmm_max_iter,
         matched_filter_detect,
         matched_filter_threshold,
     };
