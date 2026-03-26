@@ -9,39 +9,45 @@ Methodology follows SpikeInterface/SpikeForest: accuracy = TP / (TP + FN + FP), 
 | Preset | Channels | Units | GT Spikes | Sorted | Clusters | Accuracy | Precision | Recall | Time |
 |--------|----------|-------|-----------|--------|----------|----------|-----------|--------|------|
 | easy   | 32       | 5     | 1476      | 1551   | 24       | **95.9%** | 98.7%    | 97.2%  | 2.2s |
-| medium | 32       | 10    | 4865      | 5507   | 31       | **69.6%** | 93.9%    | 72.9%  | 2.3s |
-| hard   | 64       | 20    | 11926     | 7600   | 16       | **48.6%** | 84.0%    | 53.5%  | 6.2s |
+| medium | 32       | 10    | 4865      | 6030   | 31       | **75.9%** | 91.5%    | 81.7%  | 4.8s |
+| hard   | 64       | 20    | 11926     | 8099   | 14       | **50.4%** | 82.8%    | 56.3%  | 7.6s |
 
 ### Performance History
 
-| Preset | v0.6.0 Acc | v0.7.0 Acc | v0.7.0+opt Acc | v0.7.0+sweep Acc | v0.6.0 Time | v0.7.0+opt Time | Speedup |
-|--------|-----------|-----------|---------------|------------------|-------------|-----------------|---------|
-| easy   | 94.8%     | 94.2%     | 94.5%         | **95.9%**        | ~35s        | 2.2s            | **16x** |
-| medium | 57.1%     | 64.9%     | 63.6%         | **69.6%**        | ~128s       | 2.3s            | **56x** |
-| hard   | 25.1%     | 25.2%     | 25.2%         | **48.6%**        | ~286s       | 6.2s            | **39x** |
+| Preset | v0.6.0 Acc | v0.7.0+sweep | v0.7.0+MF | v0.6.0 Time | v0.7.0+MF Time | Speedup |
+|--------|-----------|-------------|-----------|-------------|----------------|---------|
+| easy   | 94.8%     | **95.9%**   | **95.9%** | ~35s        | 2.2s           | **16x** |
+| medium | 57.1%     | 69.6%       | **75.9%** | ~128s       | 4.8s           | **27x** |
+| hard   | 25.1%     | 48.6%       | **50.4%** | ~286s       | 7.6s           | **38x** |
 
-The v0.7.0+sweep improvement comes from systematic parameter tuning:
-- Easy: `cluster_threshold=8.0` (more granular initial clustering, then merge)
-- Medium: `cluster_threshold=8.0, min_cluster_snr=1.5` (retain more clusters, lower SNR curation)
-- Hard: `threshold=5.0` (was 3.5, higher threshold reduces false positives and improves precision-weighted accuracy)
-- All: `template_subtract_passes=1` (single pass sufficient on synthetic data)
+The v0.7.0+MF improvement comes from matched filter second-pass detection:
+- Easy: No matched filter (already at 95.9%, MF adds false positives on high-SNR recordings)
+- Medium: `matched_filter_detect=true, matched_filter_threshold=4.2` (recovers weak units below amplitude threshold)
+- Hard: `matched_filter_detect=true, matched_filter_threshold=4.0` (recovers additional units)
+- Additionally: `cluster_threshold=8.0` (over-split then merge), `template_subtract_passes=1`
+
+The matched filter is the Neyman-Pearson optimal detector: it maximizes detection probability for a given false-positive rate by correlating learned template waveforms with the whitened data. SNR gain over amplitude detection is ~√(W_eff) where W_eff is the effective signal duration in samples.
 
 ### Medium Per-Unit Breakdown
 
-| Unit | Cluster | GT# | TP  | FN  | FP | Acc   | Prec  | Rec   |
-|------|---------|-----|-----|-----|----|-------|-------|-------|
-| 0    | 19      | 478 | 470 | 8   | 48 | 0.894 | 0.907 | 0.983 |
-| 1    | 24      | 483 | 24  | 459 | 75 | 0.043 | 0.242 | 0.050 |
-| 2    | 1       | 483 | 150 | 333 | 6  | 0.307 | 0.962 | 0.311 |
-| 3    | 12      | 489 | 360 | 129 | 22 | 0.705 | 0.942 | 0.736 |
-| 4    | 23      | 486 | 241 | 245 | 62 | 0.440 | 0.795 | 0.496 |
-| 5    | 17      | 517 | 448 | 69  | 5  | 0.858 | 0.989 | 0.867 |
-| 6    | 8       | 476 | 455 | 21  | 1  | 0.954 | 0.998 | 0.956 |
-| 7    | 9       | 494 | 463 | 31  | 5  | 0.928 | 0.989 | 0.937 |
-| 8    | 2       | 480 | 475 | 5   | 5  | 0.979 | 0.990 | 0.990 |
-| 9    | 6       | 479 | 463 | 16  | 2  | 0.963 | 0.996 | 0.967 |
+| Unit | Cluster | GT# | TP  | FN  | FP | Acc   | Prec  | Rec   | vs prev |
+|------|---------|-----|-----|-----|----|-------|-------|-------|---------|
+| 0    | 19      | 478 | 470 | 8   | 48 | 0.894 | 0.907 | 0.983 | =       |
+| 1    | 5       | 483 | 165 | 318 | 151| 0.260 | 0.522 | 0.342 | **+21.7%** (was 4.3%) |
+| 2    | 1       | 483 | 434 | 49  | 20 | 0.863 | 0.956 | 0.899 | **+55.6%** (was 30.7%) |
+| 3    | 12      | 489 | 360 | 129 | 22 | 0.705 | 0.942 | 0.736 | =       |
+| 4    | 23      | 486 | 241 | 245 | 62 | 0.440 | 0.795 | 0.496 | =       |
+| 5    | 17      | 517 | 448 | 69  | 5  | 0.858 | 0.989 | 0.867 | =       |
+| 6    | 8       | 476 | 455 | 21  | 1  | 0.954 | 0.998 | 0.956 | =       |
+| 7    | 9       | 494 | 463 | 31  | 5  | 0.928 | 0.989 | 0.937 | =       |
+| 8    | 2       | 480 | 475 | 5   | 55 | 0.888 | 0.896 | 0.990 | -9.1%   |
+| 9    | 6       | 479 | 463 | 16  | 2  | 0.963 | 0.996 | 0.967 | =       |
 
-Units 1 and 2 remain the hardest (template amplitude below detection threshold after whitening). Unit 4 has moderate amplitude but overlaps with unit 3.
+The matched filter dramatically improved detection of weak units:
+- **Unit 2**: 30.7% -> 86.3% accuracy (+284 recovered spikes). Template was below amplitude threshold but above matched filter threshold.
+- **Unit 1**: 4.3% -> 26.0% accuracy (+141 recovered spikes). Very weak template, partial recovery.
+- **Unit 8**: 97.9% -> 88.8% accuracy. Slight degradation from MF false positives assigned to this cluster.
+- All other units: unchanged or negligible change.
 
 ## Pipeline Configuration
 

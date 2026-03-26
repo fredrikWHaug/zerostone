@@ -57,6 +57,8 @@ PRESETS = {
         "threshold": 4.0,
         "cluster_threshold": 8.0,
         "min_cluster_snr": 1.5,
+        "matched_filter_detect": True,
+        "matched_filter_threshold": 4.2,
     },
     "hard": {
         "n_channels": 64,
@@ -65,6 +67,8 @@ PRESETS = {
         "duration_s": 60.0,
         "firing_rate": 10.0,
         "threshold": 5.0,
+        "matched_filter_detect": True,
+        "matched_filter_threshold": 4.0,
     },
 }
 
@@ -359,6 +363,8 @@ def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=Tru
         cluster_threshold=params.get("cluster_threshold", 5.0),
         min_cluster_snr=params.get("min_cluster_snr", 2.5),
         template_subtract_passes=1,
+        matched_filter_detect=params.get("matched_filter_detect", False),
+        matched_filter_threshold=params.get("matched_filter_threshold", 4.0),
     )
     t_sort = time.perf_counter() - t0
     if verbose:
