@@ -363,6 +363,8 @@ def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=Tru
         cluster_threshold=params.get("cluster_threshold", 5.0),
         min_cluster_snr=params.get("min_cluster_snr", 2.5),
         template_subtract_passes=1,
+        gmm_refine=params.get("gmm_refine", False),
+        gmm_max_iter=params.get("gmm_max_iter", 10),
         matched_filter_detect=params.get("matched_filter_detect", False),
         matched_filter_threshold=params.get("matched_filter_threshold", 4.0),
     )

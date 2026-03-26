@@ -90,6 +90,7 @@ pub mod erp;
 pub mod ersp;
 mod fft;
 mod filter;
+pub mod gmm;
 pub mod hilbert;
 pub mod ica;
 mod interpolate;
@@ -152,6 +153,7 @@ pub use filter::{
     AcCoupler, AdaptiveOutput, BiquadCoeffs, CommonAverageReference, FirFilter, IirFilter,
     LmsFilter, MedianFilter, NlmsFilter, SurfaceLaplacian,
 };
+pub use gmm::GaussianMixture;
 pub use hilbert::HilbertTransform;
 pub use ica::{ContrastFunction, Ica, IcaError};
 pub use interpolate::{InterpolationMethod, Interpolator};

@@ -140,6 +140,13 @@ pub struct SortConfig {
     /// Clusters with ISI violation rate above this are split along the
     /// first principal axis of their feature distribution.
     pub isi_split_threshold: f64,
+    /// Enable GMM refinement of k-means clusters.
+    /// After k-means clustering and merge/split, runs batch EM with full
+    /// covariance to capture cluster shape. Typically reassigns 5-15% of
+    /// borderline spikes. Max EM iterations controlled by `gmm_max_iter`.
+    pub gmm_refine: bool,
+    /// Maximum EM iterations for GMM refinement.
+    pub gmm_max_iter: usize,
     /// Enable matched filter second-pass detection.
     /// After initial amplitude detection and clustering, uses learned templates
     /// as matched filters to detect spikes below the amplitude threshold.
@@ -178,6 +185,8 @@ impl Default for SortConfig {
             ccg_template_corr_threshold: 0.5,
             template_subtract_passes: 2,
             isi_split_threshold: 0.1,
+            gmm_refine: false,
+            gmm_max_iter: 10,
             matched_filter_detect: false,
             matched_filter_threshold: 4.0,
         }
@@ -2094,6 +2103,22 @@ pub fn sort_multichannel<
 
     // Cap n_clusters at N (the SortResult array size)
     let mut n_clusters = if n_clusters > N { N } else { n_clusters };
+
+    // 9c4. GMM refinement: refine k-means boundaries using full-covariance EM.
+    // K-means assumes spherical clusters; EM models cluster shape (elongated,
+    // rotated) and reassigns borderline spikes using Mahalanobis distance.
+    if config.gmm_refine && n_clusters > 1 && n_extracted > n_clusters * 2 {
+        let mut gmm = crate::gmm::GaussianMixture::<K, N>::new(1e-4);
+        gmm.init_from_labels(
+            &feature_buf[..n_extracted],
+            &labels[..n_extracted],
+            n_clusters,
+        );
+        let ll = gmm.fit(&feature_buf[..n_extracted], config.gmm_max_iter);
+        if ll.is_finite() {
+            gmm.relabel(&feature_buf[..n_extracted], &mut labels[..n_extracted]);
+        }
+    }
 
     // 9d. Template subtraction passes: subtract known spikes, re-detect masked ones.
     // Multi-pass: each iteration refines templates and recovers additional masked spikes.
