@@ -46,6 +46,7 @@ PRESETS = {
         "duration_s": 60.0,
         "firing_rate": 5.0,
         "threshold": 5.0,
+        "cluster_threshold": 8.0,
     },
     "medium": {
         "n_channels": 32,
@@ -54,6 +55,8 @@ PRESETS = {
         "duration_s": 60.0,
         "firing_rate": 8.0,
         "threshold": 4.0,
+        "cluster_threshold": 8.0,
+        "min_cluster_snr": 1.5,
     },
     "hard": {
         "n_channels": 64,
@@ -61,7 +64,7 @@ PRESETS = {
         "noise_std": 2.0,
         "duration_s": 60.0,
         "firing_rate": 10.0,
-        "threshold": 3.5,
+        "threshold": 5.0,
     },
 }
 
@@ -353,6 +356,9 @@ def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=Tru
         detection_mode=detection_mode,
         sneo_smooth_window=sneo_smooth_window,
         ccg_merge=ccg_merge,
+        cluster_threshold=params.get("cluster_threshold", 5.0),
+        min_cluster_snr=params.get("min_cluster_snr", 2.5),
+        template_subtract_passes=1,
     )
     t_sort = time.perf_counter() - t0
     if verbose:
