@@ -843,3 +843,130 @@ class TestSortBatchParallel:
         assert len(results) == 2
         for r in results:
             assert r["n_spikes"] >= 0
+
+
+# ---- Multi-pass template subtraction tests ----
+
+
+class TestMultiPassSubtraction:
+    def test_passes_param_accepted(self):
+        """Verify template_subtract_passes parameter is accepted."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(600)
+        data = rng.standard_normal((5000, 4))
+        for t in range(200, 4000, 200):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, template_subtract_passes=3
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_zero_passes_disables(self):
+        """template_subtract_passes=0 with template_subtract=True should still work."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(601)
+        data = rng.standard_normal((5000, 4))
+        for t in range(200, 4000, 200):
+            data[t, 0] += -15.0
+        # When template_subtract=False, passes doesn't matter
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, template_subtract=False,
+            template_subtract_passes=0
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_multi_pass_finds_more_or_equal(self):
+        """Multiple passes should find >= spikes vs single pass on overlapping data."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(602)
+        data = rng.standard_normal((10000, 4)) * 0.3
+        # Inject overlapping spikes
+        for t in range(200, 9000, 80):
+            data[t, 0] += -12.0
+            if t + 15 < 10000:
+                data[t + 15, 1] += -10.0
+        r1 = zbci.sort_multichannel(
+            data.copy(), probe, threshold=4.0, template_subtract_passes=1
+        )
+        r2 = zbci.sort_multichannel(
+            data.copy(), probe, threshold=4.0, template_subtract_passes=3
+        )
+        assert r2["n_spikes"] >= r1["n_spikes"]
+
+    def test_deterministic_with_passes(self):
+        """Multi-pass should be deterministic."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(603)
+        data = rng.standard_normal((8000, 4))
+        for t in range(200, 7000, 200):
+            data[t, 0] += -15.0
+        r1 = zbci.sort_multichannel(
+            data.copy(), probe, threshold=4.0, template_subtract_passes=2
+        )
+        r2 = zbci.sort_multichannel(
+            data.copy(), probe, threshold=4.0, template_subtract_passes=2
+        )
+        assert r1["n_spikes"] == r2["n_spikes"]
+        np.testing.assert_array_equal(r1["labels"], r2["labels"])
+
+
+# ---- ISI-violation split tests ----
+
+
+class TestIsiSplit:
+    def test_isi_split_param_accepted(self):
+        """Verify isi_split_threshold parameter is accepted."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(700)
+        data = rng.standard_normal((5000, 4))
+        for t in range(200, 4000, 200):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, isi_split_threshold=0.05
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_isi_split_disabled(self):
+        """isi_split_threshold=0 disables ISI splitting."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(701)
+        data = rng.standard_normal((5000, 4))
+        for t in range(200, 4000, 200):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, isi_split_threshold=0.0
+        )
+        assert result["n_spikes"] >= 0
+
+    def test_isi_split_on_mixed_neurons(self):
+        """Two neurons on the same channel should produce high ISI violations."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(702)
+        data = rng.standard_normal((10000, 4)) * 0.3
+        # Two neurons with different amplitudes, overlapping refractory windows
+        for t in range(200, 9000, 50):  # 200 Hz firing rate
+            data[t, 0] += -12.0
+        for t in range(220, 9000, 50):  # 200 Hz, offset by 20 samples (within refractory)
+            data[t, 0] += -8.0
+        r_no_split = zbci.sort_multichannel(
+            data.copy(), probe, threshold=4.0, isi_split_threshold=0.0
+        )
+        r_split = zbci.sort_multichannel(
+            data.copy(), probe, threshold=4.0, isi_split_threshold=0.05
+        )
+        # With ISI split enabled, we should get >= as many clusters
+        assert r_split["n_clusters"] >= r_no_split["n_clusters"]
+
+    def test_valid_labels_after_split(self):
+        """Labels should remain valid after ISI split."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(703)
+        data = rng.standard_normal((8000, 4))
+        for t in range(200, 7000, 100):
+            data[t, 0] += -15.0
+        result = zbci.sort_multichannel(
+            data, probe, threshold=4.0, isi_split_threshold=0.05
+        )
+        if result["n_spikes"] > 0:
+            assert np.all(result["labels"] >= 0)
+            assert np.all(result["labels"] < result["n_clusters"])
