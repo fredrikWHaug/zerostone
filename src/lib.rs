@@ -98,6 +98,7 @@ pub mod kalman;
 pub mod lda;
 pub mod linalg;
 pub mod localize;
+pub mod matched_filter;
 pub mod mda;
 pub mod metrics;
 mod notch;

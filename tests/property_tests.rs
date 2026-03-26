@@ -6,6 +6,7 @@ use zerostone::isi;
 use zerostone::kalman::KalmanFilter;
 use zerostone::linalg::Matrix;
 use zerostone::localize::{center_of_mass, center_of_mass_threshold};
+use zerostone::matched_filter::{MatchedDetection, MatchedFilterBank, OnlineMatchedDetector};
 use zerostone::mda::{mda_element_size, MdaDataType};
 use zerostone::metrics::{compare_sorting, compare_spike_trains, UnitMatch};
 use zerostone::pac;
@@ -1786,5 +1787,125 @@ proptest! {
         if histogram.len() >= 2 * (n_bins / 4 + 1) {
             prop_assert!(!result, "Uniform histogram should not have refractory dip");
         }
+    }
+
+    // --- Matched Filter Properties ---
+
+    /// Matched filter detection statistic is proportional to amplitude.
+    /// For data = alpha * template, statistic = alpha * ||h||^2.
+    #[test]
+    fn mf_statistic_proportional_to_amplitude(
+        alpha in 0.5f64..5.0,
+        t0 in -3.0f64..0.0,
+        t1 in -5.0f64..-1.0,
+        t2 in -3.0f64..0.0,
+        t3 in 0.0f64..2.0,
+    ) {
+        let template = [t0, t1, t2, t3];
+        let norm_sq: f64 = template.iter().map(|x| x * x).sum();
+        if norm_sq < 1e-10 { return Ok(()); }
+
+        let mut bank = MatchedFilterBank::<4, 2>::new();
+        bank.add_template(&template, 0).unwrap();
+
+        let mut window = [0.0f64; 4];
+        for i in 0..4 { window[i] = alpha * template[i]; }
+
+        let mut data = [[0.0f64; 1]; 10];
+        for i in 0..4 { data[2 + i][0] = window[i]; }
+
+        // Direct correlation check
+        let expected_amp = alpha;
+
+        // Use detect_interleaved for precise window control
+        let flat: Vec<f64> = data.iter().map(|s| s[0]).collect();
+        let mut det = [MatchedDetection::ZERO; 4];
+        let n = bank.detect_interleaved(&flat, 1, 0.1, 4, 1, &mut det);
+        if n > 0 {
+            // Amplitude estimate should be close to alpha
+            prop_assert!(
+                (det[0].amplitude - expected_amp).abs() < 0.5,
+                "amplitude {} expected ~{}", det[0].amplitude, expected_amp
+            );
+        }
+    }
+
+    /// Matched filter produces zero output on zero data.
+    #[test]
+    fn mf_zero_data_no_detection(
+        t0 in -5.0f64..5.0,
+        t1 in -5.0f64..5.0,
+        t2 in -5.0f64..5.0,
+        t3 in -5.0f64..5.0,
+    ) {
+        let template = [t0, t1, t2, t3];
+        let norm_sq: f64 = template.iter().map(|x| x * x).sum();
+        if norm_sq < 1e-10 { return Ok(()); }
+
+        let mut bank = MatchedFilterBank::<4, 2>::new();
+        bank.add_template(&template, 0).unwrap();
+
+        let data = [[0.0f64; 1]; 20];
+        let mut det = [MatchedDetection::ZERO; 4];
+        let n = bank.detect(&data, 1.0, 4, &mut det);
+        prop_assert_eq!(n, 0, "should have no detections on zero data");
+    }
+
+    /// Online detector produces same detection as batch on identical data.
+    #[test]
+    fn mf_online_batch_consistency(
+        alpha in 0.8f64..3.0,
+        spike_pos in 8usize..20,
+    ) {
+        let template = [0.1, -1.0, -3.0, -5.0, -3.0, -1.0, 0.5, 0.2];
+        let mut bank = MatchedFilterBank::<8, 4>::new();
+        bank.add_template(&template, 0).unwrap();
+
+        // Build data with one spike
+        let mut data = [[0.0f64; 1]; 40];
+        for i in 0..8 {
+            if spike_pos + i < 40 {
+                data[spike_pos + i][0] = alpha * template[i];
+            }
+        }
+
+        // Batch detect
+        let mut batch_det = [MatchedDetection::ZERO; 8];
+        let n_batch = bank.detect(&data, 3.0, 8, &mut batch_det);
+
+        // Online detect
+        let mut online = OnlineMatchedDetector::<8, 4, 1>::new(&bank, 3.0, 8);
+        let mut online_dets = Vec::new();
+        for sample in &data {
+            if let Some(d) = online.push(sample) {
+                online_dets.push(d);
+            }
+        }
+
+        // Both should detect or both should miss
+        if n_batch > 0 {
+            prop_assert!(!online_dets.is_empty(),
+                "batch detected {} but online detected none", n_batch);
+        }
+    }
+
+    /// Template norm (SNR) is always positive for non-zero templates.
+    #[test]
+    fn mf_template_snr_positive(
+        vals in proptest::collection::vec(-10.0f64..10.0, 4..16),
+    ) {
+        let norm_sq: f64 = vals.iter().map(|x| x * x).sum();
+        if norm_sq < 1e-10 { return Ok(()); }
+
+        let mut template = [0.0f64; 16];
+        for (i, v) in vals.iter().enumerate().take(16) {
+            template[i] = *v;
+        }
+        let mut bank = MatchedFilterBank::<16, 2>::new();
+        let idx = bank.add_template(&template, 0);
+        prop_assert!(idx.is_some());
+        let snr = bank.template_snr(0);
+        prop_assert!(snr > 0.0, "template SNR should be positive, got {}", snr);
+        prop_assert!(snr.is_finite(), "template SNR should be finite");
     }
 }

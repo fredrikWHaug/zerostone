@@ -32,6 +32,7 @@
 //! ```
 
 use crate::isi;
+use crate::matched_filter::{MatchedDetection, MatchedFilterBank};
 use crate::online_kmeans::OnlineKMeans;
 use crate::probe::ProbeLayout;
 use crate::quality;
@@ -86,6 +87,8 @@ pub enum DetectionMode {
 /// assert_eq!(config.detection_mode, zerostone::sorter::DetectionMode::Amplitude);
 /// assert_eq!(config.template_subtract_passes, 2);
 /// assert!((config.isi_split_threshold - 0.1).abs() < 1e-12);
+/// assert!(!config.matched_filter_detect);
+/// assert!((config.matched_filter_threshold - 4.0).abs() < 1e-12);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -137,6 +140,17 @@ pub struct SortConfig {
     /// Clusters with ISI violation rate above this are split along the
     /// first principal axis of their feature distribution.
     pub isi_split_threshold: f64,
+    /// Enable matched filter second-pass detection.
+    /// After initial amplitude detection and clustering, uses learned templates
+    /// as matched filters to detect spikes below the amplitude threshold.
+    /// This is the Neyman-Pearson optimal detector: no other linear filter
+    /// achieves higher detection probability for a given false-positive rate.
+    pub matched_filter_detect: bool,
+    /// Matched filter detection threshold in sigma (z-score) units.
+    /// Under the null hypothesis (noise), the normalized statistic is N(0,1).
+    /// Lower values detect weaker spikes but increase false positives.
+    /// Default 4.0 corresponds to P(false positive) ≈ 3e-5 per sample per filter.
+    pub matched_filter_threshold: f64,
 }
 
 impl Default for SortConfig {
@@ -164,6 +178,8 @@ impl Default for SortConfig {
             ccg_template_corr_threshold: 0.5,
             template_subtract_passes: 2,
             isi_split_threshold: 0.1,
+            matched_filter_detect: false,
+            matched_filter_threshold: 4.0,
         }
     }
 }
@@ -2365,6 +2381,126 @@ pub fn sort_multichannel<
             }
         } // end if n_clusters > 0 && n_extracted > 0
     } // end multi-pass loop
+
+    // 9f. Matched filter second-pass detection.
+    //
+    // After initial amplitude detection + clustering + template subtraction,
+    // we now have template waveforms for each cluster. Use these as matched
+    // filters on the ORIGINAL whitened data to find spikes that were below
+    // the amplitude threshold but match a known template shape.
+    //
+    // This is the Neyman-Pearson optimal detector: it maximizes detection
+    // probability for a given false-positive rate by integrating over all
+    // W time samples instead of thresholding a single sample.
+    //
+    // The SNR gain is √(W_eff / 1) ≈ 4-5× for a typical spike waveform,
+    // which can recover units with peak amplitude 2-3σ (below the standard
+    // 5σ amplitude threshold) but matched-filter SNR above the MF threshold.
+    if config.matched_filter_detect && n_clusters > 0 && n_extracted > 0 {
+        // Build templates from current cluster assignments
+        let mut mf_means = [[0.0f64; W]; N];
+        let mut mf_counts = [0u32; N];
+        let mut mf_peak_ch = [0usize; N];
+        compute_cluster_means::<W, N>(
+            waveform_buf,
+            labels,
+            event_buf,
+            n_extracted,
+            n_clusters,
+            &mut mf_means,
+            &mut mf_counts,
+            &mut mf_peak_ch,
+        );
+
+        // Build matched filter bank from cluster templates
+        let bank = MatchedFilterBank::<W, N>::from_cluster_templates(
+            &mf_means,
+            &mf_counts,
+            &mf_peak_ch,
+            n_clusters,
+            config.template_min_count,
+        );
+
+        if bank.n_filters() > 0 {
+            // Run matched filter detection on the original whitened data.
+            // We detect on the full data (not residual) because the MF threshold
+            // is calibrated for whitened noise, not for residual noise.
+            let remaining = event_buf.len().saturating_sub(n_extracted);
+            let mf_buf_size = remaining.min(2048);
+            // Use a stack-allocated detection buffer. 2048 entries = 80KB, fine for stack.
+            let mut mf_detections = [MatchedDetection::ZERO; 2048];
+            let n_mf = bank.detect(
+                data,
+                config.matched_filter_threshold,
+                config.refractory_samples,
+                &mut mf_detections[..mf_buf_size],
+            );
+
+            // Filter: keep only detections that don't overlap existing spikes
+            let mut n_mf_accepted = 0usize;
+            for det in mf_detections.iter().take(n_mf) {
+                let mf_sample = det.sample;
+                let mf_template = det.template_idx;
+                // Check overlap with existing spikes
+                let mut overlaps = false;
+                for ev in event_buf.iter().take(n_extracted) {
+                    if mf_sample.abs_diff(ev.sample) <= config.temporal_radius {
+                        overlaps = true;
+                        break;
+                    }
+                }
+                if overlaps {
+                    continue;
+                }
+                // Amplitude sanity check: reject if amplitude is negative or very large
+                let amp = det.amplitude;
+                if !(0.2..=5.0).contains(&amp) {
+                    continue;
+                }
+                // Map template index back to cluster index
+                // (bank may have skipped low-count clusters, but from_cluster_templates
+                // adds them in order, so template_idx maps to the nth valid cluster)
+                let mut cluster_idx = 0usize;
+                let mut valid_count = 0usize;
+                while cluster_idx < n_clusters && cluster_idx < N {
+                    if (mf_counts[cluster_idx] as usize) >= config.template_min_count {
+                        if valid_count == mf_template {
+                            break;
+                        }
+                        valid_count += 1;
+                    }
+                    cluster_idx += 1;
+                }
+                if cluster_idx >= n_clusters || cluster_idx >= N {
+                    continue;
+                }
+                let ch = mf_peak_ch[cluster_idx];
+                if ch >= C {
+                    continue;
+                }
+                // Extract waveform and add to results
+                let dst = n_extracted + n_mf_accepted;
+                if dst >= event_buf.len() || dst >= waveform_buf.len() || dst >= labels.len() {
+                    break;
+                }
+                let pre = config.pre_samples;
+                if mf_sample >= pre && mf_sample + W - pre <= t_len {
+                    let start = mf_sample - pre;
+                    event_buf[dst] = MultiChannelEvent {
+                        sample: mf_sample,
+                        channel: ch,
+                        amplitude: libm::fabs(data[mf_sample][ch]),
+                    };
+                    for w in 0..W {
+                        waveform_buf[dst][w] = data[start + w][ch];
+                    }
+                    labels[dst] = cluster_idx;
+                    n_mf_accepted += 1;
+                }
+            }
+            n_extracted += n_mf_accepted;
+        }
+    }
 
     // 10. Quality metrics
     // Compute per-cluster: mean waveform for SNR, spike times for ISI

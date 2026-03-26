@@ -46,10 +46,10 @@ Synthetic benchmarks with known ground truth (seed=42, 60s recordings, 30 kHz):
 | Preset | Ch | Units | Accuracy | Precision | Recall |
 |--------|----|-------|----------|-----------|--------|
 | easy   | 32 | 5     | **95.9%** | 98.7%    | 97.2%  |
-| medium | 32 | 10    | **69.6%** | 93.9%    | 72.9%  |
-| hard   | 64 | 20    | **48.6%** | 84.0%    | 53.5%  |
+| medium | 32 | 10    | **75.9%** | 91.5%    | 81.7%  |
+| hard   | 64 | 20    | **50.4%** | 82.8%    | 56.3%  |
 
-Pipeline: noise estimation, spatial whitening, threshold detection (amplitude/NEO/SNEO), deduplication, peak alignment, PCA, online k-means, cluster merge/split, template subtraction with per-spike amplitude scaling, NCC residual detection, CCG-based cluster merge, SNR auto-curation. Streaming segment API with persistent template library. See [`benchmarks/benchmark_results.md`](benchmarks/benchmark_results.md) for analysis.
+Pipeline: noise estimation, spatial whitening, threshold detection (amplitude/NEO/SNEO), deduplication, peak alignment, PCA, online k-means, cluster merge/split, template subtraction with per-spike amplitude scaling, NCC residual detection, matched filter second-pass detection (Neyman-Pearson optimal), CCG-based cluster merge, SNR auto-curation. Streaming segment API with persistent template library. See [`benchmarks/benchmark_results.md`](benchmarks/benchmark_results.md) for analysis.
 
 ### BCI Competition IV 2a Results
 
