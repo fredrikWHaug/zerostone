@@ -218,6 +218,31 @@ impl StreamingSorter {
         }
     }
 
+    /// Estimated drift rate in micrometers per sample.
+    /// Positive = spike center of mass moving toward higher channels.
+    #[getter]
+    fn drift_rate(&self) -> f64 {
+        match self.n_channels {
+            4 => self.inner_4.as_ref().map_or(0.0, |s| s.drift_rate()),
+            8 => self.inner_8.as_ref().map_or(0.0, |s| s.drift_rate()),
+            16 => self.inner_16.as_ref().map_or(0.0, |s| s.drift_rate()),
+            32 => self.inner_32.as_ref().map_or(0.0, |s| s.drift_rate()),
+            _ => 0.0,
+        }
+    }
+
+    /// Whether the drift model has been fitted (needs >= 2 time bins).
+    #[getter]
+    fn drift_fitted(&self) -> bool {
+        match self.n_channels {
+            4 => self.inner_4.as_ref().map_or(false, |s| s.drift_fitted()),
+            8 => self.inner_8.as_ref().map_or(false, |s| s.drift_fitted()),
+            16 => self.inner_16.as_ref().map_or(false, |s| s.drift_fitted()),
+            32 => self.inner_32.as_ref().map_or(false, |s| s.drift_fitted()),
+            _ => false,
+        }
+    }
+
     /// Reset the sorter state (clear templates, reset segment count).
     fn reset(&mut self) {
         match self.n_channels {

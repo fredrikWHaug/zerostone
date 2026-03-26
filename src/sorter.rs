@@ -1789,6 +1789,22 @@ pub fn sort_multichannel<
     let mut km = OnlineKMeans::<K, N>::new(config.cluster_max_count);
     km.set_create_threshold(config.cluster_threshold);
 
+    // 9a. Seed centroids using farthest-point initialization.
+    // This picks well-separated initial centroids deterministically,
+    // reducing sensitivity to spike arrival order vs naive first-come init.
+    // Limit seeds to sqrt(N) to leave room for online cluster creation.
+    let max_init_seeds = {
+        // isqrt approximation: find largest s where s*s <= N
+        let mut s = 1usize;
+        while (s + 1) * (s + 1) <= N {
+            s += 1;
+        }
+        s.max(2).min(N / 2)
+    };
+    if n_extracted > max_init_seeds {
+        km.init_farthest_point(&feature_buf[..n_extracted], max_init_seeds);
+    }
+
     for i in 0..n_extracted {
         let result = km.update(&feature_buf[i]);
         if i < labels.len() {

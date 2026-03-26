@@ -377,9 +377,143 @@ impl OnlineSorter {
     }
 }
 
+/// Sort a long recording in parallel segments.
+///
+/// Splits the recording into fixed-length segments and sorts each
+/// independently using multiple threads. Returns a list of per-segment
+/// result dicts (same format as ``sort_multichannel`` output), with
+/// spike times adjusted to global sample indices.
+///
+/// Args:
+///     data (np.ndarray): 2D float64 array of shape ``(n_samples, n_channels)``.
+///     probe (ProbeLayout): Probe geometry.
+///     segment_samples (int): Samples per segment (e.g. 30000 for 1s at 30kHz).
+///     threshold (float): Detection threshold. Default: 5.0.
+///     detection_mode (str): "amplitude", "neo", or "sneo". Default: "amplitude".
+///     sneo_smooth_window (int): SNEO smooth window. Default: 3.
+///     ccg_merge (bool): Enable CCG merge. Default: False.
+///
+/// Returns:
+///     list[dict]: One result dict per segment with global spike times.
+///
+/// Example:
+///     >>> import numpy as np
+///     >>> import zpybci as zbci
+///     >>> probe = zbci.ProbeLayout.linear(4, 25.0)
+///     >>> data = np.random.randn(60000, 4)
+///     >>> results = zbci.sort_batch_parallel(data, probe, segment_samples=30000)
+///     >>> len(results)
+///     2
+#[pyfunction]
+#[pyo3(signature = (
+    data,
+    probe,
+    segment_samples = 30000,
+    threshold = 5.0,
+    detection_mode = "amplitude",
+    sneo_smooth_window = 3,
+    ccg_merge = false,
+))]
+fn sort_batch_parallel<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray2<f64>,
+    probe: &super::probe::ProbeLayout,
+    segment_samples: usize,
+    threshold: f64,
+    detection_mode: &str,
+    sneo_smooth_window: usize,
+    ccg_merge: bool,
+) -> PyResult<PyObject> {
+    use pyo3::types::PyList;
+    use zerostone::sorter_dyn;
+
+    let shape = data.shape();
+    let n_samples = shape[0];
+    let n_channels = shape[1];
+    let data_slice = data.as_slice()?;
+
+    let det_mode = match detection_mode {
+        "amplitude" => zerostone::sorter::DetectionMode::Amplitude,
+        "neo" => zerostone::sorter::DetectionMode::Neo,
+        "sneo" => zerostone::sorter::DetectionMode::Sneo {
+            smooth_window: sneo_smooth_window,
+        },
+        _ => {
+            return Err(PyValueError::new_err(
+                "detection_mode must be 'amplitude', 'neo', or 'sneo'",
+            ))
+        }
+    };
+
+    let config = SortConfig {
+        threshold_multiplier: threshold,
+        detection_mode: det_mode,
+        ccg_merge,
+        ..SortConfig::default()
+    };
+
+    // Get positions from probe
+    let positions = super::probe::get_positions(probe, n_channels)?;
+
+    let mut data_owned = data_slice.to_vec();
+
+    let results = py.allow_threads(|| {
+        sorter_dyn::sort_batch_parallel(
+            &config,
+            &positions,
+            &mut data_owned,
+            n_samples,
+            n_channels,
+            segment_samples,
+        )
+    })
+    .map_err(sort_error_to_py)?;
+
+    // Convert each DynSortResult to a Python dict
+    let result_list = PyList::empty(py);
+    for r in &results {
+        result_list.append(dyn_result_to_dict(py, r)?)?;
+    }
+
+    Ok(result_list.into())
+}
+
+fn dyn_result_to_dict(py: Python<'_>, r: &zerostone::sorter_dyn::DynSortResult) -> PyResult<PyObject> {
+    use pyo3::types::{PyDict, PyList};
+
+    let dict = PyDict::new(py);
+    dict.set_item("n_spikes", r.n_spikes)?;
+    dict.set_item("n_clusters", r.n_clusters)?;
+
+    let label_data: Vec<i64> = r.labels.iter().map(|&l| l as i64).collect();
+    let label_py = PyArray1::from_owned_array(py, Array1::from_vec(label_data));
+    dict.set_item("labels", label_py)?;
+
+    let times_data: Vec<i64> = r.spike_times.iter().map(|&t| t as i64).collect();
+    let times_py = PyArray1::from_owned_array(py, Array1::from_vec(times_data));
+    dict.set_item("spike_times", times_py)?;
+
+    let ch_data: Vec<i64> = r.spike_channels.iter().map(|&c| c as i64).collect();
+    let ch_py = PyArray1::from_owned_array(py, Array1::from_vec(ch_data));
+    dict.set_item("spike_channels", ch_py)?;
+
+    let clusters_list = PyList::empty(py);
+    for c in &r.clusters {
+        let cl = PyDict::new(py);
+        cl.set_item("count", c.count)?;
+        cl.set_item("snr", c.snr)?;
+        cl.set_item("isi_violation_rate", c.isi_violation_rate)?;
+        clusters_list.append(cl)?;
+    }
+    dict.set_item("clusters", clusters_list)?;
+
+    Ok(dict.into())
+}
+
 /// Register sorting pipeline functions.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sort_multichannel, m)?)?;
+    m.add_function(wrap_pyfunction!(sort_batch_parallel, m)?)?;
     m.add_class::<OnlineSorter>()?;
     Ok(())
 }

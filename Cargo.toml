@@ -10,9 +10,11 @@ categories = ["science", "no-std::no-alloc", "embedded"]
 [features]
 default = []
 alloc = []
+parallel = ["alloc", "rayon"]
 
 [dependencies]
 libm = "0.2"
+rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
