@@ -347,6 +347,104 @@ pub fn tetrode(pitch: f64) -> ProbeLayout<4> {
     ProbeLayout::new([[-half, -half], [half, -half], [-half, half], [half, half]])
 }
 
+/// Neuropixels 1.0 probe geometry (384 channels).
+///
+/// Two-column staggered layout: even channels at x=0, odd channels at x=32um.
+/// Vertical spacing is 20um between rows (each row has 2 channels).
+/// Total span: 32um x 3820um.
+///
+/// This matches the Neuropixels 1.0 specification used in the Allen Institute
+/// Brain Observatory and most chronic mouse recordings.
+///
+/// Requires the `alloc` feature since 384 channels exceeds the const-generic
+/// dispatch table (max 128). Use with `sort_dyn()`.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::probe::neuropixels_1;
+///
+/// let probe = neuropixels_1();
+/// assert_eq!(probe.n_channels(), 384);
+/// // Even channels at x=0, odd at x=32
+/// assert!((probe.positions()[0][0] - 0.0).abs() < 1e-9);
+/// assert!((probe.positions()[1][0] - 32.0).abs() < 1e-9);
+/// // 20um vertical spacing per row
+/// assert!((probe.positions()[2][1] - 20.0).abs() < 1e-9);
+/// ```
+pub fn neuropixels_1() -> ProbeLayout<384> {
+    let mut positions = [[0.0f64; 2]; 384];
+    let mut i = 0;
+    while i < 384 {
+        let col = i % 2; // 0 or 1
+        let row = i / 2;
+        positions[i] = [col as f64 * 32.0, row as f64 * 20.0];
+        i += 1;
+    }
+    ProbeLayout::new(positions)
+}
+
+/// Neuropixels 2.0 single-shank probe geometry (384 channels).
+///
+/// Four-column layout: channels cycle through 4 x-positions (0, 32, 0, 32um)
+/// with a checkerboard stagger. Vertical spacing is 15um between rows.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::probe::neuropixels_2;
+///
+/// let probe = neuropixels_2();
+/// assert_eq!(probe.n_channels(), 384);
+/// ```
+pub fn neuropixels_2() -> ProbeLayout<384> {
+    let mut positions = [[0.0f64; 2]; 384];
+    let mut i = 0;
+    while i < 384 {
+        let col = i % 2;
+        let row = i / 2;
+        // Stagger: odd rows shift by 16um
+        let x_offset = if row % 2 == 1 { 16.0 } else { 0.0 };
+        positions[i] = [col as f64 * 32.0 + x_offset, row as f64 * 15.0];
+        i += 1;
+    }
+    ProbeLayout::new(positions)
+}
+
+/// Utah array probe geometry (96 channels).
+///
+/// 10x10 grid with 4 corner electrodes removed (96 active channels).
+/// 400um inter-electrode spacing. Standard Blackrock Microsystems layout.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::probe::utah_array;
+///
+/// let probe = utah_array();
+/// assert_eq!(probe.n_channels(), 96);
+/// ```
+pub fn utah_array() -> ProbeLayout<96> {
+    let mut positions = [[0.0f64; 2]; 96];
+    let pitch = 400.0;
+    let mut ch = 0;
+    let mut row = 0;
+    while row < 10 {
+        let mut col = 0;
+        while col < 10 {
+            // Skip 4 corners
+            let is_corner = (row == 0 || row == 9) && (col == 0 || col == 9);
+            if !is_corner && ch < 96 {
+                positions[ch] = [col as f64 * pitch, row as f64 * pitch];
+                ch += 1;
+            }
+            col += 1;
+        }
+        row += 1;
+    }
+    ProbeLayout::new(positions)
+}
+
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
@@ -744,5 +842,61 @@ mod tests {
         for &idx in &nearest[..n] {
             assert!(idx < 8);
         }
+    }
+
+    #[test]
+    fn test_neuropixels_1_channels() {
+        let probe = neuropixels_1();
+        assert_eq!(probe.n_channels(), 384);
+    }
+
+    #[test]
+    fn test_neuropixels_1_two_column_extent() {
+        let probe = neuropixels_1();
+        let (xr, _yr) = probe.spatial_extent();
+        assert!((xr - 32.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_neuropixels_1_y_pitch() {
+        let probe = neuropixels_1();
+        // Channels 0 and 2 are in the same column, 1 row apart (20um)
+        let d = probe.channel_distance(0, 2);
+        assert!((d - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_neuropixels_2_channels() {
+        let probe = neuropixels_2();
+        assert_eq!(probe.n_channels(), 384);
+    }
+
+    #[test]
+    fn test_neuropixels_2_four_column_extent() {
+        let probe = neuropixels_2();
+        let (xr, _yr) = probe.spatial_extent();
+        assert!((xr - 48.0).abs() < 1e-9); // 2 base cols * 32um + 16um stagger = 48
+    }
+
+    #[test]
+    fn test_utah_array_channels() {
+        let probe = utah_array();
+        assert_eq!(probe.n_channels(), 96);
+    }
+
+    #[test]
+    fn test_utah_array_extent() {
+        let probe = utah_array();
+        let (xr, yr) = probe.spatial_extent();
+        assert!((xr - 3600.0).abs() < 1e-9); // 10 cols, 400um pitch -> 9*400
+        assert!((yr - 3600.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_utah_array_neighbors() {
+        let probe = utah_array();
+        let mut neighbors = [0usize; 96];
+        let n = probe.neighbor_channels(50, 500.0, &mut neighbors);
+        assert!(n > 0);
     }
 }

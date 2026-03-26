@@ -43,7 +43,7 @@ class TestModuleImport:
         """Supported channel counts are defined."""
         from zpybci.spikeinterface import _SUPPORTED_CHANNELS
 
-        assert _SUPPORTED_CHANNELS == {4, 8, 16, 32, 64, 128}
+        assert _SUPPORTED_CHANNELS == {4, 8, 16, 32, 64, 96, 128}
 
 
 class TestParameterValidation:

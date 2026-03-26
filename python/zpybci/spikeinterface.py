@@ -80,7 +80,7 @@ def _recording_to_numpy(recording):
     return np.ascontiguousarray(traces, dtype=np.float64), recording.get_sampling_frequency()
 
 
-_SUPPORTED_CHANNELS = {4, 8, 16, 32, 64, 128}
+_SUPPORTED_CHANNELS = {4, 8, 16, 32, 64, 96, 128}
 
 _DEFAULT_PARAMS = {
     "threshold": 5.0,
