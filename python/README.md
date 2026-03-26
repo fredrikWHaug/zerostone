@@ -84,13 +84,16 @@ TS+LDA exceeds the original competition winner (FBCSP, ~63%). All pipelines buil
 - **Feature dimensions** -- 2, 4, 6, 8, 12, 16, 32, or 64
 
 ### Spike Sorting
-- **Waveform extraction** -- extract spike waveforms around detected events
-- **Waveform PCA** -- dimensionality reduction for spike clustering
-- **Template matching** -- classify spikes by Euclidean distance or normalized cross-correlation
-- **MAD noise estimation** -- robust noise floor estimation for threshold setting
-- **Batch detection** -- negative-threshold crossing with refractory period
-- **Online k-means** -- adaptive clustering with auto-create, merge, and prune (OSort-inspired)
-- **Convenience pipeline** -- `spike_sort()` for end-to-end spike sorting with online k-means
+- **Full pipeline** -- `sort_multichannel()` for end-to-end multi-channel spike sorting (noise estimation, spatial whitening, detection, deduplication, peak alignment, PCA, online k-means, cluster merge/split, template subtraction, NCC residual detection, SNR auto-curation)
+- **Streaming API** -- `StreamingSorter` for segment-based processing with persistent template library, exponential moving average template updates, and online rigid drift estimation
+- **Batch parallel** -- `sort_batch_parallel()` for rayon-based parallel sorting of long recordings
+- **Detection modes** -- amplitude threshold, NEO (Nonlinear Energy Operator), SNEO (Smoothed NEO)
+- **Probe geometry** -- `ProbeLayout` with linear, polytrode, tetrode, Neuropixels 1.0/2.0, Utah array presets
+- **Template subtraction** -- multi-pass template subtraction with per-spike amplitude scaling and NCC residual detection
+- **Cluster refinement** -- d-prime merge, spatial merge, CCG-based merge, ISI-violation split, bimodality split
+- **Quality metrics** -- per-cluster SNR, ISI violation rate, contamination rate, d-prime, silhouette score
+- **Supported channels** -- 4, 8, 16, 32, 64, 96, 128 (const-generic, no_std core)
+- **Convenience pipeline** -- `spike_sort()` for simple single-channel sorting with online k-means
 
 ### EDF/EDF+ File Reader
 - **read_edf()** -- load EDF/EDF+ files without MNE or pyedflib
@@ -177,7 +180,7 @@ TS+LDA exceeds the original competition winner (FBCSP, ~63%). All pipelines buil
 
 ## Version
 
-0.5.0
+0.7.0
 
 ## License
 
