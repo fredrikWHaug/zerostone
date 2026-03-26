@@ -50,6 +50,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     sneo_smooth_window (int): Half-width of triangular smoothing window for SNEO mode. Default: 3.
 ///     ccg_merge (bool): Enable CCG-based cluster merging to fix over-splitting. Default: False.
 ///     ccg_template_corr_threshold (float): Template NCC threshold for CCG merge. Default: 0.5.
+///     template_subtract_passes (int): Number of template subtraction passes (0=disabled). Default: 2.
+///     isi_split_threshold (float): ISI violation rate above which clusters are split. Default: 0.1.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -94,6 +96,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     sneo_smooth_window = 3,
     ccg_merge = false,
     ccg_template_corr_threshold = 0.5,
+    template_subtract_passes = 2,
+    isi_split_threshold = 0.1,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -121,6 +125,8 @@ fn sort_multichannel<'py>(
     sneo_smooth_window: usize,
     ccg_merge: bool,
     ccg_template_corr_threshold: f64,
+    template_subtract_passes: usize,
+    isi_split_threshold: f64,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -161,6 +167,8 @@ fn sort_multichannel<'py>(
         detection_mode: det_mode,
         ccg_merge,
         ccg_template_corr_threshold,
+        template_subtract_passes,
+        isi_split_threshold,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),

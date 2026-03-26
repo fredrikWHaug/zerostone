@@ -84,6 +84,8 @@ pub enum DetectionMode {
 /// assert_eq!(config.template_min_count, 3);
 /// assert!((config.min_cluster_snr - 2.5).abs() < 1e-12);
 /// assert_eq!(config.detection_mode, zerostone::sorter::DetectionMode::Amplitude);
+/// assert_eq!(config.template_subtract_passes, 2);
+/// assert!((config.isi_split_threshold - 0.1).abs() < 1e-12);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -128,6 +130,13 @@ pub struct SortConfig {
     pub ccg_merge: bool,
     /// Template correlation threshold for CCG merge candidates.
     pub ccg_template_corr_threshold: f64,
+    /// Number of template subtraction passes (0 = disabled, 1 = single pass, 2+ = multi-pass).
+    /// Each additional pass subtracts the updated templates and re-detects on the residual.
+    pub template_subtract_passes: usize,
+    /// ISI violation rate threshold for post-sort cluster splitting.
+    /// Clusters with ISI violation rate above this are split along the
+    /// first principal axis of their feature distribution.
+    pub isi_split_threshold: f64,
 }
 
 impl Default for SortConfig {
@@ -153,6 +162,8 @@ impl Default for SortConfig {
             detection_mode: DetectionMode::Amplitude,
             ccg_merge: false,
             ccg_template_corr_threshold: 0.5,
+            template_subtract_passes: 2,
+            isi_split_threshold: 0.1,
         }
     }
 }
@@ -1311,6 +1322,183 @@ pub fn ccg_merge_clusters<const W: usize, const N: usize>(
     current_n
 }
 
+/// Split clusters with high ISI violation rates.
+///
+/// If a cluster's ISI violation rate exceeds `isi_threshold`, it likely
+/// contains two neurons. Splits along the first principal axis of the
+/// feature distribution (same method as bimodality split, but triggered
+/// by ISI rather than gap width).
+#[allow(clippy::too_many_arguments)]
+pub fn isi_violation_split<const K: usize>(
+    n_spikes: usize,
+    labels: &mut [usize],
+    feature_buf: &[[f64; K]],
+    event_buf: &[MultiChannelEvent],
+    n_clusters: usize,
+    isi_threshold: f64,
+    refractory_samples: usize,
+    min_cluster_size: usize,
+    scratch: &mut [f64],
+    max_clusters: usize,
+) -> usize {
+    if n_spikes == 0 || n_clusters == 0 {
+        return n_clusters;
+    }
+
+    const MAX_SPIKES: usize = 512;
+    let mut current_n = n_clusters;
+
+    loop {
+        if current_n >= max_clusters {
+            break;
+        }
+
+        let mut did_split = false;
+
+        let mut cl = 0;
+        while cl < current_n {
+            // Collect spike indices for this cluster
+            let mut indices = [0usize; MAX_SPIKES];
+            let mut count = 0usize;
+            let mut s = 0;
+            while s < n_spikes && s < labels.len() {
+                if labels[s] == cl && count < MAX_SPIKES {
+                    indices[count] = s;
+                    count += 1;
+                }
+                s += 1;
+            }
+
+            if count < min_cluster_size || count < 6 {
+                cl += 1;
+                continue;
+            }
+
+            // Compute ISI violation rate for this cluster
+            let spike_n = count.min(scratch.len());
+            for i in 0..spike_n {
+                scratch[i] = event_buf[indices[i]].sample as f64;
+            }
+            let st = &mut scratch[..spike_n];
+            st.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+
+            let isi_rate =
+                quality::isi_violation_rate(st, refractory_samples as f64).unwrap_or(0.0);
+
+            if isi_rate <= isi_threshold {
+                cl += 1;
+                continue;
+            }
+
+            // This cluster has high ISI violations -- split along first principal axis.
+            // Uses the same power-iteration approach as split_clusters.
+            let dim = if K > 32 { 32 } else { K };
+
+            // Compute centroid
+            let mut centroid = [0.0f64; 32];
+            for i in 0..count {
+                for d in 0..dim {
+                    centroid[d] += feature_buf[indices[i]][d];
+                }
+            }
+            let inv_count = 1.0 / count as f64;
+            for d in centroid.iter_mut().take(dim) {
+                *d *= inv_count;
+            }
+
+            // Power iteration for first principal axis
+            let mut axis = [0.0f64; 32];
+            for d in 0..dim {
+                axis[d] = feature_buf[indices[0]][d] - centroid[d];
+            }
+            let mut norm_sq = 0.0;
+            for a in axis.iter().take(dim) {
+                norm_sq += a * a;
+            }
+            if norm_sq < 1e-30 {
+                cl += 1;
+                continue;
+            }
+            let inv_norm = 1.0 / libm::sqrt(norm_sq);
+            for a in axis.iter_mut().take(dim) {
+                *a *= inv_norm;
+            }
+
+            for _iter in 0..3 {
+                let mut new_axis = [0.0f64; 32];
+                for i in 0..count {
+                    let mut dot = 0.0;
+                    for d in 0..dim {
+                        dot += (feature_buf[indices[i]][d] - centroid[d]) * axis[d];
+                    }
+                    for d in 0..dim {
+                        new_axis[d] += dot * (feature_buf[indices[i]][d] - centroid[d]);
+                    }
+                }
+                let mut ns = 0.0;
+                for na in new_axis.iter().take(dim) {
+                    ns += na * na;
+                }
+                if ns < 1e-30 {
+                    break;
+                }
+                let inv = 1.0 / libm::sqrt(ns);
+                for d in 0..dim {
+                    axis[d] = new_axis[d] * inv;
+                }
+            }
+
+            // Project spikes and split at median
+            let mut projections = [0.0f64; MAX_SPIKES];
+            for i in 0..count {
+                let mut dot = 0.0;
+                for d in 0..dim {
+                    dot += (feature_buf[indices[i]][d] - centroid[d]) * axis[d];
+                }
+                projections[i] = dot;
+            }
+
+            // Split at median projection (ensures roughly equal-sized halves)
+            let mut sorted_proj = [0.0f64; MAX_SPIKES];
+            sorted_proj[..count].copy_from_slice(&projections[..count]);
+            sorted_proj[..count]
+                .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+            let median = sorted_proj[count / 2];
+
+            let new_label = current_n;
+            let mut n_above = 0usize;
+            for i in 0..count {
+                if projections[i] >= median {
+                    labels[indices[i]] = new_label;
+                    n_above += 1;
+                }
+            }
+
+            // Only split if both halves are large enough
+            let n_below = count - n_above;
+            if n_below >= min_cluster_size && n_above >= min_cluster_size {
+                current_n += 1;
+                did_split = true;
+                break; // restart outer loop
+            } else {
+                // Undo: restore original label
+                for i in 0..count {
+                    if projections[i] >= median {
+                        labels[indices[i]] = cl;
+                    }
+                }
+                cl += 1;
+            }
+        }
+
+        if !did_split {
+            break;
+        }
+    }
+
+    current_n
+}
+
 /// Compute mean waveform per cluster, spike count, and most common peak channel.
 #[allow(clippy::too_many_arguments)]
 fn compute_cluster_means<const W: usize, const N: usize>(
@@ -1868,11 +2056,38 @@ pub fn sort_multichannel<
         n_clusters
     };
 
+    // 9c3. ISI-violation split: clusters with high ISI violation rate likely
+    // contain two neurons firing at similar rates. Split along the first
+    // principal axis of the feature distribution.
+    let n_clusters = if config.isi_split_threshold > 0.0 && n_clusters > 0 {
+        isi_violation_split::<K>(
+            n_extracted,
+            labels,
+            feature_buf,
+            event_buf,
+            n_clusters,
+            config.isi_split_threshold,
+            config.refractory_samples,
+            config.split_min_cluster_size,
+            scratch,
+            N,
+        )
+    } else {
+        n_clusters
+    };
+
     // Cap n_clusters at N (the SortResult array size)
     let mut n_clusters = if n_clusters > N { N } else { n_clusters };
 
-    // 9d. Template subtraction pass: subtract known spikes, re-detect masked ones
-    if config.template_subtract && n_clusters > 0 && n_extracted > 0 {
+    // 9d. Template subtraction passes: subtract known spikes, re-detect masked ones.
+    // Multi-pass: each iteration refines templates and recovers additional masked spikes.
+    let n_passes = if config.template_subtract {
+        config.template_subtract_passes.max(1)
+    } else {
+        0
+    };
+    for _pass in 0..n_passes {
+    if n_clusters > 0 && n_extracted > 0 {
         let mut tmpl_means = [[0.0f64; W]; N];
         let mut tmpl_counts = [0u32; N];
         let mut tmpl_peak_ch = [0usize; N];
@@ -2144,7 +2359,8 @@ pub fn sort_multichannel<
             }
             n_extracted += n_ncc_found;
         }
-    }
+    } // end if n_clusters > 0 && n_extracted > 0
+    } // end multi-pass loop
 
     // 10. Quality metrics
     // Compute per-cluster: mean waveform for SNR, spike times for ISI
@@ -2816,6 +3032,7 @@ mod tests {
     use super::*;
     extern crate alloc;
     use alloc::vec;
+    use alloc::vec::Vec;
 
     // Simple pseudo-RNG (xorshift64)
     struct Rng(u64);
@@ -3884,6 +4101,164 @@ mod tests {
             "template_subtract ON ({}) should find >= spikes than OFF ({})",
             sr_on.n_spikes,
             sr_off.n_spikes
+        );
+    }
+
+    #[test]
+    fn test_isi_violation_split_no_violations() {
+        // Cluster with well-spaced spikes should not be split
+        let mut labels = [0usize; 20];
+        let features: Vec<[f64; 2]> = (0..20).map(|i| [i as f64 * 0.1, 0.0]).collect();
+        let events: Vec<MultiChannelEvent> = (0..20)
+            .map(|i| MultiChannelEvent {
+                sample: i * 100, // well-spaced (100 samples apart)
+                channel: 0,
+                amplitude: 5.0,
+            })
+            .collect();
+        let mut scratch = [0.0f64; 100];
+        let n = isi_violation_split::<2>(
+            20,
+            &mut labels,
+            &features,
+            &events,
+            1,
+            0.1,   // isi_threshold
+            15,    // refractory
+            5,     // min_cluster_size
+            &mut scratch,
+            8,
+        );
+        assert_eq!(n, 1, "well-spaced cluster should not be split");
+    }
+
+    #[test]
+    fn test_isi_violation_split_with_violations() {
+        // Two neurons interleaved at high rate -- high ISI violations
+        let n_spikes = 40;
+        let mut labels = vec![0usize; n_spikes];
+        // Two populations in feature space
+        let features: Vec<[f64; 2]> = (0..n_spikes)
+            .map(|i| {
+                if i % 2 == 0 {
+                    [5.0, 0.0]
+                } else {
+                    [0.0, 5.0]
+                }
+            })
+            .collect();
+        // Interleaved spike times: 0, 5, 10, 15, ... (5 samples apart, < 15 refractory)
+        let events: Vec<MultiChannelEvent> = (0..n_spikes)
+            .map(|i| MultiChannelEvent {
+                sample: i * 5,
+                channel: 0,
+                amplitude: 5.0,
+            })
+            .collect();
+        let mut scratch = vec![0.0f64; n_spikes + 10];
+        let n = isi_violation_split::<2>(
+            n_spikes,
+            &mut labels,
+            &features,
+            &events,
+            1,
+            0.05,  // strict ISI threshold
+            15,    // refractory
+            5,     // min_cluster_size
+            &mut scratch,
+            8,
+        );
+        assert!(n >= 2, "interleaved neurons should be split (got {} clusters)", n);
+    }
+
+    #[test]
+    fn test_isi_violation_split_empty() {
+        let mut labels = [];
+        let features: Vec<[f64; 2]> = vec![];
+        let events: Vec<MultiChannelEvent> = vec![];
+        let mut scratch = [0.0f64; 10];
+        let n = isi_violation_split::<2>(
+            0, &mut labels, &features, &events, 0, 0.1, 15, 5, &mut scratch, 8,
+        );
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn test_isi_violation_split_high_threshold() {
+        // With threshold = 1.0 (100%), nothing should be split since max ISI rate < 1.0
+        let mut labels = [0usize; 20];
+        let features: Vec<[f64; 2]> = (0..20).map(|i| [i as f64, 0.0]).collect();
+        let events: Vec<MultiChannelEvent> = (0..20)
+            .map(|i| MultiChannelEvent {
+                sample: i * 5,
+                channel: 0,
+                amplitude: 5.0,
+            })
+            .collect();
+        let mut scratch = [0.0f64; 30];
+        // threshold = 1.0 means only split if 100% ISI violations (impossible)
+        let n = isi_violation_split::<2>(
+            20, &mut labels, &features, &events, 1, 1.0, 15, 5, &mut scratch, 8,
+        );
+        assert_eq!(n, 1, "threshold=1.0 should not split");
+    }
+
+    #[test]
+    fn test_multi_pass_template_subtract() {
+        // Multi-pass should find >= spikes as single pass
+        use crate::probe::ProbeLayout;
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let n_samples = 10000;
+        let mut data1 = vec![[0.0f64; 4]; n_samples];
+        let mut data2 = data1.clone();
+        // Inject overlapping spikes
+        for t in (200..9000).step_by(80) {
+            data1[t][0] = -12.0;
+            data2[t][0] = -12.0;
+            if t + 15 < n_samples {
+                data1[t + 15][1] = -10.0;
+                data2[t + 15][1] = -10.0;
+            }
+        }
+        let max_events = n_samples / 15 + 4;
+        let mut scratch1 = vec![0.0; n_samples];
+        let mut events1 = vec![MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; max_events];
+        let mut wf1 = vec![[0.0; 48]; max_events];
+        let mut feat1 = vec![[0.0; 4]; max_events];
+        let mut lab1 = vec![0usize; max_events];
+
+        let mut scratch2 = scratch1.clone();
+        let mut events2 = events1.clone();
+        let mut wf2 = wf1.clone();
+        let mut feat2 = feat1.clone();
+        let mut lab2 = lab1.clone();
+
+        let config1 = SortConfig {
+            template_subtract_passes: 1,
+            ..SortConfig::default()
+        };
+        let config2 = SortConfig {
+            template_subtract_passes: 3,
+            ..SortConfig::default()
+        };
+
+        let r1 = sort_multichannel::<4, 16, 48, 4, 2304, 32>(
+            &config1, &probe, &mut data1, &mut scratch1,
+            &mut events1, &mut wf1, &mut feat1, &mut lab1,
+        );
+        let r2 = sort_multichannel::<4, 16, 48, 4, 2304, 32>(
+            &config2, &probe, &mut data2, &mut scratch2,
+            &mut events2, &mut wf2, &mut feat2, &mut lab2,
+        );
+
+        assert!(r1.is_ok());
+        assert!(r2.is_ok());
+        let s1 = r1.unwrap();
+        let s2 = r2.unwrap();
+        assert!(
+            s2.n_spikes >= s1.n_spikes,
+            "3-pass ({}) should find >= spikes than 1-pass ({})",
+            s2.n_spikes, s1.n_spikes
         );
     }
 }
