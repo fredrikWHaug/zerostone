@@ -178,6 +178,7 @@ pub fn sort_dyn(
         16 => dispatch!(16, 256),
         32 => dispatch!(32, 1024),
         64 => dispatch!(64, 4096),
+        96 => dispatch!(96, 9216),
         128 => dispatch!(128, 16384),
         _ => Err(SortError::InvalidInput),
     }
@@ -443,7 +444,11 @@ mod tests {
         assert_eq!(results.len(), 2);
         // If spikes detected in second segment, their times should be >= 3000
         for t in &results[1].spike_times {
-            assert!(*t >= 3000, "spike time {} should be >= segment offset 3000", t);
+            assert!(
+                *t >= 3000,
+                "spike time {} should be >= segment offset 3000",
+                t
+            );
         }
     }
 

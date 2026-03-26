@@ -2087,279 +2087,283 @@ pub fn sort_multichannel<
         0
     };
     for _pass in 0..n_passes {
-    if n_clusters > 0 && n_extracted > 0 {
-        let mut tmpl_means = [[0.0f64; W]; N];
-        let mut tmpl_counts = [0u32; N];
-        let mut tmpl_peak_ch = [0usize; N];
+        if n_clusters > 0 && n_extracted > 0 {
+            let mut tmpl_means = [[0.0f64; W]; N];
+            let mut tmpl_counts = [0u32; N];
+            let mut tmpl_peak_ch = [0usize; N];
 
-        compute_cluster_means::<W, N>(
-            waveform_buf,
-            labels,
-            event_buf,
-            n_extracted,
-            n_clusters,
-            &mut tmpl_means,
-            &mut tmpl_counts,
-            &mut tmpl_peak_ch,
-        );
-
-        // Compute mean within-cluster L2 distance for rejection threshold
-        let mut mean_dist = [0.0f64; N];
-        for i in 0..n_extracted {
-            let label = labels[i];
-            if label < n_clusters && label < N {
-                let mut d = 0.0;
-                for w in 0..W {
-                    let diff = waveform_buf[i][w] - tmpl_means[label][w];
-                    d += diff * diff;
-                }
-                mean_dist[label] += d;
-            }
-        }
-        for c in 0..n_clusters.min(N) {
-            if tmpl_counts[c] > 0 {
-                mean_dist[c] /= tmpl_counts[c] as f64;
-            }
-        }
-        // Max acceptable distance: 3x the mean within-cluster distance
-        let mut max_accept_dist = 0.0f64;
-        let mut n_valid = 0;
-        for c in 0..n_clusters.min(N) {
-            if tmpl_counts[c] >= config.template_min_count as u32 {
-                max_accept_dist += mean_dist[c];
-                n_valid += 1;
-            }
-        }
-        if n_valid > 0 {
-            max_accept_dist = (max_accept_dist / n_valid as f64) * 3.0;
-        } else {
-            max_accept_dist = f64::MAX;
-        }
-
-        // Subtract templates from whitened data
-        subtract_templates_multichannel::<C, W, N>(
-            data,
-            event_buf,
-            n_extracted,
-            labels,
-            &tmpl_means,
-            &tmpl_counts,
-            &tmpl_peak_ch,
-            config.template_min_count,
-            config.pre_samples,
-        );
-
-        // Re-detect on residual at same threshold. After subtracting known
-        // templates, masked spikes (temporal overlap) become detectable.
-        // Using the same threshold avoids flooding with noise detections.
-        let remaining_buf = event_buf.len().saturating_sub(n_extracted);
-        if remaining_buf > 0 {
-            let unit_noise_re = [1.0f64; C];
-            let n_re_detected = detect_spikes_multichannel::<C>(
-                data,
-                config.threshold_multiplier,
-                &unit_noise_re,
-                config.refractory_samples,
-                &mut event_buf[n_extracted..],
+            compute_cluster_means::<W, N>(
+                waveform_buf,
+                labels,
+                event_buf,
+                n_extracted,
+                n_clusters,
+                &mut tmpl_means,
+                &mut tmpl_counts,
+                &mut tmpl_peak_ch,
             );
 
-            if n_re_detected > 0 {
-                // Dedup re-detections
-                let n_re_dedup = deduplicate_events::<C>(
+            // Compute mean within-cluster L2 distance for rejection threshold
+            let mut mean_dist = [0.0f64; N];
+            for i in 0..n_extracted {
+                let label = labels[i];
+                if label < n_clusters && label < N {
+                    let mut d = 0.0;
+                    for w in 0..W {
+                        let diff = waveform_buf[i][w] - tmpl_means[label][w];
+                        d += diff * diff;
+                    }
+                    mean_dist[label] += d;
+                }
+            }
+            for c in 0..n_clusters.min(N) {
+                if tmpl_counts[c] > 0 {
+                    mean_dist[c] /= tmpl_counts[c] as f64;
+                }
+            }
+            // Max acceptable distance: 3x the mean within-cluster distance
+            let mut max_accept_dist = 0.0f64;
+            let mut n_valid = 0;
+            for c in 0..n_clusters.min(N) {
+                if tmpl_counts[c] >= config.template_min_count as u32 {
+                    max_accept_dist += mean_dist[c];
+                    n_valid += 1;
+                }
+            }
+            if n_valid > 0 {
+                max_accept_dist = (max_accept_dist / n_valid as f64) * 3.0;
+            } else {
+                max_accept_dist = f64::MAX;
+            }
+
+            // Subtract templates from whitened data
+            subtract_templates_multichannel::<C, W, N>(
+                data,
+                event_buf,
+                n_extracted,
+                labels,
+                &tmpl_means,
+                &tmpl_counts,
+                &tmpl_peak_ch,
+                config.template_min_count,
+                config.pre_samples,
+            );
+
+            // Re-detect on residual at same threshold. After subtracting known
+            // templates, masked spikes (temporal overlap) become detectable.
+            // Using the same threshold avoids flooding with noise detections.
+            let remaining_buf = event_buf.len().saturating_sub(n_extracted);
+            if remaining_buf > 0 {
+                let unit_noise_re = [1.0f64; C];
+                let n_re_detected = detect_spikes_multichannel::<C>(
+                    data,
+                    config.threshold_multiplier,
+                    &unit_noise_re,
+                    config.refractory_samples,
                     &mut event_buf[n_extracted..],
-                    n_re_detected,
-                    probe,
-                    config.spatial_radius_um,
-                    config.temporal_radius,
                 );
 
-                // Filter out re-detections that overlap existing spikes
-                let mut n_new = 0usize;
-                'outer: for j in 0..n_re_dedup {
-                    let new_sample = event_buf[n_extracted + j].sample;
-                    for ev in event_buf.iter().take(n_extracted) {
-                        if new_sample.abs_diff(ev.sample) <= config.temporal_radius {
-                            continue 'outer;
-                        }
-                    }
-                    // Keep this event (compact in-place)
-                    if n_new != j {
-                        event_buf[n_extracted + n_new] = event_buf[n_extracted + j];
-                    }
-                    n_new += 1;
-                }
-
-                // Extract waveforms and assign to nearest template
-                if n_new > 0 {
-                    let remaining_wf = waveform_buf.len().saturating_sub(n_extracted);
-                    let n_to_extract = n_new.min(remaining_wf);
-                    let n_re_extracted = extract_peak_channel::<C, W>(
-                        data,
-                        &event_buf[n_extracted..],
-                        n_to_extract,
-                        config.pre_samples,
-                        &mut waveform_buf[n_extracted..],
+                if n_re_detected > 0 {
+                    // Dedup re-detections
+                    let n_re_dedup = deduplicate_events::<C>(
+                        &mut event_buf[n_extracted..],
+                        n_re_detected,
+                        probe,
+                        config.spatial_radius_um,
+                        config.temporal_radius,
                     );
 
-                    let mut n_accepted = 0usize;
-                    for j in 0..n_re_extracted {
-                        let (best_label, dist) = assign_to_nearest_template::<W, N>(
-                            &waveform_buf[n_extracted + j],
-                            &tmpl_means,
-                            &tmpl_counts,
-                            n_clusters,
-                        );
-                        if dist > max_accept_dist {
-                            continue; // reject: too far from any template
-                        }
-                        // Compact accepted spikes
-                        let dst = n_extracted + n_accepted;
-                        if dst != n_extracted + j {
-                            event_buf[dst] = event_buf[n_extracted + j];
-                            waveform_buf[dst] = waveform_buf[n_extracted + j];
-                        }
-                        if dst < labels.len() {
-                            labels[dst] = best_label;
-                        }
-                        n_accepted += 1;
-                    }
-                    n_extracted += n_accepted;
-                }
-            }
-        }
-
-        // 9e. Template-based NCC residual detection.
-        //
-        // After amplitude-threshold residual re-detection, scan the residual
-        // for template-shaped waveforms using normalized cross-correlation.
-        // This recovers weak units (SNR 2-4) that fall below the amplitude
-        // threshold but whose waveform shape matches a known template.
-        //
-        // Optimizations over naive sliding:
-        // - Sorted spike times + binary search for overlap check (O(log n) vs O(n))
-        // - Early amplitude check before expensive NCC computation
-        // - Adaptive step: skip by W/2 when amplitude is negligible
-        let remaining_ncc = event_buf.len().saturating_sub(n_extracted);
-        let remaining_wf_ncc = waveform_buf.len().saturating_sub(n_extracted);
-        if remaining_ncc > 0 && remaining_wf_ncc > 0 {
-            let ncc_threshold = 0.7;
-            let half_thresh = config.threshold_multiplier * 0.5;
-            let mut n_ncc_found = 0usize;
-
-            // Build sorted spike sample indices for binary search overlap check.
-            // Reuse scratch buffer (already available, large enough for spike times).
-            let n_existing = n_extracted;
-            let sorted_times_n = n_existing.min(scratch.len());
-            for i in 0..sorted_times_n {
-                scratch[i] = event_buf[i].sample as f64;
-            }
-            scratch[..sorted_times_n]
-                .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
-            let overlap_radius = (config.temporal_radius + W / 2) as f64;
-
-            for c in 0..n_clusters.min(N) {
-                if (tmpl_counts[c] as usize) < config.template_min_count {
-                    continue;
-                }
-                let ch = tmpl_peak_ch[c];
-                if ch >= C {
-                    continue;
-                }
-                // Precompute template norm
-                let mut t_norm_sq = 0.0;
-                for &tv in tmpl_means[c].iter() {
-                    t_norm_sq += tv * tv;
-                }
-                let t_norm = libm::sqrt(t_norm_sq);
-                if t_norm < 1e-15 {
-                    continue;
-                }
-                // NCC threshold squared for early rejection:
-                // ncc = dot / (r_norm * t_norm) > thresh  iff  dot^2 > thresh^2 * r_norm_sq * t_norm_sq
-                let ncc_thresh_sq = ncc_threshold * ncc_threshold;
-                let t_norm_sq_thresh = ncc_thresh_sq * t_norm_sq;
-
-                // Slide template across residual on peak channel
-                let pre = config.pre_samples;
-                let step = config.refractory_samples.max(W / 2);
-                let mut pos = pre;
-                while pos + W <= t_len {
-                    // Early amplitude check: if peak sample is negligible, skip ahead
-                    let peak_amp = libm::fabs(data[pos][ch]);
-                    if peak_amp < half_thresh {
-                        // Adaptive step: skip more aggressively in quiet regions
-                        pos += W / 4;
-                        continue;
-                    }
-
-                    // Binary search overlap check on sorted spike times
-                    let pos_f = pos as f64;
-                    let lo = pos_f - overlap_radius;
-                    let hi = pos_f + overlap_radius;
-                    // Find first spike time >= lo
-                    let mut left = 0usize;
-                    let mut right = sorted_times_n;
-                    while left < right {
-                        let mid = left + (right - left) / 2;
-                        if scratch[mid] < lo {
-                            left = mid + 1;
-                        } else {
-                            right = mid;
-                        }
-                    }
-                    let overlaps = left < sorted_times_n && scratch[left] <= hi;
-                    if overlaps {
-                        pos += step;
-                        continue;
-                    }
-
-                    // Compute NCC between residual window and template
-                    let start = pos - pre;
-                    let mut dot = 0.0;
-                    let mut r_norm_sq = 0.0;
-                    for w in 0..W {
-                        let rv = data[start + w][ch];
-                        dot += rv * tmpl_means[c][w];
-                        r_norm_sq += rv * rv;
-                    }
-
-                    // Early rejection: dot^2 < thresh^2 * r_norm_sq * t_norm_sq means ncc < threshold
-                    if dot * dot < t_norm_sq_thresh * r_norm_sq || dot <= 0.0 {
-                        pos += 1;
-                        continue;
-                    }
-
-                    let r_norm = libm::sqrt(r_norm_sq);
-                    let ncc = if r_norm > 1e-15 {
-                        dot / (r_norm * t_norm)
-                    } else {
-                        0.0
-                    };
-
-                    if ncc > ncc_threshold {
-                        let idx = n_extracted + n_ncc_found;
-                        if idx < event_buf.len() && idx < waveform_buf.len() && idx < labels.len() {
-                            event_buf[idx] = MultiChannelEvent {
-                                sample: pos,
-                                channel: ch,
-                                amplitude: peak_amp,
-                            };
-                            // Extract waveform
-                            for w in 0..W {
-                                waveform_buf[idx][w] = data[start + w][ch];
+                    // Filter out re-detections that overlap existing spikes
+                    let mut n_new = 0usize;
+                    'outer: for j in 0..n_re_dedup {
+                        let new_sample = event_buf[n_extracted + j].sample;
+                        for ev in event_buf.iter().take(n_extracted) {
+                            if new_sample.abs_diff(ev.sample) <= config.temporal_radius {
+                                continue 'outer;
                             }
-                            labels[idx] = c;
-                            n_ncc_found += 1;
                         }
-                        pos += step;
-                    } else {
-                        pos += 1;
+                        // Keep this event (compact in-place)
+                        if n_new != j {
+                            event_buf[n_extracted + n_new] = event_buf[n_extracted + j];
+                        }
+                        n_new += 1;
+                    }
+
+                    // Extract waveforms and assign to nearest template
+                    if n_new > 0 {
+                        let remaining_wf = waveform_buf.len().saturating_sub(n_extracted);
+                        let n_to_extract = n_new.min(remaining_wf);
+                        let n_re_extracted = extract_peak_channel::<C, W>(
+                            data,
+                            &event_buf[n_extracted..],
+                            n_to_extract,
+                            config.pre_samples,
+                            &mut waveform_buf[n_extracted..],
+                        );
+
+                        let mut n_accepted = 0usize;
+                        for j in 0..n_re_extracted {
+                            let (best_label, dist) = assign_to_nearest_template::<W, N>(
+                                &waveform_buf[n_extracted + j],
+                                &tmpl_means,
+                                &tmpl_counts,
+                                n_clusters,
+                            );
+                            if dist > max_accept_dist {
+                                continue; // reject: too far from any template
+                            }
+                            // Compact accepted spikes
+                            let dst = n_extracted + n_accepted;
+                            if dst != n_extracted + j {
+                                event_buf[dst] = event_buf[n_extracted + j];
+                                waveform_buf[dst] = waveform_buf[n_extracted + j];
+                            }
+                            if dst < labels.len() {
+                                labels[dst] = best_label;
+                            }
+                            n_accepted += 1;
+                        }
+                        n_extracted += n_accepted;
                     }
                 }
             }
-            n_extracted += n_ncc_found;
-        }
-    } // end if n_clusters > 0 && n_extracted > 0
+
+            // 9e. Template-based NCC residual detection.
+            //
+            // After amplitude-threshold residual re-detection, scan the residual
+            // for template-shaped waveforms using normalized cross-correlation.
+            // This recovers weak units (SNR 2-4) that fall below the amplitude
+            // threshold but whose waveform shape matches a known template.
+            //
+            // Optimizations over naive sliding:
+            // - Sorted spike times + binary search for overlap check (O(log n) vs O(n))
+            // - Early amplitude check before expensive NCC computation
+            // - Adaptive step: skip by W/2 when amplitude is negligible
+            let remaining_ncc = event_buf.len().saturating_sub(n_extracted);
+            let remaining_wf_ncc = waveform_buf.len().saturating_sub(n_extracted);
+            if remaining_ncc > 0 && remaining_wf_ncc > 0 {
+                let ncc_threshold = 0.7;
+                let half_thresh = config.threshold_multiplier * 0.5;
+                let mut n_ncc_found = 0usize;
+
+                // Build sorted spike sample indices for binary search overlap check.
+                // Reuse scratch buffer (already available, large enough for spike times).
+                let n_existing = n_extracted;
+                let sorted_times_n = n_existing.min(scratch.len());
+                for i in 0..sorted_times_n {
+                    scratch[i] = event_buf[i].sample as f64;
+                }
+                scratch[..sorted_times_n].sort_unstable_by(|a, b| {
+                    a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
+                });
+                let overlap_radius = (config.temporal_radius + W / 2) as f64;
+
+                for c in 0..n_clusters.min(N) {
+                    if (tmpl_counts[c] as usize) < config.template_min_count {
+                        continue;
+                    }
+                    let ch = tmpl_peak_ch[c];
+                    if ch >= C {
+                        continue;
+                    }
+                    // Precompute template norm
+                    let mut t_norm_sq = 0.0;
+                    for &tv in tmpl_means[c].iter() {
+                        t_norm_sq += tv * tv;
+                    }
+                    let t_norm = libm::sqrt(t_norm_sq);
+                    if t_norm < 1e-15 {
+                        continue;
+                    }
+                    // NCC threshold squared for early rejection:
+                    // ncc = dot / (r_norm * t_norm) > thresh  iff  dot^2 > thresh^2 * r_norm_sq * t_norm_sq
+                    let ncc_thresh_sq = ncc_threshold * ncc_threshold;
+                    let t_norm_sq_thresh = ncc_thresh_sq * t_norm_sq;
+
+                    // Slide template across residual on peak channel
+                    let pre = config.pre_samples;
+                    let step = config.refractory_samples.max(W / 2);
+                    let mut pos = pre;
+                    while pos + W <= t_len {
+                        // Early amplitude check: if peak sample is negligible, skip ahead
+                        let peak_amp = libm::fabs(data[pos][ch]);
+                        if peak_amp < half_thresh {
+                            // Adaptive step: skip more aggressively in quiet regions
+                            pos += W / 4;
+                            continue;
+                        }
+
+                        // Binary search overlap check on sorted spike times
+                        let pos_f = pos as f64;
+                        let lo = pos_f - overlap_radius;
+                        let hi = pos_f + overlap_radius;
+                        // Find first spike time >= lo
+                        let mut left = 0usize;
+                        let mut right = sorted_times_n;
+                        while left < right {
+                            let mid = left + (right - left) / 2;
+                            if scratch[mid] < lo {
+                                left = mid + 1;
+                            } else {
+                                right = mid;
+                            }
+                        }
+                        let overlaps = left < sorted_times_n && scratch[left] <= hi;
+                        if overlaps {
+                            pos += step;
+                            continue;
+                        }
+
+                        // Compute NCC between residual window and template
+                        let start = pos - pre;
+                        let mut dot = 0.0;
+                        let mut r_norm_sq = 0.0;
+                        for w in 0..W {
+                            let rv = data[start + w][ch];
+                            dot += rv * tmpl_means[c][w];
+                            r_norm_sq += rv * rv;
+                        }
+
+                        // Early rejection: dot^2 < thresh^2 * r_norm_sq * t_norm_sq means ncc < threshold
+                        if dot * dot < t_norm_sq_thresh * r_norm_sq || dot <= 0.0 {
+                            pos += 1;
+                            continue;
+                        }
+
+                        let r_norm = libm::sqrt(r_norm_sq);
+                        let ncc = if r_norm > 1e-15 {
+                            dot / (r_norm * t_norm)
+                        } else {
+                            0.0
+                        };
+
+                        if ncc > ncc_threshold {
+                            let idx = n_extracted + n_ncc_found;
+                            if idx < event_buf.len()
+                                && idx < waveform_buf.len()
+                                && idx < labels.len()
+                            {
+                                event_buf[idx] = MultiChannelEvent {
+                                    sample: pos,
+                                    channel: ch,
+                                    amplitude: peak_amp,
+                                };
+                                // Extract waveform
+                                for w in 0..W {
+                                    waveform_buf[idx][w] = data[start + w][ch];
+                                }
+                                labels[idx] = c;
+                                n_ncc_found += 1;
+                            }
+                            pos += step;
+                        } else {
+                            pos += 1;
+                        }
+                    }
+                }
+                n_extracted += n_ncc_found;
+            }
+        } // end if n_clusters > 0 && n_extracted > 0
     } // end multi-pass loop
 
     // 10. Quality metrics
@@ -4123,9 +4127,9 @@ mod tests {
             &features,
             &events,
             1,
-            0.1,   // isi_threshold
-            15,    // refractory
-            5,     // min_cluster_size
+            0.1, // isi_threshold
+            15,  // refractory
+            5,   // min_cluster_size
             &mut scratch,
             8,
         );
@@ -4139,13 +4143,7 @@ mod tests {
         let mut labels = vec![0usize; n_spikes];
         // Two populations in feature space
         let features: Vec<[f64; 2]> = (0..n_spikes)
-            .map(|i| {
-                if i % 2 == 0 {
-                    [5.0, 0.0]
-                } else {
-                    [0.0, 5.0]
-                }
-            })
+            .map(|i| if i % 2 == 0 { [5.0, 0.0] } else { [0.0, 5.0] })
             .collect();
         // Interleaved spike times: 0, 5, 10, 15, ... (5 samples apart, < 15 refractory)
         let events: Vec<MultiChannelEvent> = (0..n_spikes)
@@ -4162,13 +4160,17 @@ mod tests {
             &features,
             &events,
             1,
-            0.05,  // strict ISI threshold
-            15,    // refractory
-            5,     // min_cluster_size
+            0.05, // strict ISI threshold
+            15,   // refractory
+            5,    // min_cluster_size
             &mut scratch,
             8,
         );
-        assert!(n >= 2, "interleaved neurons should be split (got {} clusters)", n);
+        assert!(
+            n >= 2,
+            "interleaved neurons should be split (got {} clusters)",
+            n
+        );
     }
 
     #[test]
@@ -4178,7 +4180,16 @@ mod tests {
         let events: Vec<MultiChannelEvent> = vec![];
         let mut scratch = [0.0f64; 10];
         let n = isi_violation_split::<2>(
-            0, &mut labels, &features, &events, 0, 0.1, 15, 5, &mut scratch, 8,
+            0,
+            &mut labels,
+            &features,
+            &events,
+            0,
+            0.1,
+            15,
+            5,
+            &mut scratch,
+            8,
         );
         assert_eq!(n, 0);
     }
@@ -4198,7 +4209,16 @@ mod tests {
         let mut scratch = [0.0f64; 30];
         // threshold = 1.0 means only split if 100% ISI violations (impossible)
         let n = isi_violation_split::<2>(
-            20, &mut labels, &features, &events, 1, 1.0, 15, 5, &mut scratch, 8,
+            20,
+            &mut labels,
+            &features,
+            &events,
+            1,
+            1.0,
+            15,
+            5,
+            &mut scratch,
+            8,
         );
         assert_eq!(n, 1, "threshold=1.0 should not split");
     }
@@ -4222,7 +4242,14 @@ mod tests {
         }
         let max_events = n_samples / 15 + 4;
         let mut scratch1 = vec![0.0; n_samples];
-        let mut events1 = vec![MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; max_events];
+        let mut events1 = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0
+            };
+            max_events
+        ];
         let mut wf1 = vec![[0.0; 48]; max_events];
         let mut feat1 = vec![[0.0; 4]; max_events];
         let mut lab1 = vec![0usize; max_events];
@@ -4243,12 +4270,24 @@ mod tests {
         };
 
         let r1 = sort_multichannel::<4, 16, 48, 4, 2304, 32>(
-            &config1, &probe, &mut data1, &mut scratch1,
-            &mut events1, &mut wf1, &mut feat1, &mut lab1,
+            &config1,
+            &probe,
+            &mut data1,
+            &mut scratch1,
+            &mut events1,
+            &mut wf1,
+            &mut feat1,
+            &mut lab1,
         );
         let r2 = sort_multichannel::<4, 16, 48, 4, 2304, 32>(
-            &config2, &probe, &mut data2, &mut scratch2,
-            &mut events2, &mut wf2, &mut feat2, &mut lab2,
+            &config2,
+            &probe,
+            &mut data2,
+            &mut scratch2,
+            &mut events2,
+            &mut wf2,
+            &mut feat2,
+            &mut lab2,
         );
 
         assert!(r1.is_ok());
@@ -4258,7 +4297,8 @@ mod tests {
         assert!(
             s2.n_spikes >= s1.n_spikes,
             "3-pass ({}) should find >= spikes than 1-pass ({})",
-            s2.n_spikes, s1.n_spikes
+            s2.n_spikes,
+            s1.n_spikes
         );
     }
 }

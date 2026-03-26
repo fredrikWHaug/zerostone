@@ -229,9 +229,10 @@ fn sort_multichannel<'py>(
         16 => do_sort!(16, 256),
         32 => do_sort!(32, 1024),
         64 => do_sort!(64, 4096),
+        96 => do_sort!(96, 9216),
         128 => do_sort!(128, 16384),
         _ => Err(PyValueError::new_err(
-            "n_channels must be 2, 4, 8, 16, 32, 64, or 128",
+            "n_channels must be 2, 4, 8, 16, 32, 64, 96, or 128",
         )),
     }
 }

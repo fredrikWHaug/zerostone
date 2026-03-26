@@ -198,3 +198,74 @@ class TestLargeProbe:
         assert abs(d - 127 * 20.0) < 1e-9
         xr, yr = probe.spatial_extent()
         assert abs(yr - 127 * 20.0) < 1e-9
+
+
+class TestProbePresets:
+    def test_neuropixels_1_channels(self):
+        probe = zbci.ProbeLayout.neuropixels_1()
+        assert probe.n_channels == 384
+
+    def test_neuropixels_1_two_column(self):
+        probe = zbci.ProbeLayout.neuropixels_1()
+        xr, yr = probe.spatial_extent()
+        assert abs(xr - 32.0) < 1e-9  # 2-column, 32um x-pitch
+
+    def test_neuropixels_1_distance(self):
+        probe = zbci.ProbeLayout.neuropixels_1()
+        d = probe.channel_distance(0, 1)
+        assert d > 0.0 and not math.isnan(d)
+
+    def test_neuropixels_1_neighbors(self):
+        probe = zbci.ProbeLayout.neuropixels_1()
+        neighbors = probe.neighbor_channels(100, 50.0)
+        assert len(neighbors) > 0
+
+    def test_neuropixels_1_nearest(self):
+        probe = zbci.ProbeLayout.neuropixels_1()
+        nearest = probe.nearest_channels(100, 5)
+        assert len(nearest) == 5
+
+    def test_neuropixels_2_channels(self):
+        probe = zbci.ProbeLayout.neuropixels_2()
+        assert probe.n_channels == 384
+
+    def test_neuropixels_2_staggered(self):
+        probe = zbci.ProbeLayout.neuropixels_2()
+        xr, yr = probe.spatial_extent()
+        assert abs(xr - 48.0) < 1e-9  # 2 base cols * 32um + 16um stagger = 48
+
+    def test_utah_array_channels(self):
+        probe = zbci.ProbeLayout.utah_array()
+        assert probe.n_channels == 96
+
+    def test_utah_array_extent(self):
+        probe = zbci.ProbeLayout.utah_array()
+        xr, yr = probe.spatial_extent()
+        assert abs(xr - 3600.0) < 1e-9  # 10 cols * 400um pitch -> 9*400=3600
+        assert abs(yr - 3600.0) < 1e-9
+
+    def test_utah_array_neighbors(self):
+        probe = zbci.ProbeLayout.utah_array()
+        neighbors = probe.neighbor_channels(50, 500.0)
+        assert len(neighbors) > 0
+
+    def test_utah_array_nearest(self):
+        probe = zbci.ProbeLayout.utah_array()
+        nearest = probe.nearest_channels(50, 4)
+        assert len(nearest) == 4
+
+    def test_linear_96ch(self):
+        probe = zbci.ProbeLayout.linear(96, 25.0)
+        assert probe.n_channels == 96
+        d = probe.channel_distance(0, 95)
+        assert abs(d - 95 * 25.0) < 1e-9
+
+    def test_linear_384ch(self):
+        probe = zbci.ProbeLayout.linear(384, 20.0)
+        assert probe.n_channels == 384
+        d = probe.channel_distance(0, 383)
+        assert abs(d - 383 * 20.0) < 1e-9
+
+    def test_neuropixels_1_repr(self):
+        probe = zbci.ProbeLayout.neuropixels_1()
+        assert "384" in repr(probe)

@@ -58,7 +58,9 @@ make_probe_inner!(Probe8, 8);
 make_probe_inner!(Probe16, 16);
 make_probe_inner!(Probe32, 32);
 make_probe_inner!(Probe64, 64);
+make_probe_inner!(Probe96, 96);
 make_probe_inner!(Probe128, 128);
+make_probe_inner!(Probe384, 384);
 
 enum ProbeInner {
     C4(Probe4),
@@ -66,7 +68,9 @@ enum ProbeInner {
     C16(Probe16),
     C32(Box<Probe32>),
     C64(Box<Probe64>),
+    C96(Box<Probe96>),
     C128(Box<Probe128>),
+    C384(Box<Probe384>),
 }
 
 /// Probe geometry for multi-channel electrode arrays.
@@ -74,7 +78,7 @@ enum ProbeInner {
 /// Stores 2D positions for each channel on a probe (Neuropixels, tetrodes,
 /// high-density arrays) and provides spatial queries used by spike sorting.
 ///
-/// Supports 4, 8, 16, 32, 64, or 128 channels.
+/// Supports 4, 8, 16, 32, 64, 96, 128, or 384 channels.
 ///
 /// # Example
 /// ```python
@@ -108,10 +112,12 @@ impl ProbeLayout {
             16 => ProbeInner::C16(Probe16::from_positions(&positions)),
             32 => ProbeInner::C32(Box::new(Probe32::from_positions(&positions))),
             64 => ProbeInner::C64(Box::new(Probe64::from_positions(&positions))),
+            96 => ProbeInner::C96(Box::new(Probe96::from_positions(&positions))),
             128 => ProbeInner::C128(Box::new(Probe128::from_positions(&positions))),
+            384 => ProbeInner::C384(Box::new(Probe384::from_positions(&positions))),
             _ => {
                 return Err(PyValueError::new_err(
-                    "n_channels must be 4, 8, 16, 32, 64, or 128",
+                    "n_channels must be 4, 8, 16, 32, 64, 96, 128, or 384",
                 ));
             }
         };
@@ -121,7 +127,7 @@ impl ProbeLayout {
     /// Create a linear probe with channels spaced along the y-axis.
     ///
     /// Args:
-    ///     n_channels (int): Number of channels (4, 8, 16, 32, 64, or 128).
+    ///     n_channels (int): Number of channels (4, 8, 16, 32, 64, 96, 128, or 384).
     ///     pitch (float): Spacing between channels in micrometers.
     ///
     /// Returns:
@@ -134,10 +140,12 @@ impl ProbeLayout {
             16 => ProbeInner::C16(Probe16::linear(pitch)),
             32 => ProbeInner::C32(Box::new(Probe32::linear(pitch))),
             64 => ProbeInner::C64(Box::new(Probe64::linear(pitch))),
+            96 => ProbeInner::C96(Box::new(Probe96::linear(pitch))),
             128 => ProbeInner::C128(Box::new(Probe128::linear(pitch))),
+            384 => ProbeInner::C384(Box::new(Probe384::linear(pitch))),
             _ => {
                 return Err(PyValueError::new_err(
-                    "n_channels must be 4, 8, 16, 32, 64, or 128",
+                    "n_channels must be 4, 8, 16, 32, 64, 96, 128, or 384",
                 ));
             }
         };
@@ -162,6 +170,48 @@ impl ProbeLayout {
         }
     }
 
+    /// Create a Neuropixels 1.0 probe (384 channels).
+    ///
+    /// Two-column staggered layout, 32um x-pitch, 20um y-pitch.
+    ///
+    /// Returns:
+    ///     ProbeLayout: A 384-channel Neuropixels 1.0 geometry.
+    #[staticmethod]
+    fn neuropixels_1() -> Self {
+        let probe = zs_probe::neuropixels_1();
+        Self {
+            inner: ProbeInner::C384(Box::new(Probe384(probe))),
+        }
+    }
+
+    /// Create a Neuropixels 2.0 single-shank probe (384 channels).
+    ///
+    /// Four-column staggered layout, 32um x-pitch, 15um y-pitch.
+    ///
+    /// Returns:
+    ///     ProbeLayout: A 384-channel Neuropixels 2.0 geometry.
+    #[staticmethod]
+    fn neuropixels_2() -> Self {
+        let probe = zs_probe::neuropixels_2();
+        Self {
+            inner: ProbeInner::C384(Box::new(Probe384(probe))),
+        }
+    }
+
+    /// Create a Utah array probe (96 channels).
+    ///
+    /// 10x10 grid with 4 corners removed, 400um pitch.
+    ///
+    /// Returns:
+    ///     ProbeLayout: A 96-channel Utah array geometry.
+    #[staticmethod]
+    fn utah_array() -> Self {
+        let probe = zs_probe::utah_array();
+        Self {
+            inner: ProbeInner::C96(Box::new(Probe96(probe))),
+        }
+    }
+
     /// Euclidean distance between two channels.
     ///
     /// Args:
@@ -177,7 +227,9 @@ impl ProbeLayout {
             ProbeInner::C16(p) => p.channel_distance(ch_a, ch_b),
             ProbeInner::C32(p) => p.channel_distance(ch_a, ch_b),
             ProbeInner::C64(p) => p.channel_distance(ch_a, ch_b),
+            ProbeInner::C96(p) => p.channel_distance(ch_a, ch_b),
             ProbeInner::C128(p) => p.channel_distance(ch_a, ch_b),
+            ProbeInner::C384(p) => p.channel_distance(ch_a, ch_b),
         }
     }
 
@@ -196,7 +248,9 @@ impl ProbeLayout {
             ProbeInner::C16(p) => p.neighbor_channels(channel, radius),
             ProbeInner::C32(p) => p.neighbor_channels(channel, radius),
             ProbeInner::C64(p) => p.neighbor_channels(channel, radius),
+            ProbeInner::C96(p) => p.neighbor_channels(channel, radius),
             ProbeInner::C128(p) => p.neighbor_channels(channel, radius),
+            ProbeInner::C384(p) => p.neighbor_channels(channel, radius),
         }
     }
 
@@ -215,7 +269,9 @@ impl ProbeLayout {
             ProbeInner::C16(p) => p.nearest_channels(channel, k),
             ProbeInner::C32(p) => p.nearest_channels(channel, k),
             ProbeInner::C64(p) => p.nearest_channels(channel, k),
+            ProbeInner::C96(p) => p.nearest_channels(channel, k),
             ProbeInner::C128(p) => p.nearest_channels(channel, k),
+            ProbeInner::C384(p) => p.nearest_channels(channel, k),
         }
     }
 
@@ -230,7 +286,9 @@ impl ProbeLayout {
             ProbeInner::C16(p) => p.spatial_extent(),
             ProbeInner::C32(p) => p.spatial_extent(),
             ProbeInner::C64(p) => p.spatial_extent(),
+            ProbeInner::C96(p) => p.spatial_extent(),
             ProbeInner::C128(p) => p.spatial_extent(),
+            ProbeInner::C384(p) => p.spatial_extent(),
         }
     }
 
@@ -243,7 +301,9 @@ impl ProbeLayout {
             ProbeInner::C16(p) => p.n_channels(),
             ProbeInner::C32(p) => p.n_channels(),
             ProbeInner::C64(p) => p.n_channels(),
+            ProbeInner::C96(p) => p.n_channels(),
             ProbeInner::C128(p) => p.n_channels(),
+            ProbeInner::C384(p) => p.n_channels(),
         }
     }
 
@@ -261,7 +321,9 @@ impl ProbeLayout {
             ProbeInner::C16(p) => p.n_channels(),
             ProbeInner::C32(p) => p.n_channels(),
             ProbeInner::C64(p) => p.n_channels(),
+            ProbeInner::C96(p) => p.n_channels(),
             ProbeInner::C128(p) => p.n_channels(),
+            ProbeInner::C384(p) => p.n_channels(),
         }
     }
 }
@@ -304,7 +366,9 @@ where
     try_extract!(C16, inner, 16);
     try_extract!(C32, inner, 32);
     try_extract!(C64, inner, 64);
+    try_extract!(C96, inner, 96);
     try_extract!(C128, inner, 128);
+    try_extract!(C384, inner, 384);
 
     Err(PyValueError::new_err(format!(
         "Unsupported probe channel count {}",
@@ -339,7 +403,9 @@ pub fn get_positions(probe: &ProbeLayout, n_channels: usize) -> PyResult<Vec<[f6
         16 => extract_pos!(C16, 16),
         32 => extract_pos!(C32, 32),
         64 => extract_pos!(C64, 64),
+        96 => extract_pos!(C96, 96),
         128 => extract_pos!(C128, 128),
+        384 => extract_pos!(C384, 384),
         _ => {}
     }
 
