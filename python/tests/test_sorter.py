@@ -760,3 +760,86 @@ class TestStreamingSorter:
         data = rng.standard_normal((5000, 4))
         result = sorter.feed(data, probe)
         assert "n_spikes" in result
+
+
+# ---- sort_batch_parallel tests ----
+
+
+class TestSortBatchParallel:
+    def test_basic_noise(self):
+        """Batch parallel on noise data returns correct number of segments."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        data = np.zeros((10000, 4))
+        results = zbci.sort_batch_parallel(data, probe, segment_samples=3000)
+        assert len(results) == 4  # ceil(10000/3000)
+        for r in results:
+            assert "n_spikes" in r
+            assert "labels" in r
+            assert "spike_times" in r
+
+    def test_returns_list_of_dicts(self):
+        """Each result is a dict with expected keys."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(500)
+        data = rng.standard_normal((6000, 4))
+        results = zbci.sort_batch_parallel(data, probe, segment_samples=3000)
+        assert isinstance(results, list)
+        assert len(results) == 2
+        for r in results:
+            assert isinstance(r, dict)
+            for key in ["n_spikes", "n_clusters", "labels", "spike_times",
+                        "spike_channels", "clusters"]:
+                assert key in r
+
+    def test_spike_times_offset(self):
+        """Spike times in second segment should be >= segment_samples."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(501)
+        data = rng.standard_normal((6000, 4)) * 0.3
+        # Inject spikes only in second segment
+        for t in range(3500, 5500, 200):
+            data[t, 0] -= 15.0
+        results = zbci.sort_batch_parallel(
+            data, probe, segment_samples=3000, threshold=4.0
+        )
+        assert len(results) == 2
+        if results[1]["n_spikes"] > 0:
+            times = results[1]["spike_times"]
+            assert np.all(times >= 3000), "Second segment times should be offset"
+
+    def test_with_spikes(self):
+        """Batch parallel detects spikes across segments."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(502)
+        data = rng.standard_normal((9000, 4)) * 0.3
+        for t in range(500, 8500, 200):
+            data[t, 0] -= 10.0
+        results = zbci.sort_batch_parallel(
+            data, probe, segment_samples=3000, threshold=4.0
+        )
+        total_spikes = sum(r["n_spikes"] for r in results)
+        assert total_spikes > 0
+
+    def test_deterministic(self):
+        """Batch parallel should be deterministic."""
+        probe = zbci.ProbeLayout.linear(4, 25.0)
+        rng = np.random.default_rng(503)
+        data = rng.standard_normal((6000, 4)) * 0.3
+        for t in range(500, 5500, 200):
+            data[t, 0] -= 10.0
+        r1 = zbci.sort_batch_parallel(data.copy(), probe, segment_samples=3000)
+        r2 = zbci.sort_batch_parallel(data.copy(), probe, segment_samples=3000)
+        for s1, s2 in zip(r1, r2):
+            assert s1["n_spikes"] == s2["n_spikes"]
+            np.testing.assert_array_equal(s1["labels"], s2["labels"])
+            np.testing.assert_array_equal(s1["spike_times"], s2["spike_times"])
+
+    def test_32ch(self):
+        """Batch parallel on 32-channel data."""
+        probe = zbci.ProbeLayout.linear(32, 25.0)
+        rng = np.random.default_rng(504)
+        data = rng.standard_normal((6000, 32))
+        results = zbci.sort_batch_parallel(data, probe, segment_samples=3000)
+        assert len(results) == 2
+        for r in results:
+            assert r["n_spikes"] >= 0

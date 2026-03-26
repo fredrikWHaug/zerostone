@@ -183,6 +183,112 @@ pub fn sort_dyn(
     }
 }
 
+/// Sort a long recording in parallel by splitting into segments.
+///
+/// Divides the recording into `segment_samples`-long chunks and sorts
+/// each independently using rayon's thread pool. Spike times in the
+/// returned results are offset to reflect their position in the full
+/// recording. Each segment's result is returned as a separate
+/// `DynSortResult` in the output vector.
+///
+/// # Parameters
+///
+/// * `config` - Sorting configuration.
+/// * `positions` - 2D electrode positions, one `[x, y]` per channel.
+/// * `data` - Row-major flat array of shape `(n_samples, n_channels)`.
+/// * `n_samples` - Total number of time samples.
+/// * `n_channels` - Number of channels.
+/// * `segment_samples` - Samples per segment (e.g. 30000 for 1s at 30kHz).
+///
+/// # Returns
+///
+/// A vector of `DynSortResult`, one per segment, with spike times
+/// adjusted to global sample indices.
+#[cfg(feature = "parallel")]
+pub fn sort_batch_parallel(
+    config: &SortConfig,
+    positions: &[[f64; 2]],
+    data: &mut [f64],
+    n_samples: usize,
+    n_channels: usize,
+    segment_samples: usize,
+) -> Result<Vec<DynSortResult>, SortError> {
+    use rayon::prelude::*;
+
+    if data.len() != n_samples * n_channels {
+        return Err(SortError::InvalidInput);
+    }
+    if positions.len() != n_channels {
+        return Err(SortError::InvalidInput);
+    }
+    if segment_samples < 48 {
+        return Err(SortError::InsufficientData);
+    }
+
+    // Split into segments
+    let n_segments = n_samples.div_ceil(segment_samples);
+    let mut segments: Vec<(usize, Vec<f64>)> = Vec::with_capacity(n_segments);
+    for seg in 0..n_segments {
+        let start = seg * segment_samples;
+        let end = (start + segment_samples).min(n_samples);
+        let seg_data = data[start * n_channels..end * n_channels].to_vec();
+        segments.push((start, seg_data));
+    }
+
+    // Sort each segment in parallel
+    let results: Vec<Result<DynSortResult, SortError>> = segments
+        .par_iter_mut()
+        .map(|(offset, seg_data)| {
+            let seg_samples = seg_data.len() / n_channels;
+            let mut result = sort_dyn(config, positions, seg_data, seg_samples, n_channels)?;
+            // Offset spike times to global indices
+            for t in result.spike_times.iter_mut() {
+                *t += *offset;
+            }
+            Ok(result)
+        })
+        .collect();
+
+    // Collect results, propagating first error
+    results.into_iter().collect()
+}
+
+/// Merge multiple segment results into a single `DynSortResult`.
+///
+/// Concatenates spikes from all segments. Labels are kept per-segment
+/// (not unified across segments). For cross-segment label unification,
+/// use `StreamingSorter` instead.
+pub fn merge_batch_results(segments: &[DynSortResult]) -> DynSortResult {
+    let total_spikes: usize = segments.iter().map(|s| s.n_spikes).sum();
+    let mut labels = Vec::with_capacity(total_spikes);
+    let mut spike_times = Vec::with_capacity(total_spikes);
+    let mut spike_channels = Vec::with_capacity(total_spikes);
+    let mut max_cluster_id = 0usize;
+    let mut all_clusters = Vec::new();
+
+    for seg in segments {
+        // Offset labels by the running cluster count so they don't collide
+        for &l in &seg.labels {
+            labels.push(l + max_cluster_id);
+        }
+        spike_times.extend_from_slice(&seg.spike_times);
+        spike_channels.extend_from_slice(&seg.spike_channels);
+        for c in &seg.clusters {
+            all_clusters.push(c.clone());
+        }
+        max_cluster_id += seg.n_clusters;
+    }
+
+    DynSortResult {
+        n_spikes: total_spikes,
+        n_clusters: all_clusters.len(),
+        labels,
+        spike_times,
+        spike_channels,
+        clusters: all_clusters,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,5 +362,95 @@ mod tests {
         let config = SortConfig::default();
         let result = sort_dyn(&config, &positions, &mut data, n_samples, n_ch);
         assert!(result.is_err());
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn test_sort_batch_parallel_noise() {
+        let n_ch = 4;
+        let n_samples = 10000;
+        let segment = 3000;
+        let mut data = vec![0.0f64; n_samples * n_ch];
+        for (i, d) in data.iter_mut().enumerate() {
+            *d = ((i * 17 + 3) % 100) as f64 * 0.001 - 0.05;
+        }
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let positions: Vec<[f64; 2]> = probe.positions().to_vec();
+        let config = SortConfig::default();
+        let results =
+            super::sort_batch_parallel(&config, &positions, &mut data, n_samples, n_ch, segment)
+                .unwrap();
+        // 10000 / 3000 = 4 segments (ceil)
+        assert_eq!(results.len(), 4);
+        for r in &results {
+            assert_eq!(r.n_spikes, 0);
+        }
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn test_sort_batch_parallel_merge() {
+        let n_ch = 4;
+        let n_samples = 6000;
+        let segment = 3000;
+        let mut data = vec![0.0f64; n_samples * n_ch];
+        for (i, d) in data.iter_mut().enumerate() {
+            *d = ((i * 17 + 3) % 100) as f64 * 0.001 - 0.05;
+        }
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let positions: Vec<[f64; 2]> = probe.positions().to_vec();
+        let config = SortConfig::default();
+        let results =
+            super::sort_batch_parallel(&config, &positions, &mut data, n_samples, n_ch, segment)
+                .unwrap();
+        assert_eq!(results.len(), 2);
+        let merged = super::merge_batch_results(&results);
+        assert_eq!(merged.n_spikes, 0);
+        assert_eq!(merged.labels.len(), 0);
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn test_sort_batch_parallel_spike_time_offsets() {
+        // Inject a clear spike in the second segment to verify offset
+        let n_ch = 4;
+        let n_samples = 6000;
+        let segment = 3000;
+        let mut data = vec![0.0f64; n_samples * n_ch];
+        // Small noise everywhere
+        for (i, d) in data.iter_mut().enumerate() {
+            *d = ((i * 7 + 11) % 50) as f64 * 0.001 - 0.025;
+        }
+        // Inject spike at sample 4000 (second segment, local sample 1000), channel 0
+        for offset in 0..20 {
+            let t = 4000 + offset;
+            if t < n_samples {
+                // Triangle shape with peak at center
+                let amp = if offset < 10 {
+                    -(offset as f64) * 3.0
+                } else {
+                    -((20 - offset) as f64) * 3.0
+                };
+                data[t * n_ch] = amp;
+            }
+        }
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let positions: Vec<[f64; 2]> = probe.positions().to_vec();
+        let config = SortConfig::default();
+        let results =
+            super::sort_batch_parallel(&config, &positions, &mut data, n_samples, n_ch, segment)
+                .unwrap();
+        assert_eq!(results.len(), 2);
+        // If spikes detected in second segment, their times should be >= 3000
+        for t in &results[1].spike_times {
+            assert!(*t >= 3000, "spike time {} should be >= segment offset 3000", t);
+        }
+    }
+
+    #[test]
+    fn test_merge_batch_results_empty() {
+        let merged = super::merge_batch_results(&[]);
+        assert_eq!(merged.n_spikes, 0);
+        assert_eq!(merged.n_clusters, 0);
     }
 }

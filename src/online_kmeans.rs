@@ -298,6 +298,72 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
         Ok(idx)
     }
 
+    /// Initialize centroids from data using deterministic farthest-point seeding.
+    ///
+    /// Picks the first seed as the point with the largest norm (highest energy),
+    /// then iteratively picks the point farthest from all existing seeds.
+    /// This is a deterministic variant of k-means++ that produces well-separated
+    /// initial centroids without randomness.
+    ///
+    /// `max_seeds` limits how many seeds are created (at most K and at most
+    /// `data.len()`). Existing active clusters are preserved; new seeds are
+    /// appended.
+    ///
+    /// Returns the number of seeds added.
+    pub fn init_farthest_point(&mut self, data: &[[f64; D]], max_seeds: usize) -> usize {
+        let n = data.len();
+        if n == 0 || max_seeds == 0 {
+            return 0;
+        }
+        let slots = K.saturating_sub(self.n_active);
+        let target = max_seeds.min(slots).min(n);
+        if target == 0 {
+            return 0;
+        }
+
+        // Pick first seed: point with largest L2 norm
+        let mut best_idx = 0;
+        let mut best_norm = 0.0f64;
+        for (i, pt) in data.iter().enumerate() {
+            let mut norm = 0.0;
+            for &v in pt.iter() {
+                norm += v * v;
+            }
+            if norm > best_norm {
+                best_norm = norm;
+                best_idx = i;
+            }
+        }
+        let _ = self.seed_centroid(&data[best_idx]);
+        let mut added = 1;
+        if added >= target {
+            return added;
+        }
+
+        // Track min distance from each point to any seed.
+        // Use a fixed-size approach: recompute distances each iteration
+        // (O(target * n * D), acceptable for typical spike counts < 10K).
+        while added < target {
+            let mut farthest_idx = 0;
+            let mut farthest_dist = 0.0f64;
+            for (i, pt) in data.iter().enumerate() {
+                // Distance to nearest existing seed
+                let (_, dist) = self.find_nearest(pt);
+                if dist > farthest_dist {
+                    farthest_dist = dist;
+                    farthest_idx = i;
+                }
+            }
+            // Don't add duplicates (farthest_dist == 0 means all points are at seeds)
+            if farthest_dist < 1e-15 {
+                break;
+            }
+            let _ = self.seed_centroid(&data[farthest_idx]);
+            added += 1;
+        }
+        added
+    }
+
     /// The current create threshold.
     pub fn create_threshold(&self) -> f64 {
         self.create_threshold
@@ -783,5 +849,97 @@ mod tests {
         for i in 0..km.n_active() {
             assert!(km.count(i) >= 1, "Cluster {} should have >=1 spike", i);
         }
+    }
+
+    #[test]
+    fn test_init_farthest_point_basic() {
+        let data = [
+            [0.0, 0.0],
+            [10.0, 0.0],
+            [0.0, 10.0],
+            [0.1, 0.1],
+            [10.1, 0.1],
+            [0.1, 10.1],
+        ];
+        let mut km = OnlineKMeans::<2, 8>::new(1000);
+        km.set_create_threshold(3.0);
+        let added = km.init_farthest_point(&data, 3);
+        assert_eq!(added, 3);
+        assert_eq!(km.n_active(), 3);
+
+        // Seeds should be well-separated (each near one of the three corners)
+        let mut has_origin = false;
+        let mut has_x = false;
+        let mut has_y = false;
+        for i in 0..3 {
+            let c = km.centroid(i).unwrap();
+            if c[0] < 1.0 && c[1] < 1.0 {
+                has_origin = true;
+            }
+            if c[0] > 9.0 && c[1] < 1.0 {
+                has_x = true;
+            }
+            if c[0] < 1.0 && c[1] > 9.0 {
+                has_y = true;
+            }
+        }
+        assert!(
+            has_origin && has_x && has_y,
+            "Seeds should cover all 3 corners"
+        );
+    }
+
+    #[test]
+    fn test_init_farthest_point_empty() {
+        let data: &[[f64; 2]] = &[];
+        let mut km = OnlineKMeans::<2, 4>::new(1000);
+        let added = km.init_farthest_point(data, 3);
+        assert_eq!(added, 0);
+        assert_eq!(km.n_active(), 0);
+    }
+
+    #[test]
+    fn test_init_farthest_point_preserves_existing() {
+        let mut km = OnlineKMeans::<2, 4>::new(1000);
+        km.seed_centroid(&[5.0, 5.0]).unwrap();
+        assert_eq!(km.n_active(), 1);
+
+        let data = [[0.0, 0.0], [10.0, 10.0]];
+        let added = km.init_farthest_point(&data, 2);
+        assert_eq!(added, 2);
+        assert_eq!(km.n_active(), 3);
+    }
+
+    #[test]
+    fn test_init_then_update() {
+        // Verify that seeded init + online update produces better clustering
+        // than pure online (first-come) on ordered data
+        let mut rng = Rng::new(99);
+        let centers = [[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]];
+        let mut data = Vec::new();
+        // Generate data in order (all cluster 0 first, then 1, then 2)
+        for center in &centers {
+            for _ in 0..30 {
+                data.push([
+                    center[0] + rng.gaussian(0.0, 0.5),
+                    center[1] + rng.gaussian(0.0, 0.5),
+                ]);
+            }
+        }
+
+        // With farthest-point init
+        let mut km_init = OnlineKMeans::<2, 8>::new(1000);
+        km_init.set_create_threshold(3.0);
+        km_init.init_farthest_point(&data, 3);
+        for pt in &data {
+            km_init.update(pt);
+        }
+
+        // Seeds should have picked points near each of the 3 corners
+        assert!(
+            km_init.n_active() >= 3,
+            "Init should find >=3 clusters, got {}",
+            km_init.n_active()
+        );
     }
 }

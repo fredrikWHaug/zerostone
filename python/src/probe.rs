@@ -312,6 +312,43 @@ where
     )))
 }
 
+/// Extract positions as `Vec<[f64; 2]>` for use with `sort_dyn` / `sort_batch_parallel`.
+///
+/// The `n_channels` parameter is the expected channel count from the data.
+/// Returns an error if the probe's channel count doesn't match.
+pub fn get_positions(probe: &ProbeLayout, n_channels: usize) -> PyResult<Vec<[f64; 2]>> {
+    let n = probe.n_channels();
+    if n != n_channels {
+        return Err(PyValueError::new_err(format!(
+            "Probe has {} channels but data has {}",
+            n, n_channels
+        )));
+    }
+
+    macro_rules! extract_pos {
+        ($variant:ident, $c:expr) => {
+            if let ProbeInner::$variant(ref p) = probe.inner {
+                return Ok(p.0.positions().to_vec());
+            }
+        };
+    }
+
+    match n {
+        4 => extract_pos!(C4, 4),
+        8 => extract_pos!(C8, 8),
+        16 => extract_pos!(C16, 16),
+        32 => extract_pos!(C32, 32),
+        64 => extract_pos!(C64, 64),
+        128 => extract_pos!(C128, 128),
+        _ => {}
+    }
+
+    Err(PyValueError::new_err(format!(
+        "Unsupported probe channel count {}",
+        n
+    )))
+}
+
 /// Register probe geometry classes.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ProbeLayout>()?;
