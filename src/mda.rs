@@ -742,10 +742,10 @@ mod tests {
     fn test_parse_3field_64bit_dims() {
         // 3-field with negative ndims -> 64-bit dimensions
         let mut buf = Vec::new();
-        buf.extend_from_slice(&(-3i32).to_le_bytes());  // dtype = float32
-        buf.extend_from_slice(&4i32.to_le_bytes());      // bpe = 4
-        buf.extend_from_slice(&(-2i32).to_le_bytes());   // ndims = -2 (use 64-bit)
-        buf.extend_from_slice(&32i64.to_le_bytes());     // dim[0] = 32
+        buf.extend_from_slice(&(-3i32).to_le_bytes()); // dtype = float32
+        buf.extend_from_slice(&4i32.to_le_bytes()); // bpe = 4
+        buf.extend_from_slice(&(-2i32).to_le_bytes()); // ndims = -2 (use 64-bit)
+        buf.extend_from_slice(&32i64.to_le_bytes()); // dim[0] = 32
         buf.extend_from_slice(&100000i64.to_le_bytes()); // dim[1] = 100000
 
         let hdr = parse_mda_header(&buf).unwrap();
