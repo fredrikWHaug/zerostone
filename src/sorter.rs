@@ -37,8 +37,8 @@ use crate::online_kmeans::OnlineKMeans;
 use crate::probe::ProbeLayout;
 use crate::quality;
 use crate::spike_sort::{
-    align_to_peak, deduplicate_events, detect_spikes_multichannel, extract_peak_channel,
-    MultiChannelEvent, SortError, WaveformPca,
+    align_to_peak, compute_adaptive_thresholds, deduplicate_events, detect_spikes_multichannel,
+    extract_peak_channel, MultiChannelEvent, SortError, WaveformPca,
 };
 use crate::whitening::{WhiteningMatrix, WhiteningMode};
 
@@ -177,6 +177,18 @@ pub struct SortConfig {
     /// Places centroids where the data density is highest along the principal
     /// axis, rather than at the extremes (farthest-point). Default: false.
     pub svd_init: bool,
+    /// Enable per-channel adaptive detection thresholds.
+    /// Computes thresholds from per-channel MAD noise estimates on whitened data,
+    /// with a minimum floor for dead channels and overactivity scaling.
+    /// More accurate than a uniform threshold when whitening is imperfect
+    /// (edge channels, artifacts, rank-deficient covariance). Default: false.
+    pub adaptive_threshold: bool,
+    /// Minimum absolute threshold for adaptive mode (dead channel floor).
+    /// Channels with noise below this get this threshold. Default: 0.5.
+    pub adaptive_min_threshold: f64,
+    /// Maximum crossing rate (Hz) before adaptive threshold is raised.
+    /// Overactive channels get scaled up by sqrt(rate / max_rate). Default: 200.0.
+    pub adaptive_max_rate_hz: f64,
 }
 
 impl Default for SortConfig {
@@ -213,6 +225,9 @@ impl Default for SortConfig {
             sample_rate: 30000.0,
             common_median_ref: false,
             svd_init: false,
+            adaptive_threshold: false,
+            adaptive_min_threshold: 0.5,
+            adaptive_max_rate_hz: 200.0,
         }
     }
 }
@@ -2255,14 +2270,34 @@ pub fn sort_multichannel<
     // The detected spike times still index into the original (whitened) data.
     let n_detected = match config.detection_mode {
         DetectionMode::Amplitude => {
-            let unit_noise = [1.0f64; C];
-            detect_spikes_multichannel::<C>(
-                data,
-                config.threshold_multiplier,
-                &unit_noise,
-                config.refractory_samples,
-                event_buf,
-            )
+            if config.adaptive_threshold {
+                // Per-channel adaptive thresholds: compute from whitened data
+                let adaptive_thresh = compute_adaptive_thresholds::<C>(
+                    data,
+                    config.threshold_multiplier,
+                    config.adaptive_min_threshold,
+                    config.adaptive_max_rate_hz,
+                    config.sample_rate,
+                    scratch,
+                );
+                // Pass absolute thresholds as noise estimates with multiplier 1.0
+                detect_spikes_multichannel::<C>(
+                    data,
+                    1.0,
+                    &adaptive_thresh,
+                    config.refractory_samples,
+                    event_buf,
+                )
+            } else {
+                let unit_noise = [1.0f64; C];
+                detect_spikes_multichannel::<C>(
+                    data,
+                    config.threshold_multiplier,
+                    &unit_noise,
+                    config.refractory_samples,
+                    event_buf,
+                )
+            }
         }
         DetectionMode::Neo | DetectionMode::Sneo { .. } => {
             use crate::spike_sort::{neo_transform, sneo_transform};
@@ -2688,14 +2723,32 @@ pub fn sort_multichannel<
             // Using the same threshold avoids flooding with noise detections.
             let remaining_buf = event_buf.len().saturating_sub(n_extracted);
             if remaining_buf > 0 {
-                let unit_noise_re = [1.0f64; C];
-                let n_re_detected = detect_spikes_multichannel::<C>(
-                    data,
-                    config.threshold_multiplier,
-                    &unit_noise_re,
-                    config.refractory_samples,
-                    &mut event_buf[n_extracted..],
-                );
+                let n_re_detected = if config.adaptive_threshold {
+                    let adaptive_thresh_re = compute_adaptive_thresholds::<C>(
+                        data,
+                        config.threshold_multiplier,
+                        config.adaptive_min_threshold,
+                        config.adaptive_max_rate_hz,
+                        config.sample_rate,
+                        scratch,
+                    );
+                    detect_spikes_multichannel::<C>(
+                        data,
+                        1.0,
+                        &adaptive_thresh_re,
+                        config.refractory_samples,
+                        &mut event_buf[n_extracted..],
+                    )
+                } else {
+                    let unit_noise_re = [1.0f64; C];
+                    detect_spikes_multichannel::<C>(
+                        data,
+                        config.threshold_multiplier,
+                        &unit_noise_re,
+                        config.refractory_samples,
+                        &mut event_buf[n_extracted..],
+                    )
+                };
 
                 if n_re_detected > 0 {
                     // Dedup re-detections
@@ -3966,6 +4019,80 @@ mod tests {
             max_snr > 1.0,
             "Best cluster SNR should be > 1.0, got {}",
             max_snr
+        );
+    }
+
+    #[test]
+    fn test_sort_with_adaptive_threshold() {
+        let mut rng = Rng::new(42);
+        let n = 5000;
+
+        // 4-channel data with different noise levels per channel
+        let mut data = vec![[0.0f64; 4]; n];
+        let noise_levels = [1.0, 0.5, 2.0, 0.01]; // ch3 is near-dead
+        for sample in data.iter_mut() {
+            for ch in 0..4 {
+                sample[ch] = rng.gaussian(0.0, noise_levels[ch]);
+            }
+        }
+
+        // Inject spikes on channel 0
+        let spike_template = |t: f64| -> f64 { -12.0 * libm::exp(-0.5 * t * t) };
+        let mut pos = 200;
+        while pos + 10 < n {
+            for dt in 0..8 {
+                let t = (dt as f64 - 2.0) / 1.5;
+                if pos + dt < n {
+                    data[pos + dt][0] += spike_template(t);
+                }
+            }
+            pos += 150;
+        }
+
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let mut scratch = vec![0.0f64; n];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0,
+            };
+            200
+        ];
+        let mut waveforms = vec![[0.0f64; 8]; 200];
+        let mut features = vec![[0.0f64; 3]; 200];
+        let mut labels = vec![0usize; 200];
+
+        // Sort with adaptive thresholds
+        let config = SortConfig {
+            threshold_multiplier: 4.0,
+            pre_samples: 2,
+            refractory_samples: 10,
+            adaptive_threshold: true,
+            adaptive_min_threshold: 0.5,
+            adaptive_max_rate_hz: 200.0,
+            ..SortConfig::default()
+        };
+
+        let result = sort_multichannel::<4, 16, 8, 3, 64, 8>(
+            &config,
+            &probe,
+            &mut data,
+            &mut scratch,
+            &mut events,
+            &mut waveforms,
+            &mut features,
+            &mut labels,
+        );
+        assert!(
+            result.is_ok(),
+            "Sort with adaptive thresholds should succeed"
+        );
+        let sr = result.unwrap();
+        assert!(
+            sr.n_spikes >= 5,
+            "Should detect spikes with adaptive thresholds, got {}",
+            sr.n_spikes
         );
     }
 

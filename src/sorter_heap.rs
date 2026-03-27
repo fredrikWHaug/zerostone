@@ -395,6 +395,108 @@ fn detect_spikes_heap(
     n
 }
 
+/// Compute per-channel adaptive thresholds for heap-allocated data.
+/// Returns absolute thresholds (positive values) for each channel.
+fn compute_adaptive_thresholds_heap(
+    data: &[f64],
+    n_samples: usize,
+    n_ch: usize,
+    base_multiplier: f64,
+    min_threshold: f64,
+    max_rate_hz: f64,
+    sample_rate: f64,
+) -> Vec<f64> {
+    let mut thresholds = vec![min_threshold; n_ch];
+    if n_samples == 0 {
+        return thresholds;
+    }
+
+    // Per-channel MAD noise estimation
+    let mut scratch = vec![0.0f64; n_samples];
+    for ch in 0..n_ch {
+        for t in 0..n_samples {
+            scratch[t] = libm::fabs(data[t * n_ch + ch]);
+        }
+        scratch[..n_samples]
+            .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+        let median = if n_samples % 2 == 1 {
+            scratch[n_samples / 2]
+        } else {
+            (scratch[n_samples / 2 - 1] + scratch[n_samples / 2]) * 0.5
+        };
+        let noise = median / 0.6745;
+        let base = base_multiplier * noise;
+        thresholds[ch] = if base > min_threshold {
+            base
+        } else {
+            min_threshold
+        };
+    }
+
+    // Activity check: scale up overactive channels
+    let duration_s = n_samples as f64 / sample_rate;
+    if duration_s > 0.0 && max_rate_hz > 0.0 {
+        for ch in 0..n_ch {
+            let thresh = thresholds[ch];
+            let mut crossings = 0usize;
+            for t in 1..n_samples {
+                if data[t * n_ch + ch] < -thresh && data[(t - 1) * n_ch + ch] >= -thresh {
+                    crossings += 1;
+                }
+            }
+            let rate = crossings as f64 / duration_s;
+            if rate > max_rate_hz {
+                let scale = libm::sqrt(rate / max_rate_hz);
+                thresholds[ch] *= scale;
+                if thresholds[ch] < min_threshold {
+                    thresholds[ch] = min_threshold;
+                }
+            }
+        }
+    }
+
+    thresholds
+}
+
+/// Detect spikes with per-channel adaptive thresholds on heap data.
+fn detect_spikes_heap_adaptive(
+    data: &[f64],
+    n_samples: usize,
+    n_ch: usize,
+    thresholds: &[f64],
+    refractory: usize,
+    events: &mut [MultiChannelEvent],
+) -> usize {
+    let mut n = 0;
+    let mut last_spike = vec![0usize; n_ch];
+
+    for t in 1..n_samples.saturating_sub(1) {
+        let row = t * n_ch;
+        for ch in 0..n_ch {
+            let val = data[row + ch];
+            if val < -thresholds[ch] {
+                if t < last_spike[ch] + refractory {
+                    continue;
+                }
+                let prev = data[(t - 1) * n_ch + ch];
+                let next = data[(t + 1) * n_ch + ch];
+                if val <= prev && val <= next {
+                    if n < events.len() {
+                        events[n] = MultiChannelEvent {
+                            sample: t,
+                            channel: ch,
+                            amplitude: val,
+                        };
+                        n += 1;
+                        last_spike[ch] = t;
+                    }
+                }
+            }
+        }
+    }
+    n
+}
+
 /// Spatial deduplication of events using electrode positions.
 fn deduplicate_events_heap(
     events: &mut [MultiChannelEvent],
@@ -661,14 +763,34 @@ pub fn sort_heap(
         max_events
     ];
 
-    let n_detected = detect_spikes_heap(
-        data,
-        n_samples,
-        n_channels,
-        config.threshold_multiplier,
-        config.refractory_samples,
-        &mut event_buf,
-    );
+    let n_detected = if config.adaptive_threshold {
+        let thresholds = compute_adaptive_thresholds_heap(
+            data,
+            n_samples,
+            n_channels,
+            config.threshold_multiplier,
+            config.adaptive_min_threshold,
+            config.adaptive_max_rate_hz,
+            config.sample_rate,
+        );
+        detect_spikes_heap_adaptive(
+            data,
+            n_samples,
+            n_channels,
+            &thresholds,
+            config.refractory_samples,
+            &mut event_buf,
+        )
+    } else {
+        detect_spikes_heap(
+            data,
+            n_samples,
+            n_channels,
+            config.threshold_multiplier,
+            config.refractory_samples,
+            &mut event_buf,
+        )
+    };
 
     // 5. Deduplication
     let n_dedup = deduplicate_events_heap(

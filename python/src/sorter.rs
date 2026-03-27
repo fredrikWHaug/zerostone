@@ -107,6 +107,9 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     sample_rate = 30000.0,
     common_median_ref = false,
     svd_init = false,
+    adaptive_threshold = false,
+    adaptive_min_threshold = 0.5,
+    adaptive_max_rate_hz = 200.0,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -145,6 +148,9 @@ fn sort_multichannel<'py>(
     sample_rate: f64,
     common_median_ref: bool,
     svd_init: bool,
+    adaptive_threshold: bool,
+    adaptive_min_threshold: f64,
+    adaptive_max_rate_hz: f64,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -196,6 +202,9 @@ fn sort_multichannel<'py>(
         sample_rate,
         common_median_ref,
         svd_init,
+        adaptive_threshold,
+        adaptive_min_threshold,
+        adaptive_max_rate_hz,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
