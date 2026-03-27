@@ -180,6 +180,9 @@ pub fn sort_dyn(
         64 => dispatch!(64, 4096),
         96 => dispatch!(96, 9216),
         128 => dispatch!(128, 16384),
+        n if n > 128 => {
+            crate::sorter_heap::sort_heap(config, positions, data, n_samples, n_channels)
+        }
         _ => Err(SortError::InvalidInput),
     }
 }
@@ -450,6 +453,34 @@ mod tests {
                 t
             );
         }
+    }
+
+    #[test]
+    fn test_sort_dyn_256ch_heap_path() {
+        let n_ch = 256;
+        let n_samples = 3000;
+        let mut data = vec![0.0f64; n_samples * n_ch];
+        for (i, d) in data.iter_mut().enumerate() {
+            *d = ((i * 17 + 3) % 100) as f64 * 0.001 - 0.05;
+        }
+        let positions: Vec<[f64; 2]> = (0..n_ch).map(|i| [0.0, i as f64 * 25.0]).collect();
+        let config = SortConfig::default();
+        let result = sort_dyn(&config, &positions, &mut data, n_samples, n_ch).unwrap();
+        assert_eq!(result.n_spikes, 0);
+    }
+
+    #[test]
+    fn test_sort_dyn_384ch_heap_path() {
+        let n_ch = 384;
+        let n_samples = 3000;
+        let mut data = vec![0.0f64; n_samples * n_ch];
+        for (i, d) in data.iter_mut().enumerate() {
+            *d = ((i * 13 + 7) % 100) as f64 * 0.001 - 0.05;
+        }
+        let positions: Vec<[f64; 2]> = (0..n_ch).map(|i| [0.0, i as f64 * 25.0]).collect();
+        let config = SortConfig::default();
+        let result = sort_dyn(&config, &positions, &mut data, n_samples, n_ch).unwrap();
+        assert_eq!(result.n_spikes, 0);
     }
 
     #[test]

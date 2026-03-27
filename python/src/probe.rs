@@ -62,6 +62,79 @@ make_probe_inner!(Probe96, 96);
 make_probe_inner!(Probe128, 128);
 make_probe_inner!(Probe384, 384);
 
+/// Heap-allocated probe for arbitrary channel counts (>128).
+struct ProbeHeap {
+    positions: Vec<[f64; 2]>,
+}
+
+impl ProbeHeap {
+    fn from_positions(positions: Vec<[f64; 2]>) -> Self {
+        Self { positions }
+    }
+
+    fn linear(n_channels: usize, pitch: f64) -> Self {
+        let positions: Vec<[f64; 2]> = (0..n_channels)
+            .map(|i| [0.0, i as f64 * pitch])
+            .collect();
+        Self { positions }
+    }
+
+    fn channel_distance(&self, ch_a: usize, ch_b: usize) -> f64 {
+        if ch_a >= self.positions.len() || ch_b >= self.positions.len() {
+            return f64::NAN;
+        }
+        let dx = self.positions[ch_a][0] - self.positions[ch_b][0];
+        let dy = self.positions[ch_a][1] - self.positions[ch_b][1];
+        (dx * dx + dy * dy).sqrt()
+    }
+
+    fn neighbor_channels(&self, channel: usize, radius: f64) -> Vec<usize> {
+        let n = self.positions.len();
+        if channel >= n {
+            return Vec::new();
+        }
+        let mut result = Vec::new();
+        for i in 0..n {
+            if i != channel && self.channel_distance(channel, i) <= radius {
+                result.push(i);
+            }
+        }
+        result
+    }
+
+    fn nearest_channels(&self, channel: usize, k: usize) -> Vec<usize> {
+        let n = self.positions.len();
+        if channel >= n {
+            return Vec::new();
+        }
+        let mut dists: Vec<(usize, f64)> = (0..n)
+            .filter(|&i| i != channel)
+            .map(|i| (i, self.channel_distance(channel, i)))
+            .collect();
+        dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(core::cmp::Ordering::Equal));
+        dists.into_iter().take(k).map(|(i, _)| i).collect()
+    }
+
+    fn spatial_extent(&self) -> (f64, f64) {
+        if self.positions.is_empty() {
+            return (0.0, 0.0);
+        }
+        let (mut x_min, mut x_max) = (f64::MAX, f64::MIN);
+        let (mut y_min, mut y_max) = (f64::MAX, f64::MIN);
+        for p in &self.positions {
+            x_min = x_min.min(p[0]);
+            x_max = x_max.max(p[0]);
+            y_min = y_min.min(p[1]);
+            y_max = y_max.max(p[1]);
+        }
+        (x_max - x_min, y_max - y_min)
+    }
+
+    fn n_channels(&self) -> usize {
+        self.positions.len()
+    }
+}
+
 enum ProbeInner {
     C4(Probe4),
     C8(Probe8),
@@ -71,6 +144,7 @@ enum ProbeInner {
     C96(Box<Probe96>),
     C128(Box<Probe128>),
     C384(Box<Probe384>),
+    Heap(Box<ProbeHeap>),
 }
 
 /// Probe geometry for multi-channel electrode arrays.
@@ -115,9 +189,10 @@ impl ProbeLayout {
             96 => ProbeInner::C96(Box::new(Probe96::from_positions(&positions))),
             128 => ProbeInner::C128(Box::new(Probe128::from_positions(&positions))),
             384 => ProbeInner::C384(Box::new(Probe384::from_positions(&positions))),
+            n if n > 128 => ProbeInner::Heap(Box::new(ProbeHeap::from_positions(positions))),
             _ => {
                 return Err(PyValueError::new_err(
-                    "n_channels must be 4, 8, 16, 32, 64, 96, 128, or 384",
+                    "n_channels must be 4, 8, 16, 32, 64, 96, 128, 384, or >128",
                 ));
             }
         };
@@ -143,9 +218,10 @@ impl ProbeLayout {
             96 => ProbeInner::C96(Box::new(Probe96::linear(pitch))),
             128 => ProbeInner::C128(Box::new(Probe128::linear(pitch))),
             384 => ProbeInner::C384(Box::new(Probe384::linear(pitch))),
+            n if n > 128 => ProbeInner::Heap(Box::new(ProbeHeap::linear(n, pitch))),
             _ => {
                 return Err(PyValueError::new_err(
-                    "n_channels must be 4, 8, 16, 32, 64, 96, 128, or 384",
+                    "n_channels must be 4, 8, 16, 32, 64, 96, 128, 384, or >128",
                 ));
             }
         };
@@ -230,6 +306,7 @@ impl ProbeLayout {
             ProbeInner::C96(p) => p.channel_distance(ch_a, ch_b),
             ProbeInner::C128(p) => p.channel_distance(ch_a, ch_b),
             ProbeInner::C384(p) => p.channel_distance(ch_a, ch_b),
+            ProbeInner::Heap(p) => p.channel_distance(ch_a, ch_b),
         }
     }
 
@@ -251,6 +328,7 @@ impl ProbeLayout {
             ProbeInner::C96(p) => p.neighbor_channels(channel, radius),
             ProbeInner::C128(p) => p.neighbor_channels(channel, radius),
             ProbeInner::C384(p) => p.neighbor_channels(channel, radius),
+            ProbeInner::Heap(p) => p.neighbor_channels(channel, radius),
         }
     }
 
@@ -272,6 +350,7 @@ impl ProbeLayout {
             ProbeInner::C96(p) => p.nearest_channels(channel, k),
             ProbeInner::C128(p) => p.nearest_channels(channel, k),
             ProbeInner::C384(p) => p.nearest_channels(channel, k),
+            ProbeInner::Heap(p) => p.nearest_channels(channel, k),
         }
     }
 
@@ -289,6 +368,7 @@ impl ProbeLayout {
             ProbeInner::C96(p) => p.spatial_extent(),
             ProbeInner::C128(p) => p.spatial_extent(),
             ProbeInner::C384(p) => p.spatial_extent(),
+            ProbeInner::Heap(p) => p.spatial_extent(),
         }
     }
 
@@ -304,6 +384,7 @@ impl ProbeLayout {
             ProbeInner::C96(p) => p.n_channels(),
             ProbeInner::C128(p) => p.n_channels(),
             ProbeInner::C384(p) => p.n_channels(),
+            ProbeInner::Heap(p) => p.n_channels(),
         }
     }
 
@@ -324,6 +405,7 @@ impl ProbeLayout {
             ProbeInner::C96(p) => p.n_channels(),
             ProbeInner::C128(p) => p.n_channels(),
             ProbeInner::C384(p) => p.n_channels(),
+            ProbeInner::Heap(p) => p.n_channels(),
         }
     }
 }
@@ -395,6 +477,11 @@ pub fn get_positions(probe: &ProbeLayout, n_channels: usize) -> PyResult<Vec<[f6
                 return Ok(p.0.positions().to_vec());
             }
         };
+    }
+
+    // Heap probes store positions directly
+    if let ProbeInner::Heap(ref p) = probe.inner {
+        return Ok(p.positions.clone());
     }
 
     match n {

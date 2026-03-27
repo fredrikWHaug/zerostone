@@ -27,7 +27,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///
 /// Args:
 ///     data (np.ndarray): 2D float64 array of shape ``(n_samples, n_channels)``.
-///         Supported channel counts: 2, 4, 8, 16, 32, 64, 128.
+///         Supported channel counts: 2, 4, 8, 16, 32, 64, 128, or >128 (heap path).
 ///     probe (ProbeLayout): Probe geometry for spatial deduplication.
 ///     threshold (float): Detection threshold in MAD units. Default: 5.0.
 ///     refractory (int): Minimum samples between detections per channel. Default: 15.
@@ -258,8 +258,22 @@ fn sort_multichannel<'py>(
         64 => do_sort!(64, 4096),
         96 => do_sort!(96, 9216),
         128 => do_sort!(128, 16384),
+        n if n > 128 => {
+            // Heap-allocated path for >128 channels (Neuropixels-scale)
+            let positions = super::probe::get_positions(probe, n_channels)?;
+            let mut data_owned = data_slice.to_vec();
+            let result = zerostone::sorter_heap::sort_heap(
+                &config,
+                &positions,
+                &mut data_owned,
+                n_samples,
+                n_channels,
+            )
+            .map_err(sort_error_to_py)?;
+            dyn_result_to_dict(py, &result)
+        }
         _ => Err(PyValueError::new_err(
-            "n_channels must be 2, 4, 8, 16, 32, 64, 96, or 128",
+            "n_channels must be 2, 4, 8, 16, 32, 64, 96, 128, or >128",
         )),
     }
 }

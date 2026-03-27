@@ -117,6 +117,8 @@ mod router;
 pub mod sorter;
 #[cfg(feature = "alloc")]
 pub mod sorter_dyn;
+#[cfg(feature = "alloc")]
+pub mod sorter_heap;
 pub mod spike_sort;
 mod stats;
 mod stft;
