@@ -2023,4 +2023,35 @@ proptest! {
             prop_assert!(s.is_finite(), "Denoised output must be finite, got {}", s);
         }
     }
+
+    // Amplitude bimodality split: never exceeds max_clusters, labels always valid.
+    #[test]
+    fn amplitude_split_bounded(
+        n_spikes in 6usize..30,
+        threshold in 0.5f64..5.0,
+    ) {
+        use zerostone::sorter::amplitude_bimodality_split;
+        use zerostone::spike_sort::MultiChannelEvent;
+
+        let mut labels = vec![0usize; n_spikes];
+        let events: Vec<MultiChannelEvent> = (0..n_spikes)
+            .map(|i| MultiChannelEvent {
+                sample: i * 100,
+                channel: 0,
+                amplitude: if i < n_spikes / 2 {
+                    1.0 + (i as f64) * 0.01
+                } else {
+                    50.0 + (i as f64) * 0.01
+                },
+            })
+            .collect();
+
+        let max_cl = 8;
+        let n = amplitude_bimodality_split(n_spikes, &mut labels, &events, 1, threshold, 3, max_cl);
+        prop_assert!(n <= max_cl, "n_clusters {} exceeds max {}", n, max_cl);
+        prop_assert!(n >= 1, "must have at least 1 cluster");
+        for &l in &labels[..n_spikes] {
+            prop_assert!(l < n, "label {} >= n_clusters {}", l, n);
+        }
+    }
 }
