@@ -90,6 +90,7 @@ pub enum DetectionMode {
 /// assert!(!config.matched_filter_detect);
 /// assert!((config.matched_filter_threshold - 4.0).abs() < 1e-12);
 /// assert!(!config.svd_init);
+/// assert_eq!(config.refinement_iterations, 0);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -177,6 +178,11 @@ pub struct SortConfig {
     /// Places centroids where the data density is highest along the principal
     /// axis, rather than at the extremes (farthest-point). Default: false.
     pub svd_init: bool,
+    /// Number of template refinement iterations (0 = disabled).
+    /// After the first sort pass, uses learned templates as matched filter seeds
+    /// for re-detection and template-seeded k-means for re-clustering.
+    /// Each iteration refines templates, improving accuracy on borderline units.
+    pub refinement_iterations: usize,
     /// Enable per-channel adaptive detection thresholds.
     /// Computes thresholds from per-channel MAD noise estimates on whitened data,
     /// with a minimum floor for dead channels and overactivity scaling.
@@ -225,6 +231,7 @@ impl Default for SortConfig {
             sample_rate: 30000.0,
             common_median_ref: false,
             svd_init: false,
+            refinement_iterations: 0,
             adaptive_threshold: false,
             adaptive_min_threshold: 0.5,
             adaptive_max_rate_hz: 200.0,
@@ -2396,11 +2403,28 @@ pub fn sort_multichannel<
                         }
                         if total < event_buf.len() {
                             // Offset by +1 to map NEO index back to original data
-                            let sample = max_idx + 1;
+                            let neo_sample = max_idx + 1;
+                            // Refine: find the nearest voltage minimum (negative peak)
+                            // within a small window around the NEO peak. This aligns
+                            // SNEO-detected events with the actual spike trough for
+                            // correct waveform extraction and clustering.
+                            let refine_half = 5; // search +/- 5 samples
+                            let r_start = neo_sample.saturating_sub(refine_half);
+                            let r_end = (neo_sample + refine_half + 1).min(t_len);
+                            let mut best_sample = neo_sample.min(t_len - 1);
+                            let mut best_val = data[best_sample][ch];
+                            let mut ri = r_start;
+                            while ri < r_end {
+                                if data[ri][ch] < best_val {
+                                    best_val = data[ri][ch];
+                                    best_sample = ri;
+                                }
+                                ri += 1;
+                            }
                             event_buf[total] = MultiChannelEvent {
-                                sample,
+                                sample: best_sample,
                                 channel: ch,
-                                amplitude: libm::fabs(data[sample.min(t_len - 1)][ch]),
+                                amplitude: libm::fabs(best_val),
                             };
                             total += 1;
                         }
@@ -3071,6 +3095,191 @@ pub fn sort_multichannel<
             }
             n_extracted += n_mf_accepted;
         }
+    }
+
+    // 9e. Template refinement iterations: re-detect with matched filters built
+    // from learned templates, then re-cluster with template-seeded k-means.
+    // Each iteration refines the templates, improving accuracy on borderline units
+    // by leveraging the Neyman-Pearson optimal detector for re-detection.
+    for _refine_iter in 0..config.refinement_iterations {
+        if n_clusters == 0 || n_extracted < 2 {
+            break;
+        }
+
+        // Build templates from current cluster assignments
+        let mut ref_means = [[0.0f64; W]; N];
+        let mut ref_counts = [0u32; N];
+        let mut ref_peak_ch = [0usize; N];
+        compute_cluster_means::<W, N>(
+            waveform_buf,
+            labels,
+            event_buf,
+            n_extracted,
+            n_clusters,
+            &mut ref_means,
+            &mut ref_counts,
+            &mut ref_peak_ch,
+        );
+
+        // Build matched filter bank from current templates
+        let ref_bank = MatchedFilterBank::<W, N>::from_cluster_templates(
+            &ref_means,
+            &ref_counts,
+            &ref_peak_ch,
+            n_clusters,
+            1, // Use min_count=1 for refinement (all clusters are valid)
+        );
+
+        if ref_bank.n_filters() == 0 {
+            break;
+        }
+
+        // Re-detect spikes using matched filters on the whitened data
+        let ref_buf_size = event_buf.len().min(2048);
+        let mut ref_detections = [MatchedDetection::ZERO; 2048];
+        let n_ref_det = ref_bank.detect(
+            data,
+            config.matched_filter_threshold.min(config.threshold_multiplier),
+            config.refractory_samples,
+            &mut ref_detections[..ref_buf_size],
+        );
+
+        if n_ref_det == 0 {
+            break;
+        }
+
+        // Map template indices back to cluster indices (same logic as matched_filter_detect)
+        // Build a mapping from filter index to cluster index
+        let mut filter_to_cluster = [0usize; N];
+        {
+            let mut valid_idx = 0usize;
+            for (ci, &count) in ref_counts.iter().enumerate().take(n_clusters.min(N)) {
+                if count >= 1 {
+                    if valid_idx < N {
+                        filter_to_cluster[valid_idx] = ci;
+                    }
+                    valid_idx += 1;
+                }
+            }
+        }
+
+        // Re-extract waveforms from new detections and assign initial labels
+        let mut new_extracted = 0usize;
+        for det in ref_detections.iter().take(n_ref_det) {
+            if new_extracted >= event_buf.len()
+                || new_extracted >= waveform_buf.len()
+                || new_extracted >= labels.len()
+            {
+                break;
+            }
+            let mf_sample = det.sample;
+            let tmpl_idx = det.template_idx;
+            if tmpl_idx >= N {
+                continue;
+            }
+            let cluster_idx = filter_to_cluster[tmpl_idx];
+            if cluster_idx >= n_clusters {
+                continue;
+            }
+            let ch = ref_peak_ch[cluster_idx];
+            if ch >= C {
+                continue;
+            }
+            // Amplitude sanity check
+            let amp = det.amplitude;
+            if !(0.1..=10.0).contains(&amp) {
+                continue;
+            }
+            let pre = config.pre_samples;
+            if mf_sample >= pre && mf_sample + W - pre <= t_len {
+                let start = mf_sample - pre;
+                event_buf[new_extracted] = MultiChannelEvent {
+                    sample: mf_sample,
+                    channel: ch,
+                    amplitude: libm::fabs(data[mf_sample][ch]),
+                };
+                for w in 0..W {
+                    waveform_buf[new_extracted][w] = data[start + w][ch];
+                }
+                labels[new_extracted] = cluster_idx;
+                new_extracted += 1;
+            }
+        }
+
+        if new_extracted < 2 {
+            break;
+        }
+
+        // Re-compute PCA on new waveforms and project to features
+        let mut ref_pca = WaveformPca::<W, K, WM>::new();
+        if ref_pca.fit(&waveform_buf[..new_extracted]).is_err() {
+            break;
+        }
+        for i in 0..new_extracted {
+            if ref_pca
+                .transform(&waveform_buf[i], &mut feature_buf[i])
+                .is_err()
+            {
+                break;
+            }
+        }
+
+        // Encode channel as feature dimension (same as initial pass)
+        if K >= 3 {
+            let channel_scale = config.cluster_threshold * C as f64;
+            for i in 0..new_extracted {
+                let ch = event_buf[i].channel;
+                feature_buf[i][K - 1] = (ch as f64 / C as f64) * channel_scale;
+            }
+        }
+
+        // Re-cluster with template-seeded k-means: use previous cluster means
+        // as initial centroids. This preserves cluster identity across iterations.
+        let mut ref_km = OnlineKMeans::<K, N>::new(config.cluster_max_count);
+        ref_km.set_create_threshold(config.cluster_threshold);
+
+        // Seed with feature-space centroids from previous iteration.
+        // Project the waveform templates through the new PCA to get feature seeds.
+        for ci in 0..n_clusters.min(N) {
+            if ref_counts[ci] > 0 {
+                let mut seed = [0.0f64; K];
+                // Project template waveform through new PCA
+                if ref_pca.transform(&ref_means[ci], &mut seed).is_ok() {
+                    if K >= 3 {
+                        let channel_scale = config.cluster_threshold * C as f64;
+                        seed[K - 1] =
+                            (ref_peak_ch[ci] as f64 / C as f64) * channel_scale;
+                    }
+                    let _ = ref_km.seed_centroid(&seed);
+                }
+            }
+        }
+
+        // Run k-means on re-extracted features with seeded centroids
+        for i in 0..new_extracted {
+            let result = ref_km.update(&feature_buf[i]);
+            if i < labels.len() {
+                labels[i] = result.cluster;
+            }
+        }
+
+        // Update cluster count and spike count
+        n_clusters = ref_km.n_active();
+        n_extracted = new_extracted;
+
+        // Post-refinement merge of over-split clusters
+        n_clusters = merge_clusters::<K>(
+            n_extracted,
+            labels,
+            feature_buf,
+            event_buf,
+            n_clusters,
+            config.merge_dprime_threshold,
+            config.merge_isi_threshold,
+            config.refractory_samples,
+            scratch,
+            K,
+        );
     }
 
     // 10. Quality metrics
@@ -5344,5 +5553,120 @@ mod tests {
             &mut lab,
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_refinement_iterations_stability() {
+        // Verify that refinement produces stable results: 2 iterations and 3 iterations
+        // should give the same or very similar cluster counts and spike counts.
+        let n = 6000;
+
+        // Helper to build data with two neurons
+        let build_data = |rng: &mut Rng| -> Vec<[f64; 2]> {
+            let mut data = vec![[0.0f64; 2]; n];
+            for sample in data.iter_mut() {
+                sample[0] = rng.gaussian(0.0, 1.0);
+                sample[1] = rng.gaussian(0.0, 1.0);
+            }
+            // Neuron A: large spike on channel 0
+            let mut pos = 200;
+            while pos + 10 < n {
+                for dt in 0..8 {
+                    let t = (dt as f64 - 2.0) / 1.5;
+                    if pos + dt < n {
+                        data[pos + dt][0] += -14.0 * libm::exp(-0.5 * t * t);
+                    }
+                }
+                pos += 150;
+            }
+            // Neuron B: medium spike on channel 1
+            let mut pos = 350;
+            while pos + 12 < n {
+                for dt in 0..10 {
+                    let t = (dt as f64 - 3.0) / 2.0;
+                    if pos + dt < n {
+                        data[pos + dt][1] += -10.0 * libm::exp(-0.5 * t * t);
+                    }
+                }
+                pos += 200;
+            }
+            data
+        };
+
+        let run_sort = |iters: usize, rng: &mut Rng| -> SortResult<8> {
+            let mut data = build_data(rng);
+            let config = SortConfig {
+                threshold_multiplier: 4.0,
+                pre_samples: 2,
+                refractory_samples: 10,
+                matched_filter_threshold: 4.0,
+                refinement_iterations: iters,
+                ..SortConfig::default()
+            };
+            let probe = ProbeLayout::<2>::linear(25.0);
+            let mut scratch = vec![0.0f64; n];
+            let mut events = vec![
+                MultiChannelEvent {
+                    sample: 0,
+                    channel: 0,
+                    amplitude: 0.0,
+                };
+                300
+            ];
+            let mut waveforms = vec![[0.0f64; 8]; 300];
+            let mut features = vec![[0.0f64; 3]; 300];
+            let mut labels = vec![0usize; 300];
+
+            sort_multichannel::<2, 4, 8, 3, 64, 8>(
+                &config,
+                &probe,
+                &mut data,
+                &mut scratch,
+                &mut events,
+                &mut waveforms,
+                &mut features,
+                &mut labels,
+            )
+            .expect("sort should succeed")
+        };
+
+        // Run with 0, 1, 2, 3 iterations
+        let r0 = run_sort(0, &mut Rng::new(99));
+        let r1 = run_sort(1, &mut Rng::new(99));
+        let r2 = run_sort(2, &mut Rng::new(99));
+        let r3 = run_sort(3, &mut Rng::new(99));
+
+        // All should find spikes
+        assert!(r0.n_spikes >= 5, "iter=0: n_spikes={}", r0.n_spikes);
+        assert!(r1.n_spikes >= 5, "iter=1: n_spikes={}", r1.n_spikes);
+        assert!(r2.n_spikes >= 5, "iter=2: n_spikes={}", r2.n_spikes);
+        assert!(r3.n_spikes >= 5, "iter=3: n_spikes={}", r3.n_spikes);
+
+        // Refinement should not dramatically change results -- cluster count
+        // should be similar across iterations (within 1 of each other)
+        let cdiff = if r2.n_clusters > r3.n_clusters {
+            r2.n_clusters - r3.n_clusters
+        } else {
+            r3.n_clusters - r2.n_clusters
+        };
+        assert!(
+            cdiff <= 1,
+            "2 vs 3 iterations cluster count should be stable: {} vs {}",
+            r2.n_clusters, r3.n_clusters
+        );
+
+        // Spike counts should be in the same ballpark (within 50%)
+        let diff = if r2.n_spikes > r3.n_spikes {
+            r2.n_spikes - r3.n_spikes
+        } else {
+            r3.n_spikes - r2.n_spikes
+        };
+        let max_spikes = r2.n_spikes.max(r3.n_spikes);
+        assert!(
+            diff * 2 <= max_spikes, // within 50%
+            "2 vs 3 iterations spike count should be stable: {} vs {}",
+            r2.n_spikes,
+            r3.n_spikes
+        );
     }
 }
