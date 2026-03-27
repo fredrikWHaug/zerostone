@@ -90,8 +90,11 @@ TS+LDA exceeds the original competition winner (FBCSP, ~63%). All pipelines buil
 - **Detection modes** -- amplitude threshold, NEO (Nonlinear Energy Operator), SNEO (Smoothed NEO)
 - **Probe geometry** -- `ProbeLayout` with linear, polytrode, tetrode, Neuropixels 1.0/2.0, Utah array presets
 - **Template subtraction** -- multi-pass template subtraction with per-spike amplitude scaling and NCC residual detection
-- **Cluster refinement** -- d-prime merge, spatial merge, CCG-based merge, ISI-violation split, bimodality split
+- **Cluster refinement** -- d-prime merge, spatial merge, CCG-based merge, ISI-violation split, amplitude bimodality split, GMM full-covariance EM
 - **Quality metrics** -- per-cluster SNR, ISI violation rate, contamination rate, d-prime, silhouette score
+- **SVD template initialization** -- power-iteration SVD for principled initial centroids (no random k-means init dependency)
+- **Drift correction** -- rigid drift estimation per streaming segment via spatial cross-correlation of template positions
+- **Wavelet denoising** -- Haar SWT with Donoho-Johnstone universal threshold for preprocessing
 - **Supported channels** -- 4, 8, 16, 32, 64, 96, 128 (const-generic, no_std core)
 - **Convenience pipeline** -- `spike_sort()` for simple single-channel sorting with online k-means
 
@@ -180,7 +183,7 @@ TS+LDA exceeds the original competition winner (FBCSP, ~63%). All pipelines buil
 
 ## Version
 
-0.7.0
+0.8.0
 
 ## License
 
