@@ -3139,7 +3139,9 @@ pub fn sort_multichannel<
         let mut ref_detections = [MatchedDetection::ZERO; 2048];
         let n_ref_det = ref_bank.detect(
             data,
-            config.matched_filter_threshold.min(config.threshold_multiplier),
+            config
+                .matched_filter_threshold
+                .min(config.threshold_multiplier),
             config.refractory_samples,
             &mut ref_detections[..ref_buf_size],
         );
@@ -3247,8 +3249,7 @@ pub fn sort_multichannel<
                 if ref_pca.transform(&ref_means[ci], &mut seed).is_ok() {
                     if K >= 3 {
                         let channel_scale = config.cluster_threshold * C as f64;
-                        seed[K - 1] =
-                            (ref_peak_ch[ci] as f64 / C as f64) * channel_scale;
+                        seed[K - 1] = (ref_peak_ch[ci] as f64 / C as f64) * channel_scale;
                     }
                     let _ = ref_km.seed_centroid(&seed);
                 }
@@ -5652,7 +5653,8 @@ mod tests {
         assert!(
             cdiff <= 1,
             "2 vs 3 iterations cluster count should be stable: {} vs {}",
-            r2.n_clusters, r3.n_clusters
+            r2.n_clusters,
+            r3.n_clusters
         );
 
         // Spike counts should be in the same ballpark (within 50%)
