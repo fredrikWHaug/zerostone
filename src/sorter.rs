@@ -5645,11 +5645,7 @@ mod tests {
 
         // Refinement should not dramatically change results -- cluster count
         // should be similar across iterations (within 1 of each other)
-        let cdiff = if r2.n_clusters > r3.n_clusters {
-            r2.n_clusters - r3.n_clusters
-        } else {
-            r3.n_clusters - r2.n_clusters
-        };
+        let cdiff = r2.n_clusters.abs_diff(r3.n_clusters);
         assert!(
             cdiff <= 1,
             "2 vs 3 iterations cluster count should be stable: {} vs {}",
@@ -5658,11 +5654,7 @@ mod tests {
         );
 
         // Spike counts should be in the same ballpark (within 50%)
-        let diff = if r2.n_spikes > r3.n_spikes {
-            r2.n_spikes - r3.n_spikes
-        } else {
-            r3.n_spikes - r2.n_spikes
-        };
+        let diff = r2.n_spikes.abs_diff(r3.n_spikes);
         let max_spikes = r2.n_spikes.max(r3.n_spikes);
         assert!(
             diff * 2 <= max_spikes, // within 50%
