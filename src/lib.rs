@@ -189,9 +189,9 @@ pub use riemannian::{
 pub use rms::WindowedRms;
 pub use router::ChannelRouter;
 pub use sorter::{
-    ccg_merge_clusters, estimate_noise_multichannel, merge_clusters, sort_multichannel,
-    split_clusters, svd_init_centroids, ClusterInfo, DetectionMode, OnlineSorter, SortConfig,
-    SortResult,
+    amplitude_bimodality_split, ccg_merge_clusters, estimate_noise_multichannel, merge_clusters,
+    sort_multichannel, split_clusters, svd_init_centroids, ClusterInfo, DetectionMode,
+    OnlineSorter, SortConfig, SortResult,
 };
 pub use spike_sort::{
     align_to_peak, combine_features, deduplicate_events, detect_spikes, detect_spikes_multichannel,

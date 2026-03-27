@@ -1608,6 +1608,181 @@ pub fn isi_violation_split<const K: usize>(
     current_n
 }
 
+/// Split clusters with bimodal amplitude distributions.
+///
+/// For each cluster, collects spike amplitudes, sorts them, and looks for
+/// the largest gap between consecutive sorted amplitudes. If the gap
+/// exceeds `threshold * MAD / 0.6745` (i.e. `threshold` sigma), the cluster
+/// is split at that gap. This catches cases where two neurons with different
+/// peak amplitudes were merged into one cluster.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::sorter::amplitude_bimodality_split;
+/// use zerostone::spike_sort::MultiChannelEvent;
+///
+/// let mut labels = [0, 0, 0, 0, 0, 0];
+/// // Two groups: 3 spikes with amp ~1.0, 3 with amp ~10.0
+/// let events = [
+///     MultiChannelEvent { sample: 100, channel: 0, amplitude: 1.0 },
+///     MultiChannelEvent { sample: 200, channel: 0, amplitude: 1.1 },
+///     MultiChannelEvent { sample: 300, channel: 0, amplitude: 0.9 },
+///     MultiChannelEvent { sample: 400, channel: 0, amplitude: 10.0 },
+///     MultiChannelEvent { sample: 500, channel: 0, amplitude: 10.2 },
+///     MultiChannelEvent { sample: 600, channel: 0, amplitude: 9.8 },
+/// ];
+/// let n = amplitude_bimodality_split(6, &mut labels, &events, 1, 2.0, 2, 8);
+/// assert_eq!(n, 2);
+/// // First 3 spikes should be in one cluster, last 3 in another
+/// assert_eq!(labels[0], labels[1]);
+/// assert_eq!(labels[3], labels[4]);
+/// assert_ne!(labels[0], labels[3]);
+/// ```
+pub fn amplitude_bimodality_split(
+    n_spikes: usize,
+    labels: &mut [usize],
+    event_buf: &[MultiChannelEvent],
+    n_clusters: usize,
+    threshold: f64,
+    min_cluster_size: usize,
+    max_clusters: usize,
+) -> usize {
+    if n_spikes == 0 || n_clusters == 0 {
+        return n_clusters;
+    }
+
+    const MAX_SPIKES: usize = 512;
+    let mut current_n = n_clusters;
+
+    loop {
+        if current_n >= max_clusters {
+            break;
+        }
+
+        let mut did_split = false;
+
+        let mut cl = 0;
+        while cl < current_n {
+            // Collect amplitudes for this cluster
+            let mut amps = [0.0f64; MAX_SPIKES];
+            let mut indices = [0usize; MAX_SPIKES];
+            let mut count = 0usize;
+            let mut s = 0;
+            while s < n_spikes && s < labels.len() {
+                if labels[s] == cl && count < MAX_SPIKES {
+                    amps[count] = event_buf[s].amplitude;
+                    indices[count] = s;
+                    count += 1;
+                }
+                s += 1;
+            }
+
+            if count < min_cluster_size * 2 || count < 6 {
+                cl += 1;
+                continue;
+            }
+
+            // Sort amplitudes (keep index mapping)
+            // Simple insertion sort to co-sort amps and indices
+            let mut i = 1;
+            while i < count {
+                let key_amp = amps[i];
+                let key_idx = indices[i];
+                let mut j = i;
+                while j > 0 && amps[j - 1] > key_amp {
+                    amps[j] = amps[j - 1];
+                    indices[j] = indices[j - 1];
+                    j -= 1;
+                }
+                amps[j] = key_amp;
+                indices[j] = key_idx;
+                i += 1;
+            }
+
+            // Find the largest gap between consecutive sorted amplitudes,
+            // then check if the gap exceeds threshold * local spread.
+            // "Local spread" = max(MAD_left, MAD_right) to handle bimodal cases
+            // where the global MAD is inflated by spanning both modes.
+            let mut best_gap = 0.0f64;
+            let mut best_gap_idx = 0usize;
+            for k in 1..count {
+                let gap = amps[k] - amps[k - 1];
+                if gap > best_gap {
+                    best_gap = gap;
+                    best_gap_idx = k;
+                }
+            }
+
+            if best_gap_idx == 0 || best_gap <= 0.0 {
+                cl += 1;
+                continue;
+            }
+
+            // Compute MAD for each half separately
+            let left_n = best_gap_idx;
+            let right_n = count - best_gap_idx;
+            let local_sigma = {
+                let mad_half = |start: usize, n: usize| -> f64 {
+                    if n < 2 {
+                        return 0.0;
+                    }
+                    let med = amps[start + n / 2];
+                    let mut devs = [0.0f64; MAX_SPIKES];
+                    for k in 0..n {
+                        devs[k] = libm::fabs(amps[start + k] - med);
+                    }
+                    devs[..n].sort_unstable_by(|a, b| {
+                        a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
+                    });
+                    let mad = devs[n / 2];
+                    if mad > 0.0 {
+                        mad / 0.6745
+                    } else {
+                        0.0
+                    }
+                };
+                let s_left = mad_half(0, left_n);
+                let s_right = mad_half(best_gap_idx, right_n);
+                let s = if s_left > s_right { s_left } else { s_right };
+                if s > 0.0 {
+                    s
+                } else {
+                    1.0
+                }
+            };
+
+            let gap_threshold = threshold * local_sigma;
+            if best_gap < gap_threshold {
+                cl += 1;
+                continue;
+            }
+
+            // Split: spikes at index >= best_gap_idx (higher amplitudes) get new label
+            let new_label = current_n;
+            let n_above = count - best_gap_idx;
+            let n_below = best_gap_idx;
+
+            if n_below >= min_cluster_size && n_above >= min_cluster_size {
+                for k in best_gap_idx..count {
+                    labels[indices[k]] = new_label;
+                }
+                current_n += 1;
+                did_split = true;
+                break; // restart outer loop
+            } else {
+                cl += 1;
+            }
+        }
+
+        if !did_split {
+            break;
+        }
+    }
+
+    current_n
+}
+
 /// Compute mean waveform per cluster, spike count, and most common peak channel.
 #[allow(clippy::too_many_arguments)]
 fn compute_cluster_means<const W: usize, const N: usize>(
@@ -2396,6 +2571,23 @@ pub fn sort_multichannel<
             config.refractory_samples,
             config.split_min_cluster_size,
             scratch,
+            N,
+        )
+    } else {
+        n_clusters
+    };
+
+    // 9c3b. Amplitude bimodality split: if a cluster's peak-amplitude distribution
+    // has a large gap (relative to spread), it likely contains two neurons with
+    // different amplitudes merged into one cluster. Split at the gap.
+    let n_clusters = if config.split_bimodality_threshold > 0.0 && n_clusters > 0 {
+        amplitude_bimodality_split(
+            n_extracted,
+            labels,
+            event_buf,
+            n_clusters,
+            config.split_bimodality_threshold,
+            config.split_min_cluster_size,
             N,
         )
     } else {
@@ -4683,6 +4875,77 @@ mod tests {
             8,
         );
         assert_eq!(n, 1, "threshold=1.0 should not split");
+    }
+
+    #[test]
+    fn test_amplitude_bimodality_split_two_groups() {
+        // Two clear amplitude groups: 10 spikes at amp ~2.0, 10 at amp ~20.0
+        let mut labels = [0usize; 20];
+        let events: Vec<MultiChannelEvent> = (0..20)
+            .map(|i| {
+                let amp = if i < 10 {
+                    2.0 + (i as f64) * 0.05
+                } else {
+                    20.0 + ((i - 10) as f64) * 0.05
+                };
+                MultiChannelEvent {
+                    sample: i * 100,
+                    channel: 0,
+                    amplitude: amp,
+                }
+            })
+            .collect();
+        let n = amplitude_bimodality_split(20, &mut labels, &events, 1, 2.0, 3, 8);
+        assert_eq!(n, 2, "should split into 2 clusters");
+        // First 10 and last 10 should have different labels
+        assert_eq!(labels[0], labels[9]);
+        assert_eq!(labels[10], labels[19]);
+        assert_ne!(labels[0], labels[10]);
+    }
+
+    #[test]
+    fn test_amplitude_bimodality_split_unimodal() {
+        // Uniform amplitudes -- should NOT split
+        let mut labels = [0usize; 20];
+        let events: Vec<MultiChannelEvent> = (0..20)
+            .map(|i| MultiChannelEvent {
+                sample: i * 100,
+                channel: 0,
+                amplitude: 5.0 + (i as f64) * 0.1,
+            })
+            .collect();
+        let n = amplitude_bimodality_split(20, &mut labels, &events, 1, 2.0, 3, 8);
+        assert_eq!(n, 1, "unimodal distribution should not split");
+    }
+
+    #[test]
+    fn test_amplitude_bimodality_split_too_small() {
+        // Too few spikes to split
+        let mut labels = [0usize; 4];
+        let events: Vec<MultiChannelEvent> = (0..4)
+            .map(|i| MultiChannelEvent {
+                sample: i * 100,
+                channel: 0,
+                amplitude: if i < 2 { 1.0 } else { 100.0 },
+            })
+            .collect();
+        let n = amplitude_bimodality_split(4, &mut labels, &events, 1, 2.0, 3, 8);
+        assert_eq!(n, 1, "too few spikes to split (min_cluster_size=3)");
+    }
+
+    #[test]
+    fn test_amplitude_bimodality_split_respects_max() {
+        // Already at max clusters
+        let mut labels = [0usize; 20];
+        let events: Vec<MultiChannelEvent> = (0..20)
+            .map(|i| MultiChannelEvent {
+                sample: i * 100,
+                channel: 0,
+                amplitude: if i < 10 { 1.0 } else { 100.0 },
+            })
+            .collect();
+        let n = amplitude_bimodality_split(20, &mut labels, &events, 1, 2.0, 3, 1);
+        assert_eq!(n, 1, "should not split when at max_clusters");
     }
 
     #[test]
