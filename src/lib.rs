@@ -16,6 +16,7 @@
 //! - **[`SurfaceLaplacian`]** - Surface Laplacian spatial filter for volume conduction reduction
 //! - **[`CommonAverageReference`]** - Common Average Reference spatial filter for multi-channel recordings
 //! - **[`LmsFilter`], [`NlmsFilter`]** - Adaptive filters for real-time noise cancellation
+//! - **[`denoise_haar`]** - Wavelet denoising (Haar SWT, Donoho-Johnstone threshold)
 //! - **[`Decimator`]** - Sample rate reduction (downsampling)
 //! - **[`Interpolator`]** - Sample rate increase (upsampling)
 //! - **[`ChannelRouter`]** - Channel selection, reordering, and duplication for pipeline composition
@@ -81,6 +82,7 @@ pub mod connectivity;
 mod csp;
 mod decimate;
 mod deconvolution;
+pub mod denoise;
 mod detector;
 pub mod drift;
 pub mod edf;
@@ -135,6 +137,9 @@ pub use buffer::CircularBuffer;
 pub use csp::{AdaptiveCsp, CspError, MulticlassCsp, UpdateConfig};
 pub use decimate::Decimator;
 pub use deconvolution::{DeconvolutionResult, OasisDeconvolution};
+pub use denoise::{
+    denoise_haar, hard_threshold, soft_threshold, universal_threshold, ThresholdMode,
+};
 pub use detector::{
     AdaptiveThresholdDetector, CrossingDirection, DetectorState, SpikeEvent, SpikeEvents,
     ThresholdDetector, ZeroCrossingDetector,
@@ -185,7 +190,8 @@ pub use rms::WindowedRms;
 pub use router::ChannelRouter;
 pub use sorter::{
     ccg_merge_clusters, estimate_noise_multichannel, merge_clusters, sort_multichannel,
-    split_clusters, ClusterInfo, DetectionMode, OnlineSorter, SortConfig, SortResult,
+    split_clusters, svd_init_centroids, ClusterInfo, DetectionMode, OnlineSorter, SortConfig,
+    SortResult,
 };
 pub use spike_sort::{
     align_to_peak, combine_features, deduplicate_events, detect_spikes, detect_spikes_multichannel,

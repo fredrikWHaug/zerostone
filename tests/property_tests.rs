@@ -1,5 +1,6 @@
 use proptest::prelude::*;
 use zerostone::connectivity;
+use zerostone::denoise::{denoise_haar, hard_threshold, soft_threshold, ThresholdMode};
 use zerostone::drift::{estimate_drift_from_positions, DriftEstimator};
 use zerostone::entropy;
 use zerostone::gmm::GaussianMixture;
@@ -1988,5 +1989,38 @@ proptest! {
         gmm.fit(&data, 5);
         let bic = gmm.bic(&data);
         prop_assert!(bic.is_finite(), "BIC should be finite, got {}", bic);
+    }
+
+    // ------------------------------------------------------------------
+    // Denoise property tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn denoise_soft_threshold_bounded(x in -1e6f64..1e6f64, lambda in 0.0f64..1e3f64) {
+        let result = soft_threshold(x, lambda);
+        prop_assert!(result.is_finite());
+        prop_assert!(result.abs() <= x.abs(), "|soft_threshold(x)| <= |x|");
+    }
+
+    #[test]
+    fn denoise_hard_threshold_idempotent(x in -1e6f64..1e6f64, lambda in 0.0f64..1e3f64) {
+        let r1 = hard_threshold(x, lambda);
+        let r2 = hard_threshold(r1, lambda);
+        prop_assert!((r1 - r2).abs() < 1e-15, "hard threshold is idempotent");
+    }
+
+    #[test]
+    fn denoise_haar_finite_output(
+        vals in proptest::collection::vec(-100.0f64..100.0f64, 32..=32)
+    ) {
+        let mut signal = [0.0f64; 32];
+        for (i, &v) in vals.iter().enumerate() {
+            signal[i] = v;
+        }
+        let mut scratch = [0.0f64; 32 * 5];
+        denoise_haar(&mut signal, &mut scratch, 3, ThresholdMode::Soft);
+        for &s in signal.iter() {
+            prop_assert!(s.is_finite(), "Denoised output must be finite, got {}", s);
+        }
     }
 }

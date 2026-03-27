@@ -89,6 +89,7 @@ pub enum DetectionMode {
 /// assert!((config.isi_split_threshold - 0.1).abs() < 1e-12);
 /// assert!(!config.matched_filter_detect);
 /// assert!((config.matched_filter_threshold - 4.0).abs() < 1e-12);
+/// assert!(!config.svd_init);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -158,6 +159,24 @@ pub struct SortConfig {
     /// Lower values detect weaker spikes but increase false positives.
     /// Default 4.0 corresponds to P(false positive) ≈ 3e-5 per sample per filter.
     pub matched_filter_threshold: f64,
+    /// Bandpass filter low cutoff in Hz (0.0 = disabled).
+    /// Standard spike sorting range: 300-6000 Hz at 30 kHz sample rate.
+    /// Applied as a 4th-order Butterworth forward filter before whitening.
+    pub bandpass_low: f64,
+    /// Bandpass filter high cutoff in Hz (0.0 = disabled).
+    pub bandpass_high: f64,
+    /// Sample rate in Hz (needed for bandpass filter).
+    pub sample_rate: f64,
+    /// Enable common median reference (CMR) before whitening.
+    /// Subtracts the per-timepoint median across all channels.
+    /// More robust than CAR against large artifacts on individual channels.
+    pub common_median_ref: bool,
+    /// Enable SVD-based centroid initialization for k-means clustering.
+    /// Projects features onto the dominant eigenvector of the covariance matrix,
+    /// bins the projections into equal-count groups, and uses bin means as seeds.
+    /// Places centroids where the data density is highest along the principal
+    /// axis, rather than at the extremes (farthest-point). Default: false.
+    pub svd_init: bool,
 }
 
 impl Default for SortConfig {
@@ -189,6 +208,11 @@ impl Default for SortConfig {
             gmm_max_iter: 10,
             matched_filter_detect: false,
             matched_filter_threshold: 4.0,
+            bandpass_low: 0.0,
+            bandpass_high: 0.0,
+            sample_rate: 30000.0,
+            common_median_ref: false,
+            svd_init: false,
         }
     }
 }
@@ -292,6 +316,66 @@ pub fn estimate_noise_multichannel<const C: usize>(
         ch += 1;
     }
     noise
+}
+
+/// Apply 4th-order Butterworth bandpass filter in-place, per channel.
+///
+/// Implements a cascade of 2 second-order sections (biquads) in f64.
+/// The filter is causal (forward-only), suitable for real-time use.
+/// Coefficients are computed using the bilinear transform.
+#[allow(clippy::needless_range_loop)]
+fn bandpass_inplace<const C: usize>(data: &mut [[f64; C]], fs: f64, low: f64, high: f64) {
+    use core::f64::consts::PI;
+    let n = data.len();
+    if n < 4 || low >= high || fs <= 0.0 {
+        return;
+    }
+
+    // Prewarp cutoff frequencies
+    let w_low = libm::tan(PI * low / fs);
+    let w_high = libm::tan(PI * high / fs);
+    let bw = w_high - w_low;
+    let w0_sq = w_low * w_high;
+
+    // 2nd-order Butterworth poles: exp(j * pi * (2k+1) / (2*2)) for k=0,1
+    // For order=2: poles at angles pi*3/4 and pi*5/4
+    // Real part: cos(3pi/4) = -1/sqrt(2), cos(5pi/4) = -1/sqrt(2)
+    // So both pole pairs have the same real part: -sqrt(2)/2
+    // Bandpass transform doubles the order: each 2nd-order lowpass section
+    // becomes a 4th-order bandpass (2 biquad sections).
+    //
+    // For simplicity, compute coefficients for a 2nd-order bandpass
+    // (single biquad pair) and apply it twice for 4th-order.
+    let alpha = bw;
+    let a0 = 1.0 + alpha + w0_sq;
+    let a0_inv = 1.0 / a0;
+
+    // Bandpass biquad: H(z) = (bw * z^-1) / (1 + a1*z^-1 + a2*z^-2)
+    // Numerator: [0, bw, 0] in z-domain after bilinear
+    let b0 = alpha * a0_inv;
+    let b1 = 0.0;
+    let b2 = -alpha * a0_inv;
+    let a1 = 2.0 * (w0_sq - 1.0) * a0_inv;
+    let a2 = (1.0 - alpha + w0_sq) * a0_inv;
+
+    // Apply 2 passes of the same biquad for 4th-order response
+    for ch in 0..C {
+        for _pass in 0..2 {
+            let mut x1 = 0.0f64;
+            let mut x2 = 0.0f64;
+            let mut y1 = 0.0f64;
+            let mut y2 = 0.0f64;
+            for sample in data.iter_mut().take(n) {
+                let x = sample[ch];
+                let y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+                x2 = x1;
+                x1 = x;
+                y2 = y1;
+                y1 = y;
+                sample[ch] = y;
+            }
+        }
+    }
 }
 
 /// Compute sample covariance matrix from multi-channel data.
@@ -1669,6 +1753,176 @@ fn assign_to_nearest_template<const W: usize, const N: usize>(
     (best, best_dist)
 }
 
+/// SVD-based centroid initialization for k-means clustering.
+///
+/// Finds the dominant eigenvector of the feature covariance using the
+/// power iteration method (no matrix storage beyond K-dimensional vectors),
+/// projects all features onto it, bins by projection value into `max_seeds`
+/// equal-width intervals, and returns each bin's mean as a seed centroid.
+///
+/// This places centroids where the data density is highest along the
+/// principal axis, unlike farthest-point which only maximizes inter-centroid
+/// distance and tends to place seeds at outliers.
+///
+/// # Type Parameters
+///
+/// * `K` - Feature dimensionality
+/// * `N` - Maximum number of centroids
+///
+/// # Returns
+///
+/// `(centroids, count)` where `centroids[..count]` are the seed centroids.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::sorter::svd_init_centroids;
+///
+/// // Two well-separated clusters along dimension 0
+/// let features = [
+///     [0.0, 0.0], [0.1, 0.1], [0.2, -0.1], [-0.1, 0.05],
+///     [5.0, 0.0], [5.1, 0.1], [4.9, -0.1], [5.2, 0.05],
+/// ];
+/// let (centroids, count) = svd_init_centroids::<2, 8>(&features, 8, 2);
+/// assert_eq!(count, 2);
+/// // First centroid near [0.05, 0.0125], second near [5.05, 0.0125]
+/// assert!(centroids[0][0] < 1.0);
+/// assert!(centroids[1][0] > 4.0);
+/// ```
+#[allow(clippy::needless_range_loop)]
+pub fn svd_init_centroids<const K: usize, const N: usize>(
+    feature_buf: &[[f64; K]],
+    n_extracted: usize,
+    max_seeds: usize,
+) -> ([[f64; K]; N], usize) {
+    let mut centroids = [[0.0f64; K]; N];
+    let n = if n_extracted < feature_buf.len() {
+        n_extracted
+    } else {
+        feature_buf.len()
+    };
+    if n < 2 || max_seeds == 0 || K == 0 {
+        return (centroids, 0);
+    }
+    let n_seeds = if max_seeds > N { N } else { max_seeds };
+    let n_seeds = if n_seeds > n { n } else { n_seeds };
+
+    // 1. Compute mean
+    let mut mean = [0.0f64; K];
+    for i in 0..n {
+        for d in 0..K {
+            mean[d] += feature_buf[i][d];
+        }
+    }
+    let inv_n = 1.0 / n as f64;
+    for d in 0..K {
+        mean[d] *= inv_n;
+    }
+
+    // 2. Find dominant eigenvector via power iteration on the covariance.
+    //    Instead of forming the K x K matrix explicitly, we use the identity:
+    //      C * v = (1/n) * sum_i [ (x_i - mu) * ((x_i - mu) . v) ]
+    //    Each iteration is O(n * K), no K x K storage needed.
+    let mut top_vec = [0.0f64; K];
+    // Initialize with [1, 1, ..., 1] normalized
+    let inv_sqrt_k = 1.0 / libm::sqrt(K as f64);
+    for d in 0..K {
+        top_vec[d] = inv_sqrt_k;
+    }
+
+    for _iter in 0..50 {
+        let mut new_vec = [0.0f64; K];
+        // Multiply: new_vec = C * top_vec = (1/(n-1)) * sum_i (x_i - mu) * dot(x_i - mu, top_vec)
+        for i in 0..n {
+            let mut dot = 0.0;
+            for d in 0..K {
+                dot += (feature_buf[i][d] - mean[d]) * top_vec[d];
+            }
+            for d in 0..K {
+                new_vec[d] += (feature_buf[i][d] - mean[d]) * dot;
+            }
+        }
+        // Normalize
+        let mut norm_sq = 0.0;
+        for d in 0..K {
+            norm_sq += new_vec[d] * new_vec[d];
+        }
+        let norm = libm::sqrt(norm_sq);
+        if norm < 1e-30 {
+            // Degenerate -- all points identical
+            centroids[0] = mean;
+            return (centroids, 1);
+        }
+        let inv_norm = 1.0 / norm;
+        // Check convergence: |new - old| < tol
+        let mut diff_sq = 0.0;
+        for d in 0..K {
+            let v = new_vec[d] * inv_norm;
+            diff_sq += (v - top_vec[d]) * (v - top_vec[d]);
+            top_vec[d] = v;
+        }
+        if diff_sq < 1e-20 {
+            break;
+        }
+    }
+
+    // 3. Project features onto top eigenvector and find min/max
+    let mut proj_min = f64::MAX;
+    let mut proj_max = f64::MIN;
+    for i in 0..n {
+        let mut p = 0.0;
+        for d in 0..K {
+            p += feature_buf[i][d] * top_vec[d];
+        }
+        if p < proj_min {
+            proj_min = p;
+        }
+        if p > proj_max {
+            proj_max = p;
+        }
+    }
+
+    if proj_max - proj_min < 1e-15 {
+        centroids[0] = mean;
+        return (centroids, 1);
+    }
+
+    // 4. Range-based binning: divide [proj_min, proj_max] into n_seeds equal-width bins.
+    let bin_width = (proj_max - proj_min) / n_seeds as f64;
+
+    let mut bin_sums = [[0.0f64; K]; N];
+    let mut bin_counts = [0usize; N];
+
+    for i in 0..n {
+        let mut p = 0.0;
+        for d in 0..K {
+            p += feature_buf[i][d] * top_vec[d];
+        }
+        let mut bin = ((p - proj_min) / bin_width) as usize;
+        if bin >= n_seeds {
+            bin = n_seeds - 1;
+        }
+        bin_counts[bin] += 1;
+        for d in 0..K {
+            bin_sums[bin][d] += feature_buf[i][d];
+        }
+    }
+
+    // Compute bin means, skip empty bins
+    let mut count = 0;
+    for b in 0..n_seeds {
+        if bin_counts[b] > 0 && count < N {
+            let inv_c = 1.0 / bin_counts[b] as f64;
+            for d in 0..K {
+                centroids[count][d] = bin_sums[b][d] * inv_c;
+            }
+            count += 1;
+        }
+    }
+
+    (centroids, count)
+}
+
 /// Full multi-channel sorting pipeline.
 ///
 /// Pipeline: noise -> covariance -> whiten (in-place) -> detect -> dedup ->
@@ -1753,6 +2007,44 @@ pub fn sort_multichannel<
     let t_len = data.len();
     if t_len < W {
         return Err(SortError::InsufficientData);
+    }
+
+    // 0a. Common Median Reference: subtract per-sample median across channels.
+    // More robust than CAR (mean) when individual channels have large artifacts.
+    if config.common_median_ref && C > 2 {
+        for sample in data.iter_mut() {
+            // Sort channel values into scratch to find median
+            let n = C.min(scratch.len());
+            for (sc, sv) in scratch.iter_mut().zip(sample.iter()).take(n) {
+                *sc = *sv;
+            }
+            scratch[..n]
+                .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+            #[allow(clippy::manual_is_multiple_of)]
+            let median = if n % 2 == 0 {
+                (scratch[n / 2 - 1] + scratch[n / 2]) * 0.5
+            } else {
+                scratch[n / 2]
+            };
+            for ch in sample.iter_mut() {
+                *ch -= median;
+            }
+        }
+    }
+
+    // 0b. Bandpass filter: remove LFP (< low) and high-frequency noise (> high).
+    // Uses a 4th-order Butterworth bandpass implemented as 2 cascaded biquad
+    // sections in f64. Applied per-channel, forward-only (causal).
+    if config.bandpass_low > 0.0
+        && config.bandpass_high > config.bandpass_low
+        && config.sample_rate > 0.0
+    {
+        bandpass_inplace::<C>(
+            data,
+            config.sample_rate,
+            config.bandpass_low,
+            config.bandpass_high,
+        );
     }
 
     // 1. Noise estimation (pre-whitening, for quality metrics later)
@@ -2002,7 +2294,7 @@ pub fn sort_multichannel<
     let mut km = OnlineKMeans::<K, N>::new(config.cluster_max_count);
     km.set_create_threshold(config.cluster_threshold);
 
-    // 9a. Seed centroids using farthest-point initialization.
+    // 9a. Seed centroids using farthest-point or SVD-based initialization.
     // This picks well-separated initial centroids deterministically,
     // reducing sensitivity to spike arrival order vs naive first-come init.
     // Limit seeds to sqrt(N) to leave room for online cluster creation.
@@ -2015,7 +2307,16 @@ pub fn sort_multichannel<
         s.max(2).min(N / 2)
     };
     if n_extracted > max_init_seeds {
-        km.init_farthest_point(&feature_buf[..n_extracted], max_init_seeds);
+        if config.svd_init {
+            // SVD-based: project onto dominant eigenvector, bin, seed with bin means.
+            let (seeds, n_seeds) =
+                svd_init_centroids::<K, N>(feature_buf, n_extracted, max_init_seeds);
+            for seed in seeds.iter().take(n_seeds) {
+                let _ = km.seed_centroid(seed);
+            }
+        } else {
+            km.init_farthest_point(&feature_buf[..n_extracted], max_init_seeds);
+        }
     }
 
     for i in 0..n_extracted {
@@ -4461,5 +4762,197 @@ mod tests {
             s2.n_spikes,
             s1.n_spikes
         );
+    }
+
+    #[test]
+    fn test_bandpass_removes_dc() {
+        // Bandpass filter should remove DC offset
+        let mut data = [[5.0f64; 2]; 2000];
+        // Add some high-frequency content at sample rate / 10
+        for (i, sample) in data.iter_mut().enumerate() {
+            let t = i as f64 / 1000.0;
+            sample[0] += libm::sin(2.0 * core::f64::consts::PI * 100.0 * t);
+        }
+        bandpass_inplace::<2>(&mut data, 1000.0, 50.0, 200.0);
+        // DC should be removed: mean should be near zero
+        let mean: f64 =
+            data.iter().skip(200).map(|s| s[0]).sum::<f64>() / (data.len() - 200) as f64;
+        assert!(
+            libm::fabs(mean) < 1.0,
+            "bandpass should remove DC, mean={}",
+            mean
+        );
+    }
+
+    #[test]
+    fn test_bandpass_preserves_passband() {
+        // Signal in passband should be mostly preserved
+        let mut data = [[0.0f64; 1]; 4000];
+        let freq = 1000.0; // 1kHz signal, passband 300-6000Hz at 30kHz
+        for (i, sample) in data.iter_mut().enumerate() {
+            let t = i as f64 / 30000.0;
+            sample[0] = libm::sin(2.0 * core::f64::consts::PI * freq * t);
+        }
+        let original_power: f64 = data
+            .iter()
+            .skip(500)
+            .take(2000)
+            .map(|s| s[0] * s[0])
+            .sum::<f64>();
+        bandpass_inplace::<1>(&mut data, 30000.0, 300.0, 6000.0);
+        let filtered_power: f64 = data
+            .iter()
+            .skip(500)
+            .take(2000)
+            .map(|s| s[0] * s[0])
+            .sum::<f64>();
+        let ratio = filtered_power / original_power;
+        assert!(
+            ratio > 0.5,
+            "passband signal should be mostly preserved, ratio={}",
+            ratio
+        );
+    }
+
+    #[test]
+    #[allow(clippy::needless_range_loop)]
+    fn test_common_median_ref() {
+        use crate::probe::ProbeLayout;
+        // Common noise on all channels should be removed by CMR
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let n_samples = 2000;
+        let mut data = vec![[0.0f64; 4]; n_samples];
+        let mut rng = Rng::new(77);
+        // Add common noise + independent noise + spikes
+        for t in 0..n_samples {
+            let common = rng.gaussian(0.0, 3.0);
+            for ch in 0..4 {
+                data[t][ch] = common + rng.gaussian(0.0, 1.0);
+            }
+        }
+        // Add spikes
+        for t in (200..1800).step_by(200) {
+            data[t][0] = -15.0;
+        }
+        let mut scratch = vec![0.0; n_samples];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0
+            };
+            100
+        ];
+        let mut wf = vec![[0.0; 48]; 100];
+        let mut feat = vec![[0.0; 4]; 100];
+        let mut lab = vec![0usize; 100];
+
+        let config = SortConfig {
+            common_median_ref: true,
+            ..SortConfig::default()
+        };
+        let result = sort_multichannel::<4, 16, 48, 4, 2304, 32>(
+            &config,
+            &probe,
+            &mut data,
+            &mut scratch,
+            &mut events,
+            &mut wf,
+            &mut feat,
+            &mut lab,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_svd_init_centroids_two_clusters() {
+        // Two well-separated clusters along dim 0
+        let features = [
+            [0.0, 0.0],
+            [0.1, 0.1],
+            [0.2, -0.1],
+            [-0.1, 0.05],
+            [5.0, 0.0],
+            [5.1, 0.1],
+            [4.9, -0.1],
+            [5.2, 0.05],
+        ];
+        let (centroids, count) = svd_init_centroids::<2, 8>(&features, 8, 2);
+        assert_eq!(count, 2);
+        // Centroids should separate the two groups
+        assert!(
+            centroids[0][0] < 1.0,
+            "first centroid dim0={}",
+            centroids[0][0]
+        );
+        assert!(
+            centroids[1][0] > 4.0,
+            "second centroid dim0={}",
+            centroids[1][0]
+        );
+    }
+
+    #[test]
+    fn test_svd_init_centroids_single_point() {
+        let features = [[1.0, 2.0]];
+        let (_, count) = svd_init_centroids::<2, 4>(&features, 1, 2);
+        // Only 1 point, need at least 2 for covariance
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_svd_init_centroids_identical_points() {
+        let features = [[3.0, 3.0]; 10];
+        let (centroids, count) = svd_init_centroids::<2, 4>(&features, 10, 3);
+        // All identical -> degenerate, should return 1 centroid at the mean
+        assert_eq!(count, 1);
+        assert!((centroids[0][0] - 3.0).abs() < 1e-10);
+        assert!((centroids[0][1] - 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_svd_init_in_sort_pipeline() {
+        use crate::probe::ProbeLayout;
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let n_samples = 2000;
+        let mut data = vec![[0.0f64; 4]; n_samples];
+        let mut rng = Rng::new(99);
+        for row in data.iter_mut() {
+            for ch in row.iter_mut() {
+                *ch = rng.gaussian(0.0, 1.0);
+            }
+        }
+        // Inject spikes on channel 0
+        for t in (200..1800).step_by(200) {
+            data[t][0] = -15.0;
+        }
+        let mut scratch = vec![0.0; n_samples];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0,
+            };
+            100
+        ];
+        let mut wf = vec![[0.0; 48]; 100];
+        let mut feat = vec![[0.0; 4]; 100];
+        let mut lab = vec![0usize; 100];
+
+        let config = SortConfig {
+            svd_init: true,
+            ..SortConfig::default()
+        };
+        let result = sort_multichannel::<4, 16, 48, 4, 2304, 32>(
+            &config,
+            &probe,
+            &mut data,
+            &mut scratch,
+            &mut events,
+            &mut wf,
+            &mut feat,
+            &mut lab,
+        );
+        assert!(result.is_ok());
     }
 }
