@@ -96,6 +96,14 @@ _DEFAULT_PARAMS = {
     "detection_mode": "amplitude",
     "sneo_smooth_window": 3,
     "ccg_merge": False,
+    "matched_filter_detect": True,
+    "matched_filter_threshold": 4.0,
+    "gmm_refine": False,
+    "gmm_max_iter": 10,
+    "bandpass_low": 0.0,
+    "bandpass_high": 0.0,
+    "sample_rate": 30000.0,
+    "common_median_ref": False,
 }
 
 _PARAM_DESCRIPTIONS = {
@@ -112,6 +120,14 @@ _PARAM_DESCRIPTIONS = {
     "detection_mode": "Detection mode: 'amplitude', 'neo', or 'sneo'.",
     "sneo_smooth_window": "SNEO smoothing window (only for detection_mode='sneo').",
     "ccg_merge": "Enable CCG-based cluster merging to reduce over-splitting.",
+    "matched_filter_detect": "Enable matched filter second-pass detection.",
+    "matched_filter_threshold": "Matched filter threshold in z-score units.",
+    "gmm_refine": "Enable GMM refinement of k-means clusters.",
+    "gmm_max_iter": "Maximum EM iterations for GMM refinement.",
+    "bandpass_low": "Bandpass low cutoff in Hz (0 = disabled).",
+    "bandpass_high": "Bandpass high cutoff in Hz (0 = disabled).",
+    "sample_rate": "Sample rate in Hz (auto-detected from recording if available).",
+    "common_median_ref": "Enable common median reference before whitening.",
 }
 
 
@@ -179,6 +195,11 @@ def _sort_recording(recording, params):
     # Build probe geometry -- use linear layout as fallback
     probe = zbci.ProbeLayout.linear(n_channels, params["probe_pitch"])
 
+    # Auto-detect sample rate from recording if not overridden
+    sample_rate = params["sample_rate"]
+    if sample_rate == 30000.0:
+        sample_rate = fs  # Use recording's actual sample rate
+
     # Step 1: Run the full sorting pipeline (detect + whiten + cluster)
     sort_result = zbci.sort_multichannel(
         data,
@@ -195,6 +216,14 @@ def _sort_recording(recording, params):
         detection_mode=params["detection_mode"],
         sneo_smooth_window=params["sneo_smooth_window"],
         ccg_merge=params["ccg_merge"],
+        matched_filter_detect=params["matched_filter_detect"],
+        matched_filter_threshold=params["matched_filter_threshold"],
+        gmm_refine=params["gmm_refine"],
+        gmm_max_iter=params["gmm_max_iter"],
+        bandpass_low=params["bandpass_low"],
+        bandpass_high=params["bandpass_high"],
+        sample_rate=sample_rate,
+        common_median_ref=params["common_median_ref"],
     )
 
     n_spikes = sort_result["n_spikes"]
@@ -225,19 +254,25 @@ if HAS_SPIKEINTERFACE:
         """SpikeInterface BaseSorter wrapper for Zerostone spike sorter.
 
         Zerostone is a real-time, deterministic spike sorter designed for
-        embedded and closed-loop BCI applications. It supports 2-64 channels
+        embedded and closed-loop BCI applications. It supports 4-128 channels
         and runs entirely on CPU with no GPU dependency.
 
         The sorting pipeline:
-        1. MAD noise estimation
-        2. Spatial whitening (ZCA)
-        3. Threshold detection with refractory period
-        4. Cross-channel deduplication
-        5. Peak alignment
-        6. Single-channel waveform extraction
-        7. PCA feature reduction (3 components)
-        8. Online k-means clustering
-        9. Quality metrics (SNR, ISI violations)
+        1. Optional bandpass filter (4th-order Butterworth)
+        2. Optional common median reference (CMR)
+        3. MAD noise estimation
+        4. Spatial whitening (ZCA)
+        5. Threshold detection (amplitude/NEO/SNEO) with refractory period
+        6. Cross-channel deduplication
+        7. Peak alignment
+        8. Single-channel waveform extraction
+        9. PCA feature reduction (3 components + channel encoding)
+        10. Online k-means clustering with farthest-point init
+        11. Cluster merge/split (d-prime, ISI, spatial, CCG)
+        12. Optional GMM refinement (full covariance EM)
+        13. Template subtraction (multi-pass)
+        14. Optional matched filter second-pass detection
+        15. Quality metrics (SNR, ISI violations)
         """
 
         sorter_name = "zerostone"
@@ -254,7 +289,7 @@ if HAS_SPIKEINTERFACE:
 
         sorter_description = (
             "Zerostone: real-time deterministic spike sorter for embedded BCI. "
-            "CPU-only, 2-64 channels, sub-ms latency."
+            "CPU-only, 4-128 channels, sub-ms latency."
         )
 
         installation_mesg = (

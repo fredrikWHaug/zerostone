@@ -102,6 +102,11 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     gmm_max_iter = 10,
     matched_filter_detect = false,
     matched_filter_threshold = 4.0,
+    bandpass_low = 0.0,
+    bandpass_high = 0.0,
+    sample_rate = 30000.0,
+    common_median_ref = false,
+    svd_init = false,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -135,6 +140,11 @@ fn sort_multichannel<'py>(
     gmm_max_iter: usize,
     matched_filter_detect: bool,
     matched_filter_threshold: f64,
+    bandpass_low: f64,
+    bandpass_high: f64,
+    sample_rate: f64,
+    common_median_ref: bool,
+    svd_init: bool,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -181,6 +191,11 @@ fn sort_multichannel<'py>(
         gmm_max_iter,
         matched_filter_detect,
         matched_filter_threshold,
+        bandpass_low,
+        bandpass_high,
+        sample_rate,
+        common_median_ref,
+        svd_init,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
@@ -478,17 +493,18 @@ fn sort_batch_parallel<'py>(
 
     let mut data_owned = data_slice.to_vec();
 
-    let results = py.allow_threads(|| {
-        sorter_dyn::sort_batch_parallel(
-            &config,
-            &positions,
-            &mut data_owned,
-            n_samples,
-            n_channels,
-            segment_samples,
-        )
-    })
-    .map_err(sort_error_to_py)?;
+    let results = py
+        .allow_threads(|| {
+            sorter_dyn::sort_batch_parallel(
+                &config,
+                &positions,
+                &mut data_owned,
+                n_samples,
+                n_channels,
+                segment_samples,
+            )
+        })
+        .map_err(sort_error_to_py)?;
 
     // Convert each DynSortResult to a Python dict
     let result_list = PyList::empty(py);
@@ -499,7 +515,10 @@ fn sort_batch_parallel<'py>(
     Ok(result_list.into())
 }
 
-fn dyn_result_to_dict(py: Python<'_>, r: &zerostone::sorter_dyn::DynSortResult) -> PyResult<PyObject> {
+fn dyn_result_to_dict(
+    py: Python<'_>,
+    r: &zerostone::sorter_dyn::DynSortResult,
+) -> PyResult<PyObject> {
     use pyo3::types::{PyDict, PyList};
 
     let dict = PyDict::new(py);

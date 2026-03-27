@@ -231,6 +231,23 @@ impl StreamingSorter {
         }
     }
 
+    /// Drift-corrected y-position for a template.
+    ///
+    /// Args:
+    ///     idx (int): Template index.
+    ///
+    /// Returns:
+    ///     float or None: The drift-corrected y-position, or None if out of range.
+    fn template_position(&self, idx: usize) -> Option<f64> {
+        match self.n_channels {
+            4 => self.inner_4.as_ref().and_then(|s| s.template_position(idx)),
+            8 => self.inner_8.as_ref().and_then(|s| s.template_position(idx)),
+            16 => self.inner_16.as_ref().and_then(|s| s.template_position(idx)),
+            32 => self.inner_32.as_ref().and_then(|s| s.template_position(idx)),
+            _ => None,
+        }
+    }
+
     /// Whether the drift model has been fitted (needs >= 2 time bins).
     #[getter]
     fn drift_fitted(&self) -> bool {
