@@ -1,6 +1,6 @@
 # Spike Sorting Benchmark Results
 
-Zerostone v0.7.0 on synthetic multi-channel recordings with known ground truth.
+Zerostone v0.8.0 on synthetic multi-channel recordings with known ground truth.
 
 Methodology follows SpikeInterface/SpikeForest: accuracy = TP / (TP + FN + FP), with 0.67 ms tolerance window (20 samples at 30 kHz) and greedy best-match assignment.
 
@@ -64,6 +64,7 @@ The matched filter dramatically improved detection of weak units:
 - CCG merge: available (merges over-split clusters with refractory dip in cross-correlogram)
 - Multi-pass template subtraction: configurable (1-3 passes)
 - ISI-violation cluster splitting: configurable threshold
+- Amplitude bimodality split: gap detection on sorted amplitudes with local MAD threshold
 - Batch parallel: rayon-based segment parallelism (alloc feature)
 
 ## Detection Modes
@@ -79,15 +80,45 @@ Note: SNEO currently underperforms amplitude on synthetic data due to threshold 
 
 ## Parameter Sweep Results (Week 18)
 
-Systematic sweep across detection threshold, cluster_threshold, min_cluster_snr, merge parameters, and template subtraction passes on all three presets. Key findings:
+### Full Sweep (64 combos on medium, top-3 on easy/hard)
 
-1. **Detection threshold** is the single most impactful parameter. Hard preset improved from 25.2% to 48.6% by tuning threshold from 3.5 to 5.0.
-2. **cluster_threshold=8.0** (vs default 5.0) improves accuracy by allowing more initial clusters that are then merged by d-prime. Over-splitting followed by informed merging > conservative initial clustering.
-3. **min_cluster_snr=1.5** on medium retains weak but real clusters that the default 2.5 would remove.
-4. **CCG merge** has no effect on synthetic data (no over-splitting pattern to fix).
-5. **ISI-violation split** has no effect on synthetic data (clusters are already well-separated).
-6. **Multi-pass template subtraction** provides marginal improvement on synthetic data (no overlapping spikes in our generator).
-7. **3 template passes** slightly decreases accuracy (over-subtraction introduces artifacts).
+Swept threshold x matched_filter x svd_init x bandpass x CMR. Config: cluster_threshold=8.0, min_cluster_snr=1.5, refractory=15, matched_filter_threshold=4.0.
+
+**Top 5 on medium (by accuracy):**
+
+| Rank | Thr | MF | SVD | BP | CMR | Accuracy | Spikes | Clusters | Time |
+|------|-----|----|-----|----|-----|----------|--------|----------|------|
+| 1 | 4.0 | Y | N | N | N | **75.2%** | 6114 | 31 | 5.2s |
+| 2 | 4.0 | Y | Y | N | N | **73.8%** | 6074 | 30 | 5.4s |
+| 3 | 5.0 | Y | N | N | N | **73.3%** | 4407 | 19 | 4.1s |
+| 4 | 4.5 | Y | N | N | N | **72.9%** | 4535 | 24 | 4.6s |
+| 5 | 4.5 | Y | N | N | Y | **70.6%** | 4714 | 25 | 5.1s |
+
+**Cross-difficulty (top-3 from medium applied to easy/hard):**
+
+| Config | Easy | Medium | Hard | Average |
+|--------|------|--------|------|---------|
+| thr=5.0 mf=Y svd=N bp=N cmr=N | 86.1% | 73.3% | 47.2% | **68.9%** |
+| thr=4.0 mf=Y svd=Y bp=N cmr=N | 86.0% | 73.8% | 42.9% | **67.6%** |
+| thr=4.0 mf=Y svd=N bp=N cmr=N | 82.0% | 75.2% | 43.4% | **66.9%** |
+
+### Key Findings
+
+1. **Bandpass hurts** on synthetic data (already bandlimited). Every bandpass combo underperforms its no-bandpass equivalent.
+2. **CMR hurts** on synthetic data (spatially uncorrelated noise). Removes signal along with noise.
+3. **Matched filter helps** consistently (+3-7% on medium). The Neyman-Pearson detector recovers weak units below amplitude threshold.
+4. **SVD init is mixed**: helps on easy (+4%), marginal on medium (-1.4%), slightly hurts on hard (-0.5%). Random k-means init is surprisingly competitive.
+5. **Threshold 4.0** optimal for medium (balances detection vs false positives), **5.0** better for hard (more conservative avoids noise clusters).
+6. **thr=3.5 universally bad** -- too many false positives overwhelm clustering (15K-20K detected vs 4.8K ground truth).
+
+### Earlier Sweep Findings
+
+1. **cluster_threshold=8.0** (vs default 5.0) improves accuracy by allowing more initial clusters that are then merged by d-prime. Over-splitting followed by informed merging > conservative initial clustering.
+2. **min_cluster_snr=1.5** on medium retains weak but real clusters that the default 2.5 would remove.
+3. **CCG merge** has no effect on synthetic data (no over-splitting pattern to fix).
+4. **ISI-violation split** has no effect on synthetic data (clusters are already well-separated).
+5. **Multi-pass template subtraction** provides marginal improvement on synthetic data (no overlapping spikes in our generator).
+6. **3 template passes** slightly decreases accuracy (over-subtraction introduces artifacts).
 
 ## Analysis
 
