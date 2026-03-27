@@ -554,6 +554,36 @@ pub fn sneo_transform(signal: &[f64], output: &mut [f64], smooth_window: usize) 
     n
 }
 
+/// Convert an amplitude-domain threshold to the equivalent SNEO-domain threshold.
+///
+/// The NEO transform squares the signal: for a spike of amplitude A,
+/// NEO output ≈ A². For white Gaussian noise with σ=1 (post-whitening),
+/// the NEO output has:
+/// - Mean ≈ 2σ²
+/// - Std ≈ 2√2 σ²
+///
+/// An amplitude threshold of T (in σ units) detects events at T standard
+/// deviations above the noise floor. The equivalent energy-domain threshold
+/// is T/√2, because the NEO amplifies spikes quadratically while only
+/// amplifying noise linearly in variance.
+///
+/// This calibration ensures that `threshold=5` in amplitude mode and
+/// `threshold=5` in SNEO mode have comparable false-positive rates.
+///
+/// # Example
+///
+/// ```
+/// use zerostone::spike_sort::sneo_calibrated_threshold;
+///
+/// let amp_thresh = 5.0;
+/// let sneo_thresh = sneo_calibrated_threshold(amp_thresh);
+/// assert!((sneo_thresh - 5.0 / 1.41421356).abs() < 0.01);
+/// assert!(sneo_thresh < amp_thresh); // SNEO threshold is lower
+/// ```
+pub fn sneo_calibrated_threshold(amplitude_threshold: f64) -> f64 {
+    amplitude_threshold / libm::sqrt(2.0)
+}
+
 /// Estimate noise standard deviation using the Median Absolute Deviation.
 ///
 /// sigma = median(|x|) / 0.6745

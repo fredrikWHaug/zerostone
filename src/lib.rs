@@ -146,7 +146,7 @@ pub use detector::{
     AdaptiveThresholdDetector, CrossingDirection, DetectorState, SpikeEvent, SpikeEvents,
     ThresholdDetector, ZeroCrossingDetector,
 };
-pub use drift::{estimate_drift_from_positions, DriftEstimator};
+pub use drift::{estimate_drift_from_positions, DriftEstimator, NonRigidDrift};
 pub use edf::{
     parse_header, parse_signal_header, read_channel, read_record, EdfError, EdfHeader,
     EdfSignalHeader,
@@ -198,8 +198,8 @@ pub use sorter::{
 pub use spike_sort::{
     align_to_peak, combine_features, deduplicate_events, detect_spikes, detect_spikes_multichannel,
     estimate_noise_mad, extract_multichannel, extract_peak_channel, extract_spatial_features,
-    neo_transform, sneo_transform, MultiChannelEvent, SortError, SpikeCluster, TemplateMatch,
-    WaveformExtractor, WaveformPca,
+    neo_transform, sneo_calibrated_threshold, sneo_transform, MultiChannelEvent, SortError,
+    SpikeCluster, TemplateMatch, WaveformExtractor, WaveformPca,
 };
 pub use stats::{OnlineCov, OnlineStats};
 pub use stft::Stft;
