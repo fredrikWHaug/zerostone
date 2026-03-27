@@ -10,6 +10,7 @@ mod cca;
 mod connectivity;
 mod csp;
 mod deconvolution;
+mod denoise;
 mod detection;
 mod drift;
 mod edf;
@@ -509,6 +510,9 @@ fn zpybci(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Streaming sorter
     streaming::register(m)?;
+
+    // Wavelet denoising
+    denoise::register(m)?;
 
     // Window functions
     window::register(m)?;

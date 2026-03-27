@@ -211,3 +211,158 @@ def generate_recording(
         "sampling_rate": sampling_rate,
         "n_units": n_units,
     }
+
+
+def generate_drifting_recording(
+    n_channels=32,
+    duration_s=60.0,
+    sampling_rate=30000.0,
+    n_units=5,
+    firing_rate=5.0,
+    noise_std=1.0,
+    refractory_ms=1.0,
+    drift_um=50.0,
+    pitch_um=25.0,
+    seed=42,
+):
+    """Generate synthetic recording with linear probe drift.
+
+    Simulates rigid vertical drift where the entire probe moves linearly
+    over the recording duration. Each unit's primary channel shifts over
+    time, modeling the effect of tissue drift in chronic recordings.
+
+    The drift is implemented by linearly interpolating each unit's spatial
+    footprint toward neighboring channels as the probe moves.
+
+    Parameters
+    ----------
+    n_channels : int
+        Number of recording channels.
+    duration_s : float
+        Recording duration in seconds.
+    sampling_rate : float
+        Sampling rate in Hz.
+    n_units : int
+        Number of distinct neural units to simulate.
+    firing_rate : float
+        Mean firing rate per unit in Hz.
+    noise_std : float
+        Standard deviation of additive Gaussian noise.
+    refractory_ms : float
+        Absolute refractory period in milliseconds.
+    drift_um : float
+        Total probe drift in micrometers over the recording duration.
+        Positive = probe moves down (neurons appear to move up).
+    pitch_um : float
+        Inter-electrode spacing in micrometers (for converting drift to channels).
+    seed : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    dict with keys:
+        data : np.ndarray, shape (n_samples, n_channels), float64
+            Simulated recording with drift.
+        spike_times : list of np.ndarray
+            Per-unit spike sample indices.
+        spike_labels : np.ndarray
+            All spike labels sorted by time.
+        all_spike_times : np.ndarray
+            All spike times sorted.
+        templates : np.ndarray, shape (n_units, n_channels, n_samples)
+            The initial waveform templates (before drift).
+        primary_channels : np.ndarray, shape (n_units,)
+            Initial primary channel per unit.
+        drift_um : float
+            Total drift applied.
+        drift_trace : np.ndarray, shape (n_samples,)
+            Instantaneous drift in micrometers at each sample.
+        sampling_rate : float
+        n_units : int
+    """
+    rng = np.random.default_rng(seed)
+    n_total_samples = int(duration_s * sampling_rate)
+    refractory_samples = int(refractory_ms * sampling_rate / 1000.0)
+
+    template_len = 61
+    half_template = template_len // 2
+
+    # Generate templates at initial position
+    templates, primary_channels = generate_templates(
+        n_units, n_channels, n_samples=template_len, seed=seed + 1000
+    )
+
+    # Linear drift trace: 0 at start, drift_um at end
+    drift_trace = np.linspace(0.0, drift_um, n_total_samples)
+
+    # Generate Poisson spike trains
+    spike_times_per_unit = []
+    for u in range(n_units):
+        mean_isi = sampling_rate / firing_rate
+        n_expected = int(duration_s * firing_rate * 1.5) + 100
+        isis = rng.exponential(mean_isi, size=n_expected)
+        isis = np.maximum(isis, refractory_samples)
+        times = np.cumsum(isis).astype(np.int64)
+        margin = half_template + 1
+        valid = times[(times >= margin) & (times < n_total_samples - margin)]
+        spike_times_per_unit.append(valid)
+
+    # Build recording with drift-shifted templates
+    data = rng.normal(0.0, noise_std, size=(n_total_samples, n_channels))
+
+    drift_channels = drift_um / pitch_um  # total drift in channel units
+
+    for u in range(n_units):
+        base_template = templates[u]  # (n_channels, template_len)
+        for t_spike in spike_times_per_unit[u]:
+            # Fractional channel shift at this time point
+            frac = t_spike / max(n_total_samples - 1, 1)
+            shift = frac * drift_channels  # channel shift at this time
+
+            # Shift the template spatially by interpolating between channels
+            shifted = np.zeros_like(base_template)
+            for ch in range(n_channels):
+                # Source channel in the original template
+                src = ch + shift
+                src_lo = int(np.floor(src))
+                src_hi = src_lo + 1
+                alpha = src - src_lo
+
+                if 0 <= src_lo < n_channels:
+                    shifted[ch] += (1.0 - alpha) * base_template[src_lo]
+                if 0 <= src_hi < n_channels:
+                    shifted[ch] += alpha * base_template[src_hi]
+
+            start = t_spike - half_template
+            end = start + template_len
+            data[start:end, :] += shifted.T * noise_std
+
+    # Merge all spike times and labels
+    all_times = []
+    all_labels = []
+    for u in range(n_units):
+        all_times.append(spike_times_per_unit[u])
+        all_labels.append(np.full(len(spike_times_per_unit[u]), u, dtype=np.int64))
+
+    if len(all_times) > 0 and any(len(t) > 0 for t in all_times):
+        all_times = np.concatenate(all_times)
+        all_labels = np.concatenate(all_labels)
+        sort_idx = np.argsort(all_times)
+        all_times = all_times[sort_idx]
+        all_labels = all_labels[sort_idx]
+    else:
+        all_times = np.array([], dtype=np.int64)
+        all_labels = np.array([], dtype=np.int64)
+
+    return {
+        "data": data,
+        "spike_times": spike_times_per_unit,
+        "spike_labels": all_labels,
+        "all_spike_times": all_times,
+        "templates": templates,
+        "primary_channels": primary_channels,
+        "drift_um": drift_um,
+        "drift_trace": drift_trace,
+        "sampling_rate": sampling_rate,
+        "n_units": n_units,
+    }

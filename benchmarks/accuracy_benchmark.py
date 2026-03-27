@@ -367,6 +367,11 @@ def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=Tru
         gmm_max_iter=params.get("gmm_max_iter", 10),
         matched_filter_detect=params.get("matched_filter_detect", False),
         matched_filter_threshold=params.get("matched_filter_threshold", 4.0),
+        bandpass_low=params.get("bandpass_low", 0.0),
+        bandpass_high=params.get("bandpass_high", 0.0),
+        sample_rate=params.get("sample_rate", 30000.0),
+        common_median_ref=params.get("common_median_ref", False),
+        svd_init=params.get("svd_init", False),
     )
     t_sort = time.perf_counter() - t0
     if verbose:

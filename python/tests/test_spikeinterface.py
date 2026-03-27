@@ -39,6 +39,35 @@ class TestModuleImport:
         assert "refractory" in _DEFAULT_PARAMS
         assert "probe_pitch" in _DEFAULT_PARAMS
 
+    def test_new_params_present(self):
+        """New pipeline params are in defaults."""
+        from zpybci.spikeinterface import _DEFAULT_PARAMS
+
+        assert "matched_filter_detect" in _DEFAULT_PARAMS
+        assert "matched_filter_threshold" in _DEFAULT_PARAMS
+        assert "gmm_refine" in _DEFAULT_PARAMS
+        assert "gmm_max_iter" in _DEFAULT_PARAMS
+        assert "bandpass_low" in _DEFAULT_PARAMS
+        assert "bandpass_high" in _DEFAULT_PARAMS
+        assert "sample_rate" in _DEFAULT_PARAMS
+        assert "common_median_ref" in _DEFAULT_PARAMS
+
+    def test_new_param_descriptions(self):
+        """New params have descriptions."""
+        from zpybci.spikeinterface import _PARAM_DESCRIPTIONS
+
+        for key in [
+            "matched_filter_detect",
+            "matched_filter_threshold",
+            "gmm_refine",
+            "gmm_max_iter",
+            "bandpass_low",
+            "bandpass_high",
+            "sample_rate",
+            "common_median_ref",
+        ]:
+            assert key in _PARAM_DESCRIPTIONS, f"Missing description for {key}"
+
     def test_supported_channels(self):
         """Supported channel counts are defined."""
         from zpybci.spikeinterface import _SUPPORTED_CHANNELS

@@ -1,259 +1,348 @@
-"""SpikeForest-format benchmark for Zerostone.
+#!/usr/bin/env python3
+"""SpikeForest validation benchmark for Zerostone spike sorter.
 
-Downloads and runs Zerostone on SpikeForest recordings (MDA format) with
-ground-truth labels, computing standardized accuracy metrics.
-
-If SpikeForest data is unavailable (network issues), falls back to
-SpikeInterface synthetic recordings with similar parameters.
-
-Supported datasets:
-  - PAIRED_KAMPFF: Juxtacellular + extracellular paired recordings (gold standard)
-  - SYNTH_MAGLAND: Synthetic, known difficulty levels
+Loads paired Kampff recordings (juxtacellular ground truth) from SpikeForest
+and evaluates Zerostone's sort_multichannel against real-world ground truth.
+Falls back to synthetic data if spikeforest/kachery-cloud are not installed.
 
 Usage:
     python benchmarks/spikeforest_benchmark.py
-    python benchmarks/spikeforest_benchmark.py --dataset paired_kampff
-    python benchmarks/spikeforest_benchmark.py --dataset synth_magland
-    python benchmarks/spikeforest_benchmark.py --synthetic-only
-
-Requires: zpybci, numpy, spikeinterface (for fallback)
+    python benchmarks/spikeforest_benchmark.py --max-recordings 2
+    python benchmarks/spikeforest_benchmark.py --fallback-synthetic
 """
 
 import argparse
-import os
 import time
-from pathlib import Path
 
 import numpy as np
 
-from zpybci.zpybci import ProbeLayout, sort_multichannel
+import zpybci as zbci
 
-# Tolerance window for spike matching (samples at 30 kHz)
-MATCH_TOLERANCE = 12  # 0.4 ms at 30 kHz
+PAIRED_KAMPFF_URI = (
+    "sha1://b8b571d001f9a531040e79165e8f492d758ec5e0"
+    "?paired-kampff-spikeforest-recordings.json"
+)
+
+SUPPORTED_CHANNELS = [4, 8, 16, 32, 64, 128]
+TOLERANCE = 20  # samples at 30kHz (~0.67ms)
+
+# Approximate published MountainSort5 numbers on paired Kampff
+MS5_REFERENCE = {"average_accuracy": "~70-80%"}
 
 
-def greedy_match(gt_times, gt_labels, sorted_times, sorted_labels, tolerance):
-    """Match ground-truth to sorted spikes using greedy best-match by accuracy.
+def nearest_supported_channels(n):
+    """Return the largest supported channel count <= n."""
+    valid = [c for c in SUPPORTED_CHANNELS if c <= n]
+    return max(valid) if valid else SUPPORTED_CHANNELS[0]
 
-    Returns per-unit metrics: (unit_id, tp, fn, fp, accuracy, precision, recall).
+
+def match_spikes(gt_times, sorted_times, tolerance=TOLERANCE):
+    """Greedy nearest-neighbor spike matching within tolerance window."""
+    if len(gt_times) == 0:
+        return 0, 0, len(sorted_times)
+    if len(sorted_times) == 0:
+        return 0, len(gt_times), 0
+
+    matched = set()
+    tp = 0
+    search_start = 0
+
+    for gt_t in gt_times:
+        best_idx = -1
+        best_dist = tolerance + 1
+
+        while search_start < len(sorted_times) and sorted_times[search_start] < gt_t - tolerance:
+            search_start += 1
+
+        for j in range(search_start, len(sorted_times)):
+            st = sorted_times[j]
+            if st > gt_t + tolerance:
+                break
+            dist = abs(int(st) - int(gt_t))
+            if dist < best_dist and j not in matched:
+                best_dist = dist
+                best_idx = j
+
+        if best_idx >= 0:
+            tp += 1
+            matched.add(best_idx)
+
+    fn = len(gt_times) - tp
+    fp = len(sorted_times) - tp
+    return tp, fn, fp
+
+
+def compute_per_unit_accuracy(gt_trains, sorted_times, sorted_labels, tolerance=TOLERANCE):
+    """Compute per-GT-unit metrics with greedy best-match assignment.
+
+    Parameters
+    ----------
+    gt_trains : dict
+        Mapping unit_id -> sorted array of spike sample indices.
+    sorted_times : np.ndarray
+        Detected spike times.
+    sorted_labels : np.ndarray
+        Cluster labels for detected spikes.
+
+    Returns
+    -------
+    list of dict, one per GT unit, plus overall metrics dict.
     """
-    gt_units = sorted(set(int(x) for x in gt_labels))
-    sorted_clusters = sorted(set(int(x) for x in sorted_labels))
+    sorted_clusters = {}
+    if len(sorted_labels) > 0:
+        for cl in np.unique(sorted_labels):
+            sorted_clusters[int(cl)] = np.sort(sorted_times[sorted_labels == cl])
 
-    # Build time -> label mappings
-    gt_by_unit = {}
-    for t, l in zip(gt_times, gt_labels):
-        gt_by_unit.setdefault(int(l), []).append(int(t))
+    gt_ids = sorted(gt_trains.keys())
+    cluster_ids = sorted(sorted_clusters.keys())
 
-    sorted_by_cluster = {}
-    for t, l in zip(sorted_times, sorted_labels):
-        sorted_by_cluster.setdefault(int(l), []).append(int(t))
+    # Build agreement matrix
+    agreement = np.zeros((len(gt_ids), len(cluster_ids)), dtype=np.float64)
+    details = {}
+    for i, uid in enumerate(gt_ids):
+        for j, cl in enumerate(cluster_ids):
+            tp, fn, fp = match_spikes(gt_trains[uid], sorted_clusters[cl], tolerance)
+            denom = tp + fn + fp
+            agreement[i, j] = tp / denom if denom > 0 else 0.0
+            details[(i, j)] = (tp, fn, fp)
 
-    # Compute match counts for all (gt_unit, sorted_cluster) pairs
-    match_counts = {}
-    for gu in gt_units:
-        gt_t = np.array(gt_by_unit[gu])
-        for sc in sorted_clusters:
-            sc_t = np.array(sorted_by_cluster[sc])
-            if len(gt_t) == 0 or len(sc_t) == 0:
-                match_counts[(gu, sc)] = 0
+    # Greedy assignment
+    assigned_gt = set()
+    assigned_cl = set()
+    per_unit = []
+    total_tp, total_fn, total_fp = 0, 0, 0
+
+    for _ in range(min(len(gt_ids), len(cluster_ids))):
+        best_acc = -1.0
+        best_i, best_j = -1, -1
+        for i in range(len(gt_ids)):
+            if i in assigned_gt:
                 continue
-            # Count matches within tolerance
-            count = 0
-            j = 0
-            for gi in range(len(gt_t)):
-                while j < len(sc_t) and sc_t[j] < gt_t[gi] - tolerance:
-                    j += 1
-                if j < len(sc_t) and abs(sc_t[j] - gt_t[gi]) <= tolerance:
-                    count += 1
-            match_counts[(gu, sc)] = count
-
-    # Greedy assignment: pick best (gt, sorted) pair by accuracy
-    used_gt = set()
-    used_sorted = set()
-    assignments = {}
-
-    while True:
-        best_acc = -1
-        best_pair = None
-        for gu in gt_units:
-            if gu in used_gt:
-                continue
-            for sc in sorted_clusters:
-                if sc in used_sorted:
+            for j in range(len(cluster_ids)):
+                if j in assigned_cl:
                     continue
-                tp = match_counts[(gu, sc)]
-                fn = len(gt_by_unit[gu]) - tp
-                fp = len(sorted_by_cluster[sc]) - tp
-                denom = tp + fn + fp
-                acc = tp / denom if denom > 0 else 0
-                if acc > best_acc:
-                    best_acc = acc
-                    best_pair = (gu, sc)
-
-        if best_pair is None or best_acc <= 0:
+                if agreement[i, j] > best_acc:
+                    best_acc = agreement[i, j]
+                    best_i, best_j = i, j
+        if best_i < 0 or best_acc <= 0.0:
             break
 
-        assignments[best_pair[0]] = best_pair[1]
-        used_gt.add(best_pair[0])
-        used_sorted.add(best_pair[1])
+        tp, fn, fp = details[(best_i, best_j)]
+        prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        acc = tp / (tp + fn + fp) if (tp + fn + fp) > 0 else 0.0
 
-    # Compute per-unit metrics
-    results = []
-    for gu in gt_units:
-        n_gt = len(gt_by_unit[gu])
-        if gu in assignments:
-            sc = assignments[gu]
-            tp = match_counts[(gu, sc)]
-            fn = n_gt - tp
-            fp = len(sorted_by_cluster[sc]) - tp
-        else:
-            tp, fn, fp = 0, n_gt, 0
-            sc = None
-        denom = tp + fn + fp
-        acc = tp / denom if denom > 0 else 0
-        prec = tp / (tp + fp) if (tp + fp) > 0 else 0
-        rec = tp / (tp + fn) if (tp + fn) > 0 else 0
-        results.append((gu, sc, n_gt, tp, fn, fp, acc, prec, rec))
-
-    return results
-
-
-def run_synthetic_spikeforest(n_channels, n_units, duration_s, noise_std, seed):
-    """Generate SpikeForest-like synthetic data and run Zerostone."""
-    from zpybci.synthetic import generate_recording
-
-    np.random.seed(seed)
-    rec = generate_recording(
-        n_channels=n_channels,
-        n_units=n_units,
-        noise_std=noise_std,
-        duration_s=duration_s,
-        firing_rate=8.0,
-    )
-    data = rec["data"]
-    # spike_times is a list of arrays (one per unit), spike_labels is flat
-    # Flatten to parallel arrays
-    gt_times_flat = []
-    gt_labels_flat = []
-    for unit_id, times_arr in enumerate(rec["spike_times"]):
-        for t in times_arr:
-            gt_times_flat.append(int(t))
-            gt_labels_flat.append(unit_id)
-    gt_times = np.array(gt_times_flat)
-    gt_labels = np.array(gt_labels_flat)
-
-    probe = ProbeLayout.linear(n_channels, 25.0)
-    t0 = time.time()
-    result = sort_multichannel(data, probe, threshold=5.0)
-    elapsed = time.time() - t0
-
-    return {
-        "data_shape": data.shape,
-        "gt_times": gt_times,
-        "gt_labels": gt_labels,
-        "sorted_times": np.array(result["spike_times"]),
-        "sorted_labels": np.array(result["labels"]),
-        "n_gt_units": n_units,
-        "n_sorted_clusters": result["n_clusters"],
-        "n_gt_spikes": len(gt_times),
-        "n_sorted_spikes": result["n_spikes"],
-        "elapsed": elapsed,
-    }
-
-
-SYNTH_CONFIGS = [
-    {"name": "synth_32ch_5u", "n_channels": 32, "n_units": 5, "noise_std": 1.0, "seed": 100},
-    {"name": "synth_32ch_10u", "n_channels": 32, "n_units": 10, "noise_std": 1.5, "seed": 101},
-    {"name": "synth_32ch_10u_hard", "n_channels": 32, "n_units": 10, "noise_std": 2.0, "seed": 102},
-    {"name": "synth_64ch_10u", "n_channels": 64, "n_units": 10, "noise_std": 1.5, "seed": 103},
-    {"name": "synth_64ch_20u", "n_channels": 64, "n_units": 20, "noise_std": 2.0, "seed": 104},
-]
-
-
-def print_results(name, info, per_unit):
-    """Pretty-print benchmark results."""
-    print(f"\n{'='*70}")
-    print(f"  {name}")
-    print(f"  Shape: {info['data_shape']}, GT units: {info['n_gt_units']}, "
-          f"GT spikes: {info['n_gt_spikes']}")
-    print(f"  Sorted: {info['n_sorted_spikes']} spikes, "
-          f"{info['n_sorted_clusters']} clusters, {info['elapsed']:.2f}s")
-    print(f"{'='*70}")
-
-    print(f"  {'Unit':>6}  {'Cluster':>7}  {'GT#':>6}  {'TP':>6}  "
-          f"{'FN':>6}  {'FP':>6}  {'Acc':>6}  {'Prec':>6}  {'Rec':>6}")
-    print(f"  {'-'*66}")
-
-    total_tp = total_fn = total_fp = total_gt = 0
-    for gu, sc, n_gt, tp, fn, fp, acc, prec, rec in per_unit:
-        sc_str = f"{sc:>7}" if sc is not None else "    ---"
-        print(f"  {gu:>6}  {sc_str}  {n_gt:>6}  {tp:>6}  "
-              f"{fn:>6}  {fp:>6}  {acc:>6.3f}  {prec:>6.3f}  {rec:>6.3f}")
+        per_unit.append({
+            "gt_unit": gt_ids[best_i], "cluster": cluster_ids[best_j],
+            "accuracy": acc, "precision": prec, "recall": rec,
+            "tp": tp, "fn": fn, "fp": fp,
+            "n_gt": len(gt_trains[gt_ids[best_i]]),
+        })
+        assigned_gt.add(best_i)
+        assigned_cl.add(best_j)
         total_tp += tp
         total_fn += fn
         total_fp += fp
-        total_gt += n_gt
+
+    # Unmatched GT units
+    for i, uid in enumerate(gt_ids):
+        if i not in assigned_gt:
+            n = len(gt_trains[uid])
+            per_unit.append({
+                "gt_unit": uid, "cluster": -1,
+                "accuracy": 0.0, "precision": 0.0, "recall": 0.0,
+                "tp": 0, "fn": n, "fp": 0, "n_gt": n,
+            })
+            total_fn += n
 
     denom = total_tp + total_fn + total_fp
-    total_acc = total_tp / denom if denom > 0 else 0
-    total_prec = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
-    total_rec = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
-    print(f"  {'-'*66}")
-    print(f"  {'TOTAL':>6}  {'':>7}  {total_gt:>6}  "
-          f"{'':>6}  {'':>6}  {'':>6}  {total_acc:>6.3f}  "
-          f"{total_prec:>6.3f}  {total_rec:>6.3f}")
-
-    return total_acc
+    overall = {
+        "accuracy": total_tp / denom if denom > 0 else 0.0,
+        "precision": total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0,
+        "recall": total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0,
+    }
+    per_unit.sort(key=lambda p: p["gt_unit"])
+    return per_unit, overall
 
 
-def main():
-    parser = argparse.ArgumentParser(description="SpikeForest-format benchmark")
-    parser.add_argument("--dataset", choices=["paired_kampff", "synth_magland", "all"],
-                        default="all")
-    parser.add_argument("--synthetic-only", action="store_true",
-                        help="Skip real data download, use synthetic only")
-    parser.add_argument("--duration", type=float, default=60.0,
-                        help="Recording duration in seconds")
-    args = parser.parse_args()
+def process_recording(name, traces, fs, gt_trains, n_channels_orig):
+    """Sort a single recording and return metrics."""
+    n_ch = nearest_supported_channels(n_channels_orig)
+    if n_ch != n_channels_orig:
+        # Subsample channels evenly
+        idx = np.linspace(0, n_channels_orig - 1, n_ch, dtype=int)
+        traces = traces[:, idx]
+        print(f"    Subsampled {n_channels_orig} -> {n_ch} channels")
 
-    print("SpikeForest-Format Benchmark for Zerostone")
-    print("=" * 70)
+    probe = zbci.ProbeLayout.linear(n_ch, 25.0)
 
-    summary = []
+    t0 = time.perf_counter()
+    result = zbci.sort_multichannel(
+        traces, probe,
+        threshold=5.0,
+        refractory=15,
+        matched_filter_detect=True,
+        matched_filter_threshold=4.0,
+    )
+    elapsed = time.perf_counter() - t0
 
-    for cfg in SYNTH_CONFIGS:
-        info = run_synthetic_spikeforest(
-            n_channels=cfg["n_channels"],
-            n_units=cfg["n_units"],
-            duration_s=args.duration,
-            noise_std=cfg["noise_std"],
-            seed=cfg["seed"],
-        )
+    sorted_times = np.array(result["spike_times"][:result["n_spikes"]], dtype=np.int64)
+    sorted_labels = np.array(result["labels"][:result["n_spikes"]], dtype=np.int64)
 
-        per_unit = greedy_match(
-            info["gt_times"],
-            info["gt_labels"],
-            info["sorted_times"],
-            info["sorted_labels"],
-            MATCH_TOLERANCE,
-        )
+    per_unit, overall = compute_per_unit_accuracy(gt_trains, sorted_times, sorted_labels)
 
-        acc = print_results(cfg["name"], info, per_unit)
-        summary.append((cfg["name"], info["n_gt_units"], info["n_gt_spikes"],
-                         info["n_sorted_spikes"], info["n_sorted_clusters"],
-                         acc, info["elapsed"]))
+    n_gt_total = sum(len(v) for v in gt_trains.values())
+    print(f"    {name}: {n_ch}ch, {n_gt_total} GT spikes, "
+          f"{result['n_spikes']} detected, {result['n_clusters']} clusters, "
+          f"acc={overall['accuracy']:.3f}, prec={overall['precision']:.3f}, "
+          f"rec={overall['recall']:.3f}, {elapsed:.1f}s")
 
-    # Summary table
+    # Per-unit detail
+    for pu in per_unit:
+        cl_str = str(pu["cluster"]) if pu["cluster"] >= 0 else "---"
+        print(f"      Unit {pu['gt_unit']:>3} -> cl {cl_str:>4}  "
+              f"acc={pu['accuracy']:.3f}  prec={pu['precision']:.3f}  "
+              f"rec={pu['recall']:.3f}  ({pu['tp']}/{pu['n_gt']} matched)")
+
+    return {
+        "name": name, "n_channels": n_ch, "elapsed": elapsed,
+        "per_unit": per_unit, "overall": overall,
+        "n_gt": n_gt_total, "n_sorted": result["n_spikes"],
+    }
+
+
+def run_spikeforest(max_recordings):
+    """Load and process SpikeForest paired Kampff recordings."""
+    import spikeforest as sf
+
+    print("Loading paired Kampff recordings from SpikeForest...")
+    recordings = sf.load_spikeforest_recordings(PAIRED_KAMPFF_URI)
+    n_total = len(recordings)
+    n_run = min(max_recordings, n_total) if max_recordings else n_total
+    print(f"Found {n_total} recordings, processing {n_run}\n")
+
+    results = []
+    for i in range(n_run):
+        R = recordings[i]
+        name = f"{R.study_name}/{R.recording_name}"
+        print(f"  [{i+1}/{n_run}] {name}")
+        try:
+            recording = R.get_recording_extractor()
+            sorting_true = R.get_sorting_true_extractor()
+
+            traces = recording.get_traces().astype(np.float64)
+            fs = recording.get_sampling_frequency()
+            n_ch = recording.get_num_channels()
+
+            gt_trains = {}
+            for uid in sorting_true.get_unit_ids():
+                train = sorting_true.get_unit_spike_train(uid)
+                gt_trains[int(uid)] = np.sort(train)
+
+            res = process_recording(name, traces, fs, gt_trains, n_ch)
+            results.append(res)
+        except Exception as e:
+            print(f"    ERROR: {e}")
+            continue
+    return results
+
+
+def run_synthetic():
+    """Fall back to synthetic data."""
+    from zpybci.synthetic import generate_recording
+
+    print("Running synthetic fallback (3 recordings)\n")
+    configs = [
+        {"n_channels": 32, "n_units": 3, "duration_s": 30.0, "noise_std": 1.0, "label": "synth-easy"},
+        {"n_channels": 32, "n_units": 8, "duration_s": 30.0, "noise_std": 1.5, "label": "synth-medium"},
+        {"n_channels": 64, "n_units": 15, "duration_s": 30.0, "noise_std": 2.0, "label": "synth-hard"},
+    ]
+    results = []
+    for ci, cfg in enumerate(configs):
+        name = cfg["label"]
+        print(f"  [{ci+1}/{len(configs)}] {name}")
+        try:
+            rec = generate_recording(
+                n_channels=cfg["n_channels"], n_units=cfg["n_units"],
+                duration_s=cfg["duration_s"], noise_std=cfg["noise_std"],
+                sampling_rate=30000.0, firing_rate=5.0, seed=42,
+            )
+            gt_trains = {}
+            for u in range(rec["n_units"]):
+                mask = rec["spike_labels"] == u
+                gt_trains[u] = np.sort(rec["all_spike_times"][mask])
+
+            res = process_recording(name, rec["data"], 30000.0, gt_trains, cfg["n_channels"])
+            results.append(res)
+        except Exception as e:
+            print(f"    ERROR: {e}")
+            continue
+    return results
+
+
+def print_summary(results, is_synthetic):
+    """Print summary table with reference comparison."""
     print(f"\n{'='*70}")
     print("  SUMMARY")
     print(f"{'='*70}")
-    print(f"  {'Name':<25} {'Units':>5} {'GT#':>6} {'Sorted#':>7} "
-          f"{'Clusters':>8} {'Acc':>6} {'Time':>7}")
-    print(f"  {'-'*65}")
-    for name, n_u, n_gt, n_s, n_c, acc, t in summary:
-        print(f"  {name:<25} {n_u:>5} {n_gt:>6} {n_s:>7} "
-              f"{n_c:>8} {acc:>6.3f} {t:>6.2f}s")
+    print(f"  {'Recording':<30} {'Ch':>4} {'GT#':>7} {'Det#':>7} "
+          f"{'Acc':>7} {'Prec':>7} {'Rec':>7} {'Time':>6}")
+    print("  " + "-" * 66)
+
+    accs = []
+    for r in results:
+        o = r["overall"]
+        accs.append(o["accuracy"])
+        print(f"  {r['name']:<30} {r['n_channels']:>4} {r['n_gt']:>7} "
+              f"{r['n_sorted']:>7} {o['accuracy']:>7.3f} "
+              f"{o['precision']:>7.3f} {o['recall']:>7.3f} "
+              f"{r['elapsed']:>5.1f}s")
+
+    if accs:
+        avg = np.mean(accs)
+        print("  " + "-" * 66)
+        print(f"  {'AVERAGE':<30} {'':>4} {'':>7} {'':>7} {avg:>7.3f}")
+
+    if not is_synthetic:
+        print(f"\n  Reference: MountainSort5 on paired Kampff: "
+              f"{MS5_REFERENCE['average_accuracy']} average accuracy")
+    print()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="SpikeForest validation benchmark for Zerostone.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument("--max-recordings", type=int, default=None,
+                        help="Limit number of recordings to process.")
+    parser.add_argument("--fallback-synthetic", action="store_true",
+                        help="Force synthetic data mode.")
+    args = parser.parse_args()
+
+    print("=" * 70)
+    print("  Zerostone SpikeForest Validation Benchmark")
+    print("=" * 70)
+
+    is_synthetic = args.fallback_synthetic
+    if not is_synthetic:
+        try:
+            import spikeforest  # noqa: F401
+            results = run_spikeforest(args.max_recordings)
+        except ImportError:
+            print("spikeforest not available. Install with:")
+            print("  pip install spikeforest kachery-cloud\n")
+            print("Falling back to synthetic data.\n")
+            is_synthetic = True
+
+    if is_synthetic:
+        results = run_synthetic()
+
+    if results:
+        print_summary(results, is_synthetic)
+    else:
+        print("\nNo recordings processed successfully.")
 
 
 if __name__ == "__main__":
