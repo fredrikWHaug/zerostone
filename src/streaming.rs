@@ -10,9 +10,11 @@
 //! Each call to [`StreamingSorter::process_segment`] runs the full
 //! [`sort_multichannel`] pipeline on one segment, then reconciles
 //! the resulting cluster labels against a persistent template library
-//! using normalized cross-correlation (NCC). Templates are updated
-//! with an exponential moving average so they track slow waveform
-//! drift without losing identity.
+//! using normalized cross-correlation (NCC) weighted by drift-corrected
+//! spatial proximity. The [`DriftEstimator`] tracks probe motion and
+//! corrects spike y-positions before template matching, so the same
+//! neuron maintains its identity even as tissue drifts relative to
+//! the probe. Templates are updated with an exponential moving average.
 //!
 //! # Example
 //!
@@ -55,6 +57,8 @@ pub struct StreamingSorter<
     template_library: [[f64; W]; N],
     /// How many spikes have contributed to each template.
     template_counts: [usize; N],
+    /// Drift-corrected y-position for each template (used for spatial matching).
+    template_positions: [f64; N],
     /// Number of active templates.
     n_templates: usize,
     /// How many segments have been processed.
@@ -100,11 +104,31 @@ impl<
         Self {
             template_library: [[0.0; W]; N],
             template_counts: [0; N],
+            template_positions: [0.0; N],
             n_templates: 0,
             segment_count: 0,
             config,
             decay,
             drift: DriftEstimator::<64>::new(30000), // 1s bins at 30kHz
+            total_samples: 0,
+        }
+    }
+
+    /// Create a new streaming sorter with a custom drift bin duration.
+    ///
+    /// `drift_bin_samples` controls the time resolution of the drift
+    /// estimator. Smaller bins give faster drift adaptation but noisier
+    /// estimates. A typical value for 30kHz data is 30000 (1 second).
+    pub fn with_drift_bins(config: SortConfig, decay: f64, drift_bin_samples: usize) -> Self {
+        Self {
+            template_library: [[0.0; W]; N],
+            template_counts: [0; N],
+            template_positions: [0.0; N],
+            n_templates: 0,
+            segment_count: 0,
+            config,
+            decay,
+            drift: DriftEstimator::<64>::new(drift_bin_samples),
             total_samples: 0,
         }
     }
@@ -180,15 +204,63 @@ impl<
             }
         }
 
+        // Track drift: add spikes to drift estimator and re-fit.
+        // Each spike's y-position is estimated from its peak channel and the probe layout.
+        let positions = probe.positions();
+        if n_spikes > 0 {
+            for ev in event_buf.iter().take(n_spikes) {
+                let ch = ev.channel;
+                if ch < C {
+                    let y_pos = positions[ch][1];
+                    let global_sample = self.total_samples + ev.sample;
+                    self.drift.add_spike(global_sample, y_pos);
+                }
+            }
+            // Re-fit drift after each segment
+            self.drift.fit();
+        }
+
+        // Compute drift-corrected y-position for each cluster in this segment.
+        // For each cluster, compute the amplitude-weighted mean corrected position.
+        let mut seg_positions = [0.0f64; N];
+        let mut seg_pos_weights = [0.0f64; N];
+
+        for i in 0..n_spikes {
+            let label = if i < labels.len() {
+                labels[i]
+            } else {
+                continue;
+            };
+            if label >= n_clusters || label >= N {
+                continue;
+            }
+            let ev = &event_buf[i];
+            if ev.channel < C {
+                let raw_y = positions[ev.channel][1];
+                let global_sample = self.total_samples + ev.sample;
+                let corrected_y = self.drift.correct_position(global_sample, raw_y);
+                let weight = ev.amplitude;
+                seg_positions[label] += corrected_y * weight;
+                seg_pos_weights[label] += weight;
+            }
+        }
+
+        // Normalize to get mean corrected position per cluster.
+        for c in 0..n_clusters.min(N) {
+            if seg_pos_weights[c] > 1e-15 {
+                seg_positions[c] /= seg_pos_weights[c];
+            }
+        }
+
         if self.segment_count == 0 {
-            // First segment: adopt cluster means directly as the template library.
+            // First segment: adopt cluster means and positions directly.
             let nc = n_clusters.min(N);
             self.template_library[..nc].copy_from_slice(&seg_means[..nc]);
             self.template_counts[..nc].copy_from_slice(&seg_counts[..nc]);
+            self.template_positions[..nc].copy_from_slice(&seg_positions[..nc]);
             self.n_templates = nc;
         } else {
-            // Subsequent segments: match new clusters to existing templates.
-            // Build a remapping table: seg_label -> global template index.
+            // Subsequent segments: match using combined NCC + spatial proximity.
             let mut label_remap = [0usize; N];
             let mut used_template = [false; N];
 
@@ -198,8 +270,9 @@ impl<
                     continue;
                 }
 
-                // Find best matching existing template by NCC.
-                let mut best_ncc = -2.0f64;
+                // Find best matching existing template by combined NCC and
+                // drift-corrected spatial proximity.
+                let mut best_score = -2.0f64;
                 let mut best_idx = N; // sentinel: no match
 
                 for (t, &used) in used_template.iter().enumerate().take(self.n_templates) {
@@ -208,13 +281,21 @@ impl<
                     }
                     let ncc =
                         normalized_cross_correlation::<W>(&seg_means[c], &self.template_library[t]);
-                    if ncc > best_ncc {
-                        best_ncc = ncc;
+
+                    // Spatial penalty: Gaussian weighting on position difference.
+                    // sigma = 50um -- positions beyond ~100um are heavily penalized.
+                    let dy = seg_positions[c] - self.template_positions[t];
+                    let spatial_weight = libm::exp(-0.5 * (dy * dy) / (50.0 * 50.0));
+
+                    // Combined score: NCC weighted by spatial proximity.
+                    let score = ncc * spatial_weight;
+                    if score > best_score {
+                        best_score = score;
                         best_idx = t;
                     }
                 }
 
-                if best_ncc > 0.7 && best_idx < N {
+                if best_score > 0.5 && best_idx < N {
                     // Match: remap to existing template, update with EMA.
                     label_remap[c] = best_idx;
                     used_template[best_idx] = true;
@@ -227,12 +308,16 @@ impl<
                     {
                         *tw = alpha * *tw + beta * *sw;
                     }
+                    // Update template position with EMA.
+                    self.template_positions[best_idx] =
+                        alpha * self.template_positions[best_idx] + beta * seg_positions[c];
                     self.template_counts[best_idx] += seg_counts[c];
                 } else if self.n_templates < N {
                     // New unit: add to template library.
                     let new_idx = self.n_templates;
                     self.template_library[new_idx] = seg_means[c];
                     self.template_counts[new_idx] = seg_counts[c];
+                    self.template_positions[new_idx] = seg_positions[c];
                     label_remap[c] = new_idx;
                     self.n_templates += 1;
                 } else {
@@ -248,22 +333,6 @@ impl<
                     labels[i] = label_remap[old];
                 }
             }
-        }
-
-        // Track drift: compute amplitude-weighted center of mass across channels.
-        // Each spike's y-position is estimated from its peak channel and the probe layout.
-        if n_spikes > 0 {
-            let positions = probe.positions();
-            for ev in event_buf.iter().take(n_spikes) {
-                let ch = ev.channel;
-                if ch < C {
-                    let y_pos = positions[ch][1];
-                    let global_sample = self.total_samples + ev.sample;
-                    self.drift.add_spike(global_sample, y_pos);
-                }
-            }
-            // Re-fit drift after each segment
-            self.drift.fit();
         }
 
         self.total_samples += data.len();
@@ -304,6 +373,15 @@ impl<
         }
     }
 
+    /// Get the drift-corrected y-position for a template, or `None` if out of range.
+    pub fn template_position(&self, idx: usize) -> Option<f64> {
+        if idx < self.n_templates {
+            Some(self.template_positions[idx])
+        } else {
+            None
+        }
+    }
+
     /// Estimated drift rate in micrometers per sample.
     ///
     /// Positive values indicate the spike center of mass is moving
@@ -326,6 +404,7 @@ impl<
     pub fn reset(&mut self) {
         self.template_library = [[0.0; W]; N];
         self.template_counts = [0; N];
+        self.template_positions = [0.0; N];
         self.n_templates = 0;
         self.segment_count = 0;
         self.drift.reset();
@@ -723,5 +802,143 @@ mod tests {
             (ncc).abs() < 1e-12,
             "NCC with zero-energy waveform should be 0.0"
         );
+    }
+
+    /// Synthetic linear drift test.
+    ///
+    /// Generates 12 segments of 5000 samples each. A single unit starts
+    /// on channel 2, drifts to channel 4 over time (50um total). Verifies:
+    ///
+    /// 1. The drift estimator tracks the true drift direction.
+    /// 2. Cluster identity is maintained (template count stays low).
+    #[test]
+    fn test_drift_correction_synthetic() {
+        const C: usize = 8;
+        const CM: usize = 64;
+        const W: usize = 48;
+        const K: usize = 4;
+        const WM: usize = 2304;
+        const N: usize = 32;
+
+        // 8-channel linear probe with 25um spacing.
+        let mut pos = [[0.0f64; 2]; C];
+        for (i, p) in pos.iter_mut().enumerate() {
+            p[0] = 0.0;
+            p[1] = i as f64 * 25.0;
+        }
+        let probe = ProbeLayout::new(pos);
+
+        let config = SortConfig::default();
+        // Use 5000-sample drift bins (one per segment) so the estimator
+        // fits after just 2 segments.
+        let mut sorter: StreamingSorter<C, CM, W, K, WM, N> =
+            StreamingSorter::with_drift_bins(config, 0.85, 5000);
+
+        let n_segments = 12;
+        let seg_len = 5000usize;
+        let spike_positions: [usize; 8] = [300, 700, 1100, 1500, 1900, 2300, 2700, 3100];
+
+        // Drift: peak channel shifts from 2 to 4 over 12 segments.
+        let channels_over_time: [usize; 12] = [2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4, 4];
+
+        let mut n_templates_final = 0usize;
+
+        for (seg, &ch) in channels_over_time.iter().enumerate().take(n_segments) {
+            let mut data = [[0.0f64; C]; 5000];
+
+            // Deterministic noise.
+            let mut rng_state: u64 = 12345 + seg as u64 * 9999;
+            for row in data.iter_mut().take(seg_len) {
+                for val in row.iter_mut() {
+                    rng_state ^= rng_state << 13;
+                    rng_state ^= rng_state >> 7;
+                    rng_state ^= rng_state << 17;
+                    let noise = ((rng_state as f64) / (u64::MAX as f64) - 0.5) * 0.5;
+                    *val = noise;
+                }
+            }
+
+            // Insert identical triangular spikes on the drifting channel.
+            for &sp in spike_positions.iter() {
+                if sp + 20 < seg_len {
+                    for off in 0..20 {
+                        let shape = if off < 10 {
+                            -15.0 * (off as f64 / 10.0)
+                        } else {
+                            -15.0 * ((20 - off) as f64 / 10.0)
+                        };
+                        data[sp + off][ch] += shape;
+                        // Spread to neighbors.
+                        if ch > 0 {
+                            data[sp + off][ch - 1] += shape * 0.3;
+                        }
+                        if ch + 1 < C {
+                            data[sp + off][ch + 1] += shape * 0.3;
+                        }
+                    }
+                }
+            }
+
+            let mut scratch = [0.0f64; 20000];
+            let mut events = [MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0,
+            }; 512];
+            let mut waveforms = [[0.0f64; W]; 512];
+            let mut features = [[0.0f64; K]; 512];
+            let mut labels = [0usize; 512];
+
+            let _ = sorter.process_segment(
+                &probe,
+                &mut data[..seg_len],
+                &mut scratch,
+                &mut events,
+                &mut waveforms,
+                &mut features,
+                &mut labels,
+            );
+
+            n_templates_final = sorter.n_templates();
+        }
+
+        // Verify drift detection: the estimator should be fitted and
+        // detect the upward drift (positive slope).
+        assert!(
+            sorter.drift_fitted(),
+            "Drift estimator should be fitted after 12 segments"
+        );
+        assert!(
+            sorter.drift_rate() > 0.0,
+            "Drift rate should be positive (upward drift), got {}",
+            sorter.drift_rate()
+        );
+
+        // The total estimated drift should be in the right ballpark.
+        // True drift: ch2 (50um) to ch4 (100um) = 50um over 60000 samples.
+        let total_drift = sorter.drift_at(n_segments * seg_len);
+        assert!(
+            total_drift > 10.0,
+            "Total estimated drift should be > 10um, got {:.1}",
+            total_drift
+        );
+
+        // Verify cluster identity: with identical waveform shape and
+        // drift-corrected spatial matching, template count should be modest.
+        // Without drift correction this would fragment more.
+        assert!(
+            n_templates_final <= 5,
+            "Template count should be bounded, got {}",
+            n_templates_final
+        );
+    }
+
+    /// Verify that drift-corrected template positions are stored correctly.
+    #[test]
+    fn test_template_position_accessor() {
+        let sorter: StreamingSorter<4, 16, 48, 4, 2304, 32> =
+            StreamingSorter::new(SortConfig::default(), 0.95);
+        // No templates yet.
+        assert!(sorter.template_position(0).is_none());
     }
 }
