@@ -127,9 +127,117 @@ fn estimate_drift_from_positions(
     ))
 }
 
+/// Non-rigid drift correction for multi-depth probes.
+///
+/// Models drift independently at K depth bins along the probe,
+/// then interpolates between bins. This handles the common case
+/// where the tip and base of a Neuropixels probe drift differently.
+///
+/// Args:
+///     y_min (float): Minimum probe depth.
+///     y_max (float): Maximum probe depth.
+///     bin_duration_samples (int): Time bin width in samples.
+///
+/// Example:
+///     >>> nr = zbci.NonRigidDrift(0.0, 400.0, 1000)
+///     >>> for i in range(6):
+///     ...     nr.add_spike(i * 1000, 50.0, 50.0 + i * 2.0)
+///     ...     nr.add_spike(i * 1000, 350.0, 350.0 - i * 1.0)
+///     >>> nr.fit()
+///     >>> nr.is_fitted
+///     True
+#[pyclass]
+pub struct NonRigidDrift {
+    inner: zerostone::drift::NonRigidDrift<4, 256>,
+}
+
+#[pymethods]
+impl NonRigidDrift {
+    #[new]
+    fn new(y_min: f64, y_max: f64, bin_duration_samples: usize) -> PyResult<Self> {
+        if y_max <= y_min {
+            return Err(PyValueError::new_err("y_max must be > y_min"));
+        }
+        if bin_duration_samples == 0 {
+            return Err(PyValueError::new_err("bin_duration_samples must be > 0"));
+        }
+        Ok(Self {
+            inner: zerostone::drift::NonRigidDrift::<4, 256>::new(
+                y_min,
+                y_max,
+                bin_duration_samples,
+            ),
+        })
+    }
+
+    /// Add a spike observation for drift tracking.
+    ///
+    /// Args:
+    ///     sample_index (int): Time of the spike in samples.
+    ///     y_position (float): Depth on the probe (for bin assignment).
+    ///     position_y (float): Tracked position value (for drift regression).
+    ///         Often the same as y_position.
+    #[pyo3(signature = (sample_index, y_position, position_y=None))]
+    fn add_spike(&mut self, sample_index: usize, y_position: f64, position_y: Option<f64>) {
+        let pos = position_y.unwrap_or(y_position);
+        self.inner.add_spike(sample_index, y_position, pos);
+    }
+
+    /// Fit linear regression independently in each depth bin.
+    fn fit(&mut self) {
+        self.inner.fit();
+    }
+
+    /// Estimate drift at a given (time, depth) point.
+    fn estimate_drift(&self, sample_index: usize, y_position: f64) -> f64 {
+        self.inner.estimate_drift(sample_index, y_position)
+    }
+
+    /// Correct a position by removing estimated drift.
+    fn correct_position(&self, sample_index: usize, y_position: f64) -> f64 {
+        self.inner.correct_position(sample_index, y_position)
+    }
+
+    /// Reset all depth bins and clear fitted state.
+    fn reset(&mut self) {
+        self.inner.reset();
+    }
+
+    /// Per-bin drift slopes (position units per sample).
+    #[getter]
+    fn slopes(&self) -> Vec<f64> {
+        self.inner.slopes().to_vec()
+    }
+
+    /// Bin centers along the depth axis.
+    #[getter]
+    fn bin_centers(&self) -> Vec<f64> {
+        self.inner.bin_centers().to_vec()
+    }
+
+    /// Whether at least one depth bin has been fitted.
+    #[getter]
+    fn is_fitted(&self) -> bool {
+        self.inner.is_fitted()
+    }
+
+    fn __repr__(&self) -> String {
+        let slopes = self.inner.slopes();
+        format!(
+            "NonRigidDrift(fitted={}, slopes=[{:.6}, {:.6}, {:.6}, {:.6}])",
+            self.inner.is_fitted(),
+            slopes[0],
+            slopes[1],
+            slopes[2],
+            slopes[3]
+        )
+    }
+}
+
 /// Register drift estimation functions and classes.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DriftEstimator>()?;
+    m.add_class::<NonRigidDrift>()?;
     m.add_function(wrap_pyfunction!(estimate_drift_from_positions, m)?)?;
     Ok(())
 }

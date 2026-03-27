@@ -141,3 +141,76 @@ class TestDriftExpanded:
         # Verify correct_position works with negative values
         corrected = est.correct_position(500, -100.0)
         assert isinstance(corrected, float)
+
+
+class TestNonRigidDrift:
+    def test_create(self):
+        nr = zbci.NonRigidDrift(0.0, 400.0, 1000)
+        assert not nr.is_fitted
+        assert len(nr.bin_centers) == 4
+        assert len(nr.slopes) == 4
+
+    def test_bin_centers_evenly_spaced(self):
+        nr = zbci.NonRigidDrift(0.0, 400.0, 1000)
+        centers = nr.bin_centers
+        assert abs(centers[0] - 50.0) < 1e-6
+        assert abs(centers[1] - 150.0) < 1e-6
+        assert abs(centers[2] - 250.0) < 1e-6
+        assert abs(centers[3] - 350.0) < 1e-6
+
+    def test_opposite_drift(self):
+        """Tip and base drift in opposite directions."""
+        nr = zbci.NonRigidDrift(0.0, 400.0, 1000)
+        # Bottom of probe drifts up, top drifts down
+        for i in range(8):
+            nr.add_spike(i * 1000, 50.0, 50.0 + i * 5.0)   # bin 0: upward
+            nr.add_spike(i * 1000, 350.0, 350.0 - i * 3.0)  # bin 3: downward
+        nr.fit()
+        assert nr.is_fitted
+        slopes = nr.slopes
+        assert slopes[0] > 0  # bottom drifts up
+        assert slopes[3] < 0  # top drifts down
+
+    def test_correct_position(self):
+        nr = zbci.NonRigidDrift(0.0, 400.0, 1000)
+        for i in range(8):
+            nr.add_spike(i * 1000, 50.0, 50.0 + i * 10.0)
+        nr.fit()
+        # Correction should reduce position spread
+        pos_0 = nr.correct_position(0, 50.0)
+        pos_7 = nr.correct_position(7000, 120.0)
+        assert abs(pos_0 - pos_7) < abs(50.0 - 120.0)
+
+    def test_estimate_before_fit(self):
+        nr = zbci.NonRigidDrift(0.0, 400.0, 1000)
+        assert nr.estimate_drift(5000, 200.0) == 0.0
+
+    def test_reset(self):
+        nr = zbci.NonRigidDrift(0.0, 400.0, 1000)
+        for i in range(8):
+            nr.add_spike(i * 1000, 50.0, 50.0 + i * 5.0)
+        nr.fit()
+        assert nr.is_fitted
+        nr.reset()
+        assert not nr.is_fitted
+
+    def test_add_spike_default_position(self):
+        """position_y defaults to y_position when not specified."""
+        nr = zbci.NonRigidDrift(0.0, 400.0, 1000)
+        for i in range(8):
+            nr.add_spike(i * 1000, 50.0 + i * 5.0)
+        nr.fit()
+        assert nr.is_fitted
+
+    def test_repr(self):
+        nr = zbci.NonRigidDrift(0.0, 400.0, 1000)
+        r = repr(nr)
+        assert "NonRigidDrift" in r
+
+    def test_invalid_range(self):
+        with pytest.raises((ValueError, Exception)):
+            zbci.NonRigidDrift(400.0, 0.0, 1000)
+
+    def test_zero_bin_duration(self):
+        with pytest.raises((ValueError, Exception)):
+            zbci.NonRigidDrift(0.0, 400.0, 0)
