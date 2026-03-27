@@ -334,6 +334,354 @@ pub fn estimate_drift_from_positions(
     Some((slope, intercept))
 }
 
+/// Per-bin linear drift model used internally by [`NonRigidDrift`].
+///
+/// Each depth bin independently tracks spike times and positions,
+/// fitting its own slope and intercept via OLS.
+struct BinDrift<const MAX_TIME_BINS: usize> {
+    bin_sum_y: [f64; MAX_TIME_BINS],
+    bin_counts: [usize; MAX_TIME_BINS],
+    n_bins: usize,
+    slope: f64,
+    intercept: f64,
+    fitted: bool,
+}
+
+impl<const MAX_TIME_BINS: usize> BinDrift<MAX_TIME_BINS> {
+    const fn new() -> Self {
+        Self {
+            bin_sum_y: [0.0; MAX_TIME_BINS],
+            bin_counts: [0; MAX_TIME_BINS],
+            n_bins: 0,
+            slope: 0.0,
+            intercept: 0.0,
+            fitted: false,
+        }
+    }
+
+    fn add_sample(&mut self, time_bin: usize, position_y: f64) {
+        if time_bin >= MAX_TIME_BINS {
+            return;
+        }
+        self.bin_sum_y[time_bin] += position_y;
+        self.bin_counts[time_bin] += 1;
+        if time_bin >= self.n_bins {
+            self.n_bins = time_bin + 1;
+        }
+    }
+
+    fn fit(&mut self, bin_duration: usize) {
+        let mut xs = [0.0f64; MAX_TIME_BINS];
+        let mut ys = [0.0f64; MAX_TIME_BINS];
+        let mut n = 0usize;
+
+        let mut bin = 0;
+        while bin < self.n_bins && bin < MAX_TIME_BINS {
+            if self.bin_counts[bin] > 0 {
+                xs[n] = (bin as f64 + 0.5) * bin_duration as f64;
+                ys[n] = self.bin_sum_y[bin] / self.bin_counts[bin] as f64;
+                n += 1;
+            }
+            bin += 1;
+        }
+
+        if n < 2 {
+            self.fitted = false;
+            self.slope = 0.0;
+            self.intercept = 0.0;
+            return;
+        }
+
+        let mut sum_x = 0.0;
+        let mut sum_y = 0.0;
+        let mut sum_xy = 0.0;
+        let mut sum_x2 = 0.0;
+
+        let mut i = 0;
+        while i < n {
+            sum_x += xs[i];
+            sum_y += ys[i];
+            sum_xy += xs[i] * ys[i];
+            sum_x2 += xs[i] * xs[i];
+            i += 1;
+        }
+
+        let nf = n as f64;
+        let denom = nf * sum_x2 - sum_x * sum_x;
+        if libm::fabs(denom) < 1e-30 {
+            self.slope = 0.0;
+            self.intercept = sum_y / nf;
+            self.fitted = true;
+            return;
+        }
+
+        self.slope = (nf * sum_xy - sum_x * sum_y) / denom;
+        self.intercept = (sum_y - self.slope * sum_x) / nf;
+        self.fitted = true;
+    }
+
+    fn estimate_drift(&self, sample_index: usize) -> f64 {
+        if !self.fitted {
+            return 0.0;
+        }
+        self.slope * sample_index as f64
+    }
+
+    fn reset(&mut self) {
+        let mut i = 0;
+        while i < MAX_TIME_BINS {
+            self.bin_sum_y[i] = 0.0;
+            self.bin_counts[i] = 0;
+            i += 1;
+        }
+        self.n_bins = 0;
+        self.slope = 0.0;
+        self.intercept = 0.0;
+        self.fitted = false;
+    }
+}
+
+/// Non-rigid drift correction with piecewise-linear depth model.
+///
+/// Divides the probe into `K` equal depth bins and fits an independent
+/// linear drift model in each bin. Drift correction at arbitrary depths
+/// is computed by linear interpolation between the two nearest bin centers.
+///
+/// This handles spatially varying drift where different probe regions
+/// move at different rates -- common in long chronic recordings.
+///
+/// # Type Parameters
+///
+/// * `K` -- Number of depth bins (typically 4 or 8)
+/// * `MAX_TIME_BINS` -- Maximum number of time bins per depth bin
+///
+/// # Example
+///
+/// ```
+/// use zerostone::drift::NonRigidDrift;
+///
+/// let mut nr = NonRigidDrift::<4, 16>::new(0.0, 400.0, 1000);
+/// // Top drifts up, bottom drifts down
+/// for i in 0..8 {
+///     nr.add_spike(i * 1000 + 500, 50.0, 50.0 + i as f64 * 5.0);
+///     nr.add_spike(i * 1000 + 500, 350.0, 350.0 - i as f64 * 5.0);
+/// }
+/// nr.fit();
+/// assert!(nr.is_fitted());
+/// ```
+pub struct NonRigidDrift<const K: usize, const MAX_TIME_BINS: usize> {
+    bins: [BinDrift<MAX_TIME_BINS>; K],
+    bin_centers: [f64; K],
+    y_min: f64,
+    y_max: f64,
+    bin_duration: usize,
+    fitted: bool,
+}
+
+impl<const K: usize, const MAX_TIME_BINS: usize> NonRigidDrift<K, MAX_TIME_BINS> {
+    /// Create a new non-rigid drift estimator.
+    ///
+    /// # Arguments
+    ///
+    /// * `y_min` -- Minimum probe depth (e.g., 0.0)
+    /// * `y_max` -- Maximum probe depth (e.g., 3840.0 for Neuropixels)
+    /// * `bin_duration_samples` -- Time bin width in samples
+    ///
+    /// # Panics
+    ///
+    /// Panics if `y_max <= y_min`, `K == 0`, or `bin_duration_samples == 0`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use zerostone::drift::NonRigidDrift;
+    ///
+    /// let nr = NonRigidDrift::<4, 16>::new(0.0, 400.0, 1000);
+    /// assert!(!nr.is_fitted());
+    /// ```
+    pub fn new(y_min: f64, y_max: f64, bin_duration_samples: usize) -> Self {
+        assert!(K > 0, "K must be > 0");
+        assert!(y_max > y_min, "y_max must be > y_min");
+        assert!(bin_duration_samples > 0, "bin_duration_samples must be > 0");
+
+        let mut bin_centers = [0.0f64; K];
+        let bin_width = (y_max - y_min) / K as f64;
+        let mut i = 0;
+        while i < K {
+            bin_centers[i] = y_min + (i as f64 + 0.5) * bin_width;
+            i += 1;
+        }
+
+        // Initialize bins array -- cannot use [BinDrift::new(); K] without Copy
+        let bins = {
+            let mut arr: core::mem::MaybeUninit<[BinDrift<MAX_TIME_BINS>; K]> =
+                core::mem::MaybeUninit::uninit();
+            let ptr = arr.as_mut_ptr() as *mut BinDrift<MAX_TIME_BINS>;
+            let mut j = 0;
+            while j < K {
+                unsafe { ptr.add(j).write(BinDrift::new()) };
+                j += 1;
+            }
+            unsafe { arr.assume_init() }
+        };
+
+        Self {
+            bins,
+            bin_centers,
+            y_min,
+            y_max,
+            bin_duration: bin_duration_samples,
+            fitted: false,
+        }
+    }
+
+    /// Assign a y-position to a depth bin index.
+    ///
+    /// Clamps to `[0, K-1]`.
+    fn depth_bin(&self, y_position: f64) -> usize {
+        let frac = (y_position - self.y_min) / (self.y_max - self.y_min);
+        let idx = libm::floor(frac * K as f64);
+        // Clamp to valid range
+        let clamped = if idx < 0.0 {
+            0.0
+        } else if idx >= K as f64 {
+            (K - 1) as f64
+        } else {
+            idx
+        };
+        clamped as usize
+    }
+
+    /// Add a spike observation.
+    ///
+    /// The spike is placed into the appropriate depth bin based on
+    /// `y_position`, and into a time bin based on `sample_index`.
+    /// The `position_y` value is the position to track for drift
+    /// (often the same as `y_position`).
+    ///
+    /// # Arguments
+    ///
+    /// * `sample_index` -- time of the spike in samples
+    /// * `y_position` -- depth on the probe (for bin assignment)
+    /// * `position_y` -- tracked position value (for drift regression)
+    pub fn add_spike(&mut self, sample_index: usize, y_position: f64, position_y: f64) {
+        let dbin = self.depth_bin(y_position);
+        let tbin = sample_index / self.bin_duration;
+        self.bins[dbin].add_sample(tbin, position_y);
+    }
+
+    /// Fit linear regression independently in each depth bin.
+    ///
+    /// After fitting, [`correct_position`](Self::correct_position) and
+    /// [`estimate_drift`](Self::estimate_drift) can be used with
+    /// interpolation between bin centers.
+    pub fn fit(&mut self) {
+        let mut any_fitted = false;
+        let mut i = 0;
+        while i < K {
+            self.bins[i].fit(self.bin_duration);
+            if self.bins[i].fitted {
+                any_fitted = true;
+            }
+            i += 1;
+        }
+        self.fitted = any_fitted;
+    }
+
+    /// Estimate the drift at a given (time, depth) point.
+    ///
+    /// Linearly interpolates the per-bin drift estimates between
+    /// the two nearest bin centers. At positions outside the bin
+    /// center range, clamps to the nearest bin's estimate.
+    ///
+    /// Returns 0.0 if the model has not been fitted.
+    pub fn estimate_drift(&self, sample_index: usize, y_position: f64) -> f64 {
+        if !self.fitted {
+            return 0.0;
+        }
+        self.interpolate_drift(sample_index, y_position)
+    }
+
+    /// Correct a spike's position by removing estimated drift.
+    ///
+    /// Returns `position_y - estimate_drift(sample_index, y_position)`.
+    pub fn correct_position(&self, sample_index: usize, y_position: f64) -> f64 {
+        y_position - self.estimate_drift(sample_index, y_position)
+    }
+
+    /// Whether at least one depth bin has been fitted.
+    pub fn is_fitted(&self) -> bool {
+        self.fitted
+    }
+
+    /// Reset all depth bins and clear fitted state.
+    pub fn reset(&mut self) {
+        let mut i = 0;
+        while i < K {
+            self.bins[i].reset();
+            i += 1;
+        }
+        self.fitted = false;
+    }
+
+    /// The per-bin drift slopes (position units per sample).
+    ///
+    /// Returns an array of K slopes.
+    pub fn slopes(&self) -> [f64; K] {
+        let mut out = [0.0f64; K];
+        let mut i = 0;
+        while i < K {
+            out[i] = self.bins[i].slope;
+            i += 1;
+        }
+        out
+    }
+
+    /// The bin centers along the depth axis.
+    pub fn bin_centers(&self) -> &[f64; K] {
+        &self.bin_centers
+    }
+
+    /// Interpolate drift between bin centers.
+    fn interpolate_drift(&self, sample_index: usize, y_position: f64) -> f64 {
+        // If K == 1, just use that bin
+        if K == 1 {
+            return self.bins[0].estimate_drift(sample_index);
+        }
+
+        // Find the two bin centers bracketing y_position
+        // If below first center, clamp to first bin
+        if y_position <= self.bin_centers[0] {
+            return self.bins[0].estimate_drift(sample_index);
+        }
+        // If above last center, clamp to last bin
+        if y_position >= self.bin_centers[K - 1] {
+            return self.bins[K - 1].estimate_drift(sample_index);
+        }
+
+        // Find the interval [bin_centers[lo], bin_centers[hi]] containing y_position
+        let mut lo = 0;
+        while lo < K - 2 {
+            if self.bin_centers[lo + 1] > y_position {
+                break;
+            }
+            lo += 1;
+        }
+        let hi = lo + 1;
+
+        let d_lo = self.bins[lo].estimate_drift(sample_index);
+        let d_hi = self.bins[hi].estimate_drift(sample_index);
+
+        // Linear interpolation
+        let span = self.bin_centers[hi] - self.bin_centers[lo];
+        if libm::fabs(span) < 1e-30 {
+            return d_lo;
+        }
+        let alpha = (y_position - self.bin_centers[lo]) / span;
+        d_lo + alpha * (d_hi - d_lo)
+    }
+}
+
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
@@ -555,5 +903,200 @@ mod tests {
         // Bin 5 exceeds MAX_BINS=4, should be ignored
         est.add_spike(5500, 100.0);
         assert_eq!(est.n_bins_used(), 0);
+    }
+
+    // --- NonRigidDrift tests ---
+
+    #[test]
+    fn test_nonrigid_uniform_drift() {
+        // All depth bins drift the same way -- should match rigid drift
+        let mut nr = NonRigidDrift::<4, 16>::new(0.0, 400.0, 1000);
+        let mut rigid = DriftEstimator::<16>::new(1000);
+
+        // Uniform drift: 10um per 1000 samples across all depths
+        let mut i = 0;
+        while i < 8 {
+            let t = i * 1000 + 500;
+            let drift = i as f64 * 10.0;
+            // Add spikes at four different depths, all drifting the same
+            nr.add_spike(t, 50.0, 50.0 + drift);
+            nr.add_spike(t, 150.0, 150.0 + drift);
+            nr.add_spike(t, 250.0, 250.0 + drift);
+            nr.add_spike(t, 350.0, 350.0 + drift);
+            // Rigid estimator tracks a mid-depth position
+            rigid.add_spike(t, 200.0 + drift);
+            i += 1;
+        }
+        nr.fit();
+        rigid.fit();
+
+        assert!(nr.is_fitted());
+
+        // All bin slopes should be approximately equal
+        let slopes = nr.slopes();
+        let mut k = 0;
+        while k < 4 {
+            assert!(
+                libm::fabs(slopes[k] - 0.01) < 0.002,
+                "Bin {} slope should be ~0.01, got {}",
+                k,
+                slopes[k]
+            );
+            k += 1;
+        }
+
+        // Drift estimate at mid-depth should match rigid
+        let nr_drift = nr.estimate_drift(4000, 200.0);
+        let rigid_drift = rigid.estimate_drift(4000);
+        assert!(
+            libm::fabs(nr_drift - rigid_drift) < 2.0,
+            "Non-rigid drift {} should match rigid {}",
+            nr_drift,
+            rigid_drift
+        );
+    }
+
+    #[test]
+    fn test_nonrigid_opposite_drift() {
+        // Top and bottom of probe drift in opposite directions
+        let mut nr = NonRigidDrift::<2, 16>::new(0.0, 200.0, 1000);
+
+        let mut i = 0;
+        while i < 8 {
+            let t = i * 1000 + 500;
+            // Bottom bin (y=50): drifts down (positive)
+            nr.add_spike(t, 50.0, 50.0 + i as f64 * 10.0);
+            // Top bin (y=150): drifts up (negative)
+            nr.add_spike(t, 150.0, 150.0 - i as f64 * 10.0);
+            i += 1;
+        }
+        nr.fit();
+        assert!(nr.is_fitted());
+
+        let slopes = nr.slopes();
+        // Bottom bin: positive slope
+        assert!(
+            slopes[0] > 0.005,
+            "Bottom bin slope should be positive, got {}",
+            slopes[0]
+        );
+        // Top bin: negative slope
+        assert!(
+            slopes[1] < -0.005,
+            "Top bin slope should be negative, got {}",
+            slopes[1]
+        );
+
+        // Drift at bottom should be positive, at top should be negative
+        let d_bottom = nr.estimate_drift(4000, 50.0);
+        let d_top = nr.estimate_drift(4000, 150.0);
+        assert!(d_bottom > 0.0, "Bottom drift should be positive");
+        assert!(d_top < 0.0, "Top drift should be negative");
+    }
+
+    #[test]
+    fn test_nonrigid_correction_interpolates() {
+        // Two bins with known drift, check interpolation at midpoint
+        let mut nr = NonRigidDrift::<2, 16>::new(0.0, 200.0, 1000);
+
+        let mut i = 0;
+        while i < 8 {
+            let t = i * 1000 + 500;
+            // Bottom bin (center=50): drift rate = +20um per 1000 samples
+            nr.add_spike(t, 50.0, 50.0 + i as f64 * 20.0);
+            // Top bin (center=150): drift rate = 0 (no drift)
+            nr.add_spike(t, 150.0, 150.0);
+            i += 1;
+        }
+        nr.fit();
+        assert!(nr.is_fitted());
+
+        let t_test = 4000;
+
+        // Drift at bottom bin center (y=50): should be ~0.02 * 4000 = 80
+        let d_bottom = nr.estimate_drift(t_test, 50.0);
+        assert!(
+            libm::fabs(d_bottom - 80.0) < 5.0,
+            "Bottom drift should be ~80, got {}",
+            d_bottom
+        );
+
+        // Drift at top bin center (y=150): should be ~0
+        let d_top = nr.estimate_drift(t_test, 150.0);
+        assert!(
+            libm::fabs(d_top) < 5.0,
+            "Top drift should be ~0, got {}",
+            d_top
+        );
+
+        // Drift at midpoint (y=100): should interpolate to ~40
+        let d_mid = nr.estimate_drift(t_test, 100.0);
+        assert!(
+            libm::fabs(d_mid - 40.0) < 5.0,
+            "Midpoint drift should be ~40 (interpolated), got {}",
+            d_mid
+        );
+
+        // Correction at midpoint should subtract interpolated drift
+        let corrected = nr.correct_position(t_test, 100.0);
+        let expected = 100.0 - d_mid;
+        assert!(
+            libm::fabs(corrected - expected) < 1e-10,
+            "Corrected {} should equal 100.0 - {} = {}",
+            corrected,
+            d_mid,
+            expected
+        );
+    }
+
+    #[test]
+    fn test_nonrigid_reset() {
+        let mut nr = NonRigidDrift::<2, 8>::new(0.0, 100.0, 1000);
+        // Need at least 2 time bins per depth bin for fit to succeed
+        nr.add_spike(500, 25.0, 30.0);
+        nr.add_spike(1500, 25.0, 35.0);
+        nr.add_spike(500, 75.0, 80.0);
+        nr.add_spike(1500, 75.0, 85.0);
+        nr.fit();
+        assert!(nr.is_fitted());
+
+        nr.reset();
+        assert!(!nr.is_fitted());
+        // After reset, drift should be zero everywhere
+        assert!(
+            libm::fabs(nr.estimate_drift(1000, 50.0)) < 1e-15,
+            "Drift should be 0 after reset"
+        );
+    }
+
+    #[test]
+    fn test_nonrigid_clamp_edges() {
+        // Positions outside probe range should clamp to edge bins
+        let mut nr = NonRigidDrift::<2, 16>::new(0.0, 200.0, 1000);
+
+        let mut i = 0;
+        while i < 8 {
+            let t = i * 1000 + 500;
+            nr.add_spike(t, 50.0, 50.0 + i as f64 * 10.0);
+            nr.add_spike(t, 150.0, 150.0 + i as f64 * 5.0);
+            i += 1;
+        }
+        nr.fit();
+
+        // Position below y_min should clamp to bin 0
+        let d_below = nr.estimate_drift(4000, -50.0);
+        let d_bin0 = nr.estimate_drift(4000, 50.0);
+        assert!(
+            libm::fabs(d_below - d_bin0) < 1e-10,
+            "Below-range should clamp to bin 0"
+        );
+
+        // Position above y_max should clamp to last bin
+        let d_above = nr.estimate_drift(4000, 300.0);
+        let d_binlast = nr.estimate_drift(4000, 150.0);
+        assert!(
+            libm::fabs(d_above - d_binlast) < 1e-10,
+            "Above-range should clamp to last bin"
+        );
     }
 }
