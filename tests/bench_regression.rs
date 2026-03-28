@@ -5,17 +5,17 @@
 //! for criterion benchmarks -- catches catastrophic O(n^2) regressions only.
 
 use std::time::Instant;
+use zerostone::float::{self, Float};
 use zerostone::probe::ProbeLayout;
 use zerostone::sorter::{sort_multichannel, DetectionMode, SortConfig};
 use zerostone::spike_sort::MultiChannelEvent;
 use zerostone::{BiquadCoeffs, Complex, Fft, IirFilter, ThresholdDetector, WelchPsd, WindowType};
 
 /// Test signal: 1024 samples at 250 Hz.
-fn test_signal() -> [f32; 1024] {
+fn test_signal() -> [Float; 1024] {
     core::array::from_fn(|i| {
-        let t = i as f32 / 250.0;
-        libm::sinf(2.0 * std::f32::consts::PI * 10.0 * t)
-            + 0.5 * libm::sinf(2.0 * std::f32::consts::PI * 25.0 * t)
+        let t = i as Float / 250.0;
+        float::sin(2.0 * float::PI * 10.0 * t) + 0.5 * float::sin(2.0 * float::PI * 25.0 * t)
     })
 }
 
@@ -68,12 +68,12 @@ fn bench_regression_fft() {
 /// Baseline (release): <1 ms. Ceiling: 500 ms (debug mode safe).
 #[test]
 fn bench_regression_spike_detection() {
-    let mut detector: ThresholdDetector<32> = ThresholdDetector::new(3.0, 30);
+    let mut detector: ThresholdDetector<32> = ThresholdDetector::new(3.0, 50);
 
     let start = Instant::now();
     for _ in 0..100 {
         for i in 0..1024 {
-            let mut samples = [0.0f32; 32];
+            let mut samples = [0.0 as Float; 32];
             samples[0] = if i % 100 == 0 { 5.0 } else { 0.1 };
             std::hint::black_box(detector.process_sample(&samples));
         }
@@ -96,7 +96,7 @@ fn bench_regression_welch() {
 
     let start = Instant::now();
     for _ in 0..100 {
-        let mut psd = [0.0f32; 129];
+        let mut psd = [0.0 as Float; 129];
         welch.estimate(&signal, 250.0, &mut psd);
         std::hint::black_box(&psd);
     }
@@ -125,10 +125,10 @@ fn bench_regression_sort_multichannel() {
             self.0 ^= self.0 << 17;
             self.0
         }
-        fn gaussian(&mut self) -> f64 {
+        fn gaussian(&mut self) -> Float {
             let u1 = (self.next_u64() % 1_000_000 + 1) as f64 / 1_000_001.0;
             let u2 = (self.next_u64() % 1_000_000) as f64 / 1_000_000.0;
-            libm::sqrt(-2.0 * libm::log(u1)) * libm::cos(2.0 * std::f64::consts::PI * u2)
+            (libm::sqrt(-2.0 * libm::log(u1)) * libm::cos(2.0 * std::f64::consts::PI * u2)) as Float
         }
     }
 
@@ -145,7 +145,7 @@ fn bench_regression_sort_multichannel() {
 
     // Generate noisy 2-channel data with injected spikes.
     let mut rng = Rng::new(42);
-    let mut base_data = vec![[0.0f64; 2]; n];
+    let mut base_data = vec![[0.0 as Float; 2]; n];
     for s in base_data.iter_mut() {
         s[0] = rng.gaussian();
         s[1] = rng.gaussian();
@@ -156,7 +156,7 @@ fn bench_regression_sort_multichannel() {
     while pos + 6 < n {
         for dt in 0..6 {
             let t = (dt as f64 - 2.0) / 1.0;
-            base_data[pos + dt][0] += -10.0 * libm::exp(-0.5 * t * t);
+            base_data[pos + dt][0] += (-10.0 * libm::exp(-0.5 * t * t)) as Float;
         }
         pos += 150;
     }
@@ -166,7 +166,7 @@ fn bench_regression_sort_multichannel() {
     while pos + 6 < n {
         for dt in 0..6 {
             let t = (dt as f64 - 2.0) / 1.0;
-            base_data[pos + dt][1] += -8.0 * libm::exp(-0.5 * t * t);
+            base_data[pos + dt][1] += (-8.0 * libm::exp(-0.5 * t * t)) as Float;
         }
         pos += 200;
     }
@@ -174,7 +174,7 @@ fn bench_regression_sort_multichannel() {
     let start = Instant::now();
     for _ in 0..10 {
         let mut data = base_data.clone();
-        let mut scratch = vec![0.0f64; n];
+        let mut scratch = vec![0.0 as Float; n];
         let mut events = vec![
             MultiChannelEvent {
                 sample: 0,
@@ -183,8 +183,8 @@ fn bench_regression_sort_multichannel() {
             };
             200
         ];
-        let mut waveforms = vec![[0.0f64; 32]; 200];
-        let mut features = vec![[0.0f64; 3]; 200];
+        let mut waveforms = vec![[0.0 as Float; 32]; 200];
+        let mut features = vec![[0.0 as Float; 3]; 200];
         let mut labels = vec![0usize; 200];
 
         let result = sort_multichannel::<2, 4, 32, 3, 1024, 8>(

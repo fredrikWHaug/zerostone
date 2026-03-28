@@ -19,23 +19,24 @@ use plotters::prelude::*;
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
+use zerostone::float::Float;
 use zerostone::{BiquadCoeffs, CommonAverageReference, Decimator, IirFilter};
 
-const SAMPLE_RATE: f32 = 1000.0; // 1 kHz
-const DURATION_SECS: f32 = 2.0; // 2 seconds for better visualization
+const SAMPLE_RATE: Float = 1000.0; // 1 kHz
+const DURATION_SECS: Float = 2.0; // 2 seconds for better visualization
 const SAMPLES: usize = (SAMPLE_RATE * DURATION_SECS) as usize;
 const CHANNELS: usize = 8;
 
 /// Data bundle for all pipeline stages
 struct PipelineData {
     /// Raw input signal (before any processing)
-    raw: Vec<[f32; CHANNELS]>,
+    raw: Vec<[Float; CHANNELS]>,
     /// After bandpass filter (8-30 Hz)
-    filtered: Vec<[f32; CHANNELS]>,
+    filtered: Vec<[Float; CHANNELS]>,
     /// After Common Average Reference
-    car: Vec<[f32; CHANNELS]>,
+    car: Vec<[Float; CHANNELS]>,
     /// After decimation (4x downsampling)
-    decimated: Vec<[f32; CHANNELS]>,
+    decimated: Vec<[Float; CHANNELS]>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -74,7 +75,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut filtered = Vec::with_capacity(SAMPLES);
     for sample in &raw {
-        let mut output = [0.0f32; CHANNELS];
+        let mut output = [0.0 as Float; CHANNELS];
         for (ch, &val) in sample.iter().enumerate() {
             output[ch] = filters[ch].process_sample(val);
         }
@@ -89,14 +90,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("  Method: Subtract mean of all channels from each channel");
 
     let car_filter: CommonAverageReference<CHANNELS> = CommonAverageReference::new();
-    let car: Vec<[f32; CHANNELS]> = filtered
+    let car: Vec<[Float; CHANNELS]> = filtered
         .iter()
         .map(|sample| car_filter.process(sample))
         .collect();
 
     // Verify CAR property: sum across channels should be near zero
-    let car_sums: Vec<f32> = car.iter().map(|sample| sample.iter().sum()).collect();
-    let max_sum = car_sums.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+    let car_sums: Vec<Float> = car.iter().map(|sample| sample.iter().sum()).collect();
+    let max_sum = car_sums
+        .iter()
+        .map(|&s| s.abs())
+        .fold(0.0 as Float, Float::max);
     println!("  ✓ Applied CAR (max channel sum: {:.2e})", max_sum);
 
     // ========== Stage 3: Decimation (4x) ==========
@@ -149,7 +153,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "Data reduction: {} samples → {} samples ({:.1}x smaller)",
         data.raw.len(),
         data.decimated.len(),
-        data.raw.len() as f32 / data.decimated.len() as f32
+        data.raw.len() as Float / data.decimated.len() as Float
     );
     println!("\nOpen output/pipeline_demo.png to see the results.");
 
@@ -162,13 +166,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 /// - Individual frequency components (delta, theta, alpha, beta, gamma)
 /// - Per-channel noise
 /// - Common-mode interference (powerline, drift) affecting all channels equally
-fn generate_eeg_like_signal() -> Vec<[f32; CHANNELS]> {
-    let mut signal = vec![[0.0f32; CHANNELS]; SAMPLES];
+fn generate_eeg_like_signal() -> Vec<[Float; CHANNELS]> {
+    let mut signal = vec![[0.0 as Float; CHANNELS]; SAMPLES];
 
     // Generate per-channel components (each channel has slightly different phase)
     #[allow(clippy::needless_range_loop)]
     for ch in 0..CHANNELS {
-        let phase_offset = (ch as f32) * 0.3; // Slight phase shift per channel
+        let phase_offset = (ch as Float) * 0.3; // Slight phase shift per channel
 
         let delta = common::sine_wave(SAMPLES, SAMPLE_RATE, 2.0, 0.3, phase_offset);
         let theta = common::sine_wave(SAMPLES, SAMPLE_RATE, 6.0, 0.4, phase_offset);
@@ -200,8 +204,8 @@ fn generate_eeg_like_signal() -> Vec<[f32; CHANNELS]> {
 /// Write a pipeline stage to CSV file.
 fn write_stage_csv(
     path: &str,
-    data: &[[f32; CHANNELS]],
-    sample_rate: f32,
+    data: &[[Float; CHANNELS]],
+    sample_rate: Float,
 ) -> Result<(), Box<dyn Error>> {
     let mut file = File::create(path)?;
 
@@ -214,7 +218,7 @@ fn write_stage_csv(
 
     // Data rows
     for (i, sample) in data.iter().enumerate() {
-        let time_ms = (i as f32 / sample_rate) * 1000.0;
+        let time_ms = (i as Float / sample_rate) * 1000.0;
         write!(file, "{},{:.3}", i, time_ms)?;
         for &val in sample.iter() {
             write!(file, ",{:.6}", val)?;
@@ -295,26 +299,26 @@ fn generate_plot(data: &PipelineData, output_path: &str) -> Result<(), Box<dyn E
 /// Plot multi-channel signal with stacked traces.
 fn plot_multichannel(
     area: &DrawingArea<BitMapBackend, plotters::coord::Shift>,
-    data: &[[f32; CHANNELS]],
+    data: &[[Float; CHANNELS]],
     display_samples: usize,
-    sample_rate: f32,
+    sample_rate: Float,
     title: &str,
     colors: &[RGBColor],
 ) -> Result<(), Box<dyn Error>> {
     let display_samples = display_samples.min(data.len());
-    let display_time_ms = (display_samples as f32 / sample_rate) * 1000.0;
+    let display_time_ms = (display_samples as Float / sample_rate) * 1000.0;
 
     // Find y-axis range
     let y_min = data[..display_samples]
         .iter()
         .flat_map(|sample| sample.iter())
         .cloned()
-        .fold(f32::INFINITY, f32::min);
+        .fold(Float::INFINITY, Float::min);
     let y_max = data[..display_samples]
         .iter()
         .flat_map(|sample| sample.iter())
         .cloned()
-        .fold(f32::NEG_INFINITY, f32::max);
+        .fold(Float::NEG_INFINITY, Float::max);
     let y_margin = (y_max - y_min) * 0.1;
 
     let mut chart = ChartBuilder::on(area)
@@ -323,7 +327,7 @@ fn plot_multichannel(
         .x_label_area_size(35)
         .y_label_area_size(60)
         .build_cartesian_2d(
-            0f32..display_time_ms,
+            (0.0 as Float)..display_time_ms,
             (y_min - y_margin)..(y_max + y_margin),
         )?;
 
@@ -340,7 +344,7 @@ fn plot_multichannel(
         chart
             .draw_series(LineSeries::new(
                 (0..display_samples).map(|i| {
-                    let t = (i as f32 / sample_rate) * 1000.0;
+                    let t = (i as Float / sample_rate) * 1000.0;
                     (t, data[i][ch])
                 }),
                 ShapeStyle::from(&color).stroke_width(1),

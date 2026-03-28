@@ -16,7 +16,7 @@ use serde::Deserialize;
 use std::error::Error;
 use std::fs;
 use std::io::Write;
-use zerostone::{BiquadCoeffs, CommonAverageReference, IirFilter, SurfaceLaplacian};
+use zerostone::{BiquadCoeffs, CommonAverageReference, Float, IirFilter, SurfaceLaplacian};
 
 // ============================================================================
 // Recipe Constants
@@ -156,8 +156,8 @@ struct ExploreConfig {
 
 #[derive(Deserialize)]
 struct SignalConfig {
-    duration: f32,
-    sample_rate: f32,
+    duration: Float,
+    sample_rate: Float,
     channels: usize,
     components: SignalComponents,
     #[serde(default)]
@@ -166,23 +166,23 @@ struct SignalConfig {
 
 #[derive(Deserialize)]
 struct SignalComponents {
-    sine_waves: Vec<(f32, f32)>,
-    noise_amplitude: f32,
+    sine_waves: Vec<(Float, Float)>,
+    noise_amplitude: Float,
     noise_seed: u64,
 }
 
 #[derive(Deserialize)]
 struct CommonNoiseConfig {
-    frequency: f32,
-    amplitude: f32,
+    frequency: Float,
+    amplitude: Float,
 }
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum FilterConfig {
-    Lowpass { cutoff: f32, order: u8 },
-    Highpass { cutoff: f32, order: u8 },
-    Bandpass { low: f32, high: f32, order: u8 },
+    Lowpass { cutoff: Float, order: u8 },
+    Highpass { cutoff: Float, order: u8 },
+    Bandpass { low: Float, high: Float, order: u8 },
     Car,
     Laplacian,
 }
@@ -267,7 +267,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     // Apply filters sequentially
-    let mut stages: Vec<Vec<Vec<f32>>> = vec![signal.clone()];
+    let mut stages: Vec<Vec<Vec<Float>>> = vec![signal.clone()];
     let mut stage_names = vec!["Raw".to_string()];
 
     for filter_cfg in &config.filters {
@@ -318,7 +318,7 @@ fn load_recipe(name: &str) -> Result<String, Box<dyn Error>> {
 // ============================================================================
 
 /// Generate single-channel signal
-fn generate_signal_single(config: &SignalConfig, samples: usize) -> Vec<Vec<f32>> {
+fn generate_signal_single(config: &SignalConfig, samples: usize) -> Vec<Vec<Float>> {
     let signal = common::composite_signal(
         samples,
         config.sample_rate,
@@ -331,7 +331,7 @@ fn generate_signal_single(config: &SignalConfig, samples: usize) -> Vec<Vec<f32>
 }
 
 /// Generate multi-channel signal with per-channel variation
-fn generate_signal_multi(config: &SignalConfig, samples: usize) -> Vec<Vec<f32>> {
+fn generate_signal_multi(config: &SignalConfig, samples: usize) -> Vec<Vec<Float>> {
     let mut channels = Vec::with_capacity(config.channels);
 
     // Generate base signal for each channel with phase offset
@@ -340,7 +340,7 @@ fn generate_signal_multi(config: &SignalConfig, samples: usize) -> Vec<Vec<f32>>
 
         // Add sine components with per-channel phase offset
         for &(freq, amp) in &config.components.sine_waves {
-            let phase = ch as f32 * 0.3;
+            let phase = ch as Float * 0.3;
             let sine = common::sine_wave(samples, config.sample_rate, freq, amp, phase);
             for (i, &s) in sine.iter().enumerate() {
                 signal[i] += s;
@@ -399,10 +399,10 @@ fn validate_filter(filter: &FilterConfig, channels: usize) -> Result<(), Box<dyn
 }
 
 fn apply_filter(
-    input: &[Vec<f32>],
+    input: &[Vec<Float>],
     filter_cfg: &FilterConfig,
     signal_cfg: &SignalConfig,
-) -> Result<Vec<Vec<f32>>, Box<dyn Error>> {
+) -> Result<Vec<Vec<Float>>, Box<dyn Error>> {
     match filter_cfg {
         FilterConfig::Lowpass { cutoff, order } => {
             apply_lowpass_filter(input, *cutoff, *order, signal_cfg.sample_rate)
@@ -419,11 +419,11 @@ fn apply_filter(
 }
 
 fn apply_lowpass_filter(
-    input: &[Vec<f32>],
-    cutoff: f32,
+    input: &[Vec<Float>],
+    cutoff: Float,
     order: u8,
-    sample_rate: f32,
-) -> Result<Vec<Vec<f32>>, Box<dyn Error>> {
+    sample_rate: Float,
+) -> Result<Vec<Vec<Float>>, Box<dyn Error>> {
     let mut output = Vec::with_capacity(input.len());
     let num_sections = (order / 2) as usize;
 
@@ -443,11 +443,11 @@ fn apply_lowpass_filter(
 }
 
 fn apply_highpass_filter(
-    input: &[Vec<f32>],
-    cutoff: f32,
+    input: &[Vec<Float>],
+    cutoff: Float,
     order: u8,
-    sample_rate: f32,
-) -> Result<Vec<Vec<f32>>, Box<dyn Error>> {
+    sample_rate: Float,
+) -> Result<Vec<Vec<Float>>, Box<dyn Error>> {
     let mut output = Vec::with_capacity(input.len());
     let num_sections = (order / 2) as usize;
 
@@ -467,12 +467,12 @@ fn apply_highpass_filter(
 }
 
 fn apply_bandpass_filter(
-    input: &[Vec<f32>],
-    low: f32,
-    high: f32,
+    input: &[Vec<Float>],
+    low: Float,
+    high: Float,
     order: u8,
-    sample_rate: f32,
-) -> Result<Vec<Vec<f32>>, Box<dyn Error>> {
+    sample_rate: Float,
+) -> Result<Vec<Vec<Float>>, Box<dyn Error>> {
     let mut output = Vec::with_capacity(input.len());
     let num_sections = (order / 2) as usize;
 
@@ -491,27 +491,30 @@ fn apply_bandpass_filter(
     Ok(output)
 }
 
-fn apply_filter_1_section(channel: &[f32], coeffs: BiquadCoeffs) -> Vec<f32> {
+fn apply_filter_1_section(channel: &[Float], coeffs: BiquadCoeffs) -> Vec<Float> {
     let mut filter: IirFilter<1> = IirFilter::new([coeffs]);
     channel.iter().map(|&x| filter.process_sample(x)).collect()
 }
 
-fn apply_filter_2_sections(channel: &[f32], coeffs: BiquadCoeffs) -> Vec<f32> {
+fn apply_filter_2_sections(channel: &[Float], coeffs: BiquadCoeffs) -> Vec<Float> {
     let mut filter: IirFilter<2> = IirFilter::new([coeffs, coeffs]);
     channel.iter().map(|&x| filter.process_sample(x)).collect()
 }
 
-fn apply_filter_3_sections(channel: &[f32], coeffs: BiquadCoeffs) -> Vec<f32> {
+fn apply_filter_3_sections(channel: &[Float], coeffs: BiquadCoeffs) -> Vec<Float> {
     let mut filter: IirFilter<3> = IirFilter::new([coeffs, coeffs, coeffs]);
     channel.iter().map(|&x| filter.process_sample(x)).collect()
 }
 
-fn apply_filter_4_sections(channel: &[f32], coeffs: BiquadCoeffs) -> Vec<f32> {
+fn apply_filter_4_sections(channel: &[Float], coeffs: BiquadCoeffs) -> Vec<Float> {
     let mut filter: IirFilter<4> = IirFilter::new([coeffs, coeffs, coeffs, coeffs]);
     channel.iter().map(|&x| filter.process_sample(x)).collect()
 }
 
-fn apply_car_filter(input: &[Vec<f32>], channels: usize) -> Result<Vec<Vec<f32>>, Box<dyn Error>> {
+fn apply_car_filter(
+    input: &[Vec<Float>],
+    channels: usize,
+) -> Result<Vec<Vec<Float>>, Box<dyn Error>> {
     // Handle different channel counts
     match channels {
         4 => apply_car_typed::<4>(input),
@@ -520,13 +523,15 @@ fn apply_car_filter(input: &[Vec<f32>], channels: usize) -> Result<Vec<Vec<f32>>
     }
 }
 
-fn apply_car_typed<const C: usize>(input: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, Box<dyn Error>> {
+fn apply_car_typed<const C: usize>(
+    input: &[Vec<Float>],
+) -> Result<Vec<Vec<Float>>, Box<dyn Error>> {
     let car = CommonAverageReference::<C>::new();
     let samples = input[0].len();
     let mut output = vec![vec![0.0; samples]; C];
 
     for i in 0..samples {
-        let mut sample = [0.0f32; C];
+        let mut sample = [0.0 as Float; C];
         for (ch, channel) in input.iter().enumerate().take(C) {
             sample[ch] = channel[i];
         }
@@ -541,9 +546,9 @@ fn apply_car_typed<const C: usize>(input: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, 
 }
 
 fn apply_laplacian_filter(
-    input: &[Vec<f32>],
+    input: &[Vec<Float>],
     channels: usize,
-) -> Result<Vec<Vec<f32>>, Box<dyn Error>> {
+) -> Result<Vec<Vec<Float>>, Box<dyn Error>> {
     // Handle different channel counts
     match channels {
         4 => apply_laplacian_4ch(input),
@@ -556,7 +561,7 @@ fn apply_laplacian_filter(
     }
 }
 
-fn apply_laplacian_4ch(input: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, Box<dyn Error>> {
+fn apply_laplacian_4ch(input: &[Vec<Float>]) -> Result<Vec<Vec<Float>>, Box<dyn Error>> {
     // 2x2 grid layout
     let neighbors = [
         [1, 2, u16::MAX], // Ch 0: neighbors 1, 2
@@ -570,7 +575,7 @@ fn apply_laplacian_4ch(input: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, Box<dyn Erro
     let mut output = vec![vec![0.0; samples]; 4];
 
     for i in 0..samples {
-        let mut sample = [0.0f32; 4];
+        let mut sample = [0.0 as Float; 4];
         for (ch, channel) in input.iter().enumerate().take(4) {
             sample[ch] = channel[i];
         }
@@ -584,7 +589,7 @@ fn apply_laplacian_4ch(input: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, Box<dyn Erro
     Ok(output)
 }
 
-fn apply_laplacian_8ch(input: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, Box<dyn Error>> {
+fn apply_laplacian_8ch(input: &[Vec<Float>]) -> Result<Vec<Vec<Float>>, Box<dyn Error>> {
     // Linear array for simplicity
     let neighbors = [
         [1, u16::MAX, u16::MAX], // Ch 0: neighbor 1
@@ -602,7 +607,7 @@ fn apply_laplacian_8ch(input: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, Box<dyn Erro
     let mut output = vec![vec![0.0; samples]; 8];
 
     for i in 0..samples {
-        let mut sample = [0.0f32; 8];
+        let mut sample = [0.0 as Float; 8];
         for (ch, channel) in input.iter().enumerate().take(8) {
             sample[ch] = channel[i];
         }
@@ -637,7 +642,7 @@ fn filter_name(filter: &FilterConfig) -> String {
 // ============================================================================
 
 fn write_csv(
-    stages: &[Vec<Vec<f32>>],
+    stages: &[Vec<Vec<Float>>],
     names: &[String],
     config: &ExploreConfig,
 ) -> Result<(), Box<dyn Error>> {
@@ -658,7 +663,7 @@ fn write_csv(
         let dt = 1000.0 / config.signal.sample_rate; // time step in ms
 
         for i in 0..samples {
-            write!(file, "{},{:.3}", i, i as f32 * dt)?;
+            write!(file, "{},{:.3}", i, i as Float * dt)?;
             for channel in stage {
                 write!(file, ",{:.6}", channel[i])?;
             }
@@ -676,7 +681,7 @@ fn write_csv(
 // ============================================================================
 
 fn generate_plot(
-    stages: &[Vec<Vec<f32>>],
+    stages: &[Vec<Vec<Float>>],
     names: &[String],
     config: &ExploreConfig,
 ) -> Result<(), Box<dyn Error>> {
@@ -688,7 +693,7 @@ fn generate_plot(
         PlotLayout::Stacked => (stages.len(), 1),
         PlotLayout::Grid => {
             let n = stages.len();
-            let cols = ((n as f32).sqrt().ceil() as usize).max(2);
+            let cols = ((n as f64).sqrt().ceil() as usize).max(2);
             let rows = n.div_ceil(cols);
             (rows, cols)
         }
@@ -714,19 +719,19 @@ fn generate_plot(
 
 fn plot_stage(
     panel: &DrawingArea<BitMapBackend, plotters::coord::Shift>,
-    stage: &[Vec<f32>],
+    stage: &[Vec<Float>],
     name: &str,
     plot_samples: usize,
     config: &ExploreConfig,
 ) -> Result<(), Box<dyn Error>> {
     let samples = plot_samples.min(stage[0].len());
-    let time_vec: Vec<f32> = (0..samples)
-        .map(|i| i as f32 * 1000.0 / config.signal.sample_rate)
+    let time_vec: Vec<Float> = (0..samples)
+        .map(|i| i as Float * 1000.0 / config.signal.sample_rate)
         .collect();
 
     // Find y-axis range
-    let mut y_min = f32::INFINITY;
-    let mut y_max = f32::NEG_INFINITY;
+    let mut y_min = Float::INFINITY;
+    let mut y_max = Float::NEG_INFINITY;
 
     for channel in stage {
         for &val in &channel[..samples] {
@@ -744,7 +749,7 @@ fn plot_stage(
         .margin(15)
         .x_label_area_size(30)
         .y_label_area_size(50)
-        .build_cartesian_2d(0.0f32..time_vec[samples - 1], y_min..y_max)?;
+        .build_cartesian_2d(0.0 as Float..time_vec[samples - 1], y_min..y_max)?;
 
     chart
         .configure_mesh()

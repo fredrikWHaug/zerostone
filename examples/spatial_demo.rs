@@ -18,31 +18,32 @@ use plotters::prelude::*;
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
+use zerostone::float::{self, Float};
 use zerostone::{ChannelRouter, CommonAverageReference, SurfaceLaplacian};
 
-const SAMPLE_RATE: f32 = 1000.0; // 1 kHz
-const DURATION_SECS: f32 = 1.0;
+const SAMPLE_RATE: Float = 1000.0; // 1 kHz
+const DURATION_SECS: Float = 1.0;
 const SAMPLES: usize = (SAMPLE_RATE * DURATION_SECS) as usize;
 const CHANNELS: usize = 8;
 
 /// Data bundle for spatial filter comparison
 struct SpatialDemoData {
     /// Raw input signal with common-mode noise
-    raw: Vec<[f32; CHANNELS]>,
+    raw: Vec<[Float; CHANNELS]>,
     /// After Common Average Reference
-    car: Vec<[f32; CHANNELS]>,
+    car: Vec<[Float; CHANNELS]>,
     /// After Surface Laplacian
-    laplacian: Vec<[f32; CHANNELS]>,
+    laplacian: Vec<[Float; CHANNELS]>,
 }
 
 /// Data bundle for ChannelRouter demonstration
 struct RouterDemoData {
     /// Original 8-channel signal
-    original: Vec<[f32; CHANNELS]>,
+    original: Vec<[Float; CHANNELS]>,
     /// Selected subset (channels 0, 2, 4, 6)
-    selected: Vec<[f32; 4]>,
+    selected: Vec<[Float; 4]>,
     /// Permuted order (reversed)
-    permuted: Vec<[f32; CHANNELS]>,
+    permuted: Vec<[Float; CHANNELS]>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -72,11 +73,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("  Method: Subtract mean across channels from each channel");
 
     let car_filter: CommonAverageReference<CHANNELS> = CommonAverageReference::new();
-    let car: Vec<[f32; CHANNELS]> = raw.iter().map(|s| car_filter.process(s)).collect();
+    let car: Vec<[Float; CHANNELS]> = raw.iter().map(|s| car_filter.process(s)).collect();
 
     // Verify CAR property: channels should sum to near-zero
-    let car_sum: f32 =
-        car.iter().map(|s| s.iter().sum::<f32>().abs()).sum::<f32>() / SAMPLES as f32;
+    let car_sum: Float = car
+        .iter()
+        .map(|s| s.iter().sum::<Float>().abs())
+        .sum::<Float>()
+        / SAMPLES as Float;
     println!(
         "  Average absolute channel sum after CAR: {:.2e} (should be ~0)\n",
         car_sum
@@ -101,7 +105,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     ];
 
     let laplacian_filter: SurfaceLaplacian<CHANNELS, 2> = SurfaceLaplacian::unweighted(neighbors);
-    let laplacian: Vec<[f32; CHANNELS]> = raw.iter().map(|s| laplacian_filter.process(s)).collect();
+    let laplacian: Vec<[Float; CHANNELS]> =
+        raw.iter().map(|s| laplacian_filter.process(s)).collect();
 
     // Bundle data
     let spatial_data = SpatialDemoData {
@@ -144,19 +149,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Demonstrate channel selection: pick every other channel (0, 2, 4, 6)
     println!("1. Channel Selection: Extracting channels [0, 2, 4, 6] from 8 channels");
     let selector: ChannelRouter<8, 4> = ChannelRouter::select([0, 2, 4, 6]);
-    let selected: Vec<[f32; 4]> = original.iter().map(|s| selector.process(s)).collect();
+    let selected: Vec<[Float; 4]> = original.iter().map(|s| selector.process(s)).collect();
     println!("   Input: 8 channels -> Output: 4 channels");
 
     // Demonstrate channel permutation: reverse order
     println!("\n2. Channel Permutation: Reversing channel order [7,6,5,4,3,2,1,0]");
     let permuter: ChannelRouter<8, 8> = ChannelRouter::permute([7, 6, 5, 4, 3, 2, 1, 0]);
-    let permuted: Vec<[f32; 8]> = original.iter().map(|s| permuter.process(s)).collect();
+    let permuted: Vec<[Float; 8]> = original.iter().map(|s| permuter.process(s)).collect();
     println!("   Input: [Ch0..Ch7] -> Output: [Ch7..Ch0]");
 
     // Demonstrate identity (pass-through)
     println!("\n3. Identity Router: Pass-through (useful as pipeline placeholder)");
     let identity: ChannelRouter<8, 8> = ChannelRouter::identity();
-    let _identity_out: Vec<[f32; 8]> = original.iter().map(|s| identity.process(s)).collect();
+    let _identity_out: Vec<[Float; 8]> = original.iter().map(|s| identity.process(s)).collect();
     println!("   Input unchanged");
 
     // Bundle router demo data
@@ -190,16 +195,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 /// All channels share:
 /// - 50 Hz powerline interference
 /// - Low-frequency drift
-fn generate_multichannel_signal() -> Vec<[f32; CHANNELS]> {
-    let mut signal = vec![[0.0f32; CHANNELS]; SAMPLES];
+fn generate_multichannel_signal() -> Vec<[Float; CHANNELS]> {
+    let mut signal = vec![[0.0 as Float; CHANNELS]; SAMPLES];
 
     // Generate per-channel unique signals
     // Needs the index for amplitude/phase computation, not just array access
     #[allow(clippy::needless_range_loop)]
     for ch in 0..CHANNELS {
         // Each channel has a 10 Hz signal with different amplitude and phase
-        let amplitude = 0.5 + (ch as f32) * 0.1; // 0.5 to 1.2
-        let phase = (ch as f32) * 0.4; // Phase offset per channel
+        let amplitude = 0.5 + (ch as Float) * 0.1; // 0.5 to 1.2
+        let phase = (ch as Float) * 0.4; // Phase offset per channel
         let unique_signal = common::sine_wave(SAMPLES, SAMPLE_RATE, 10.0, amplitude, phase);
 
         // Add channel-specific noise
@@ -225,15 +230,15 @@ fn generate_multichannel_signal() -> Vec<[f32; CHANNELS]> {
 }
 
 /// Compute common-mode power reduction in dB for CAR and Laplacian.
-fn compute_common_mode_reduction(data: &SpatialDemoData) -> (f32, f32) {
+fn compute_common_mode_reduction(data: &SpatialDemoData) -> (Float, Float) {
     // Common-mode component = mean across channels at each time point
-    let compute_common_mode_power = |signal: &[[f32; CHANNELS]]| -> f32 {
-        let mut power = 0.0f32;
+    let compute_common_mode_power = |signal: &[[Float; CHANNELS]]| -> Float {
+        let mut power: Float = 0.0;
         for sample in signal {
-            let mean: f32 = sample.iter().sum::<f32>() / CHANNELS as f32;
+            let mean: Float = sample.iter().sum::<Float>() / CHANNELS as Float;
             power += mean * mean;
         }
-        power / signal.len() as f32
+        power / signal.len() as Float
     };
 
     let raw_power = compute_common_mode_power(&data.raw);
@@ -241,14 +246,14 @@ fn compute_common_mode_reduction(data: &SpatialDemoData) -> (f32, f32) {
     let lap_power = compute_common_mode_power(&data.laplacian);
 
     // Convert to dB reduction
-    let car_reduction = 10.0 * (raw_power / car_power.max(1e-10)).log10();
-    let lap_reduction = 10.0 * (raw_power / lap_power.max(1e-10)).log10();
+    let car_reduction = 10.0 * float::log10(raw_power / car_power.max(1e-10));
+    let lap_reduction = 10.0 * float::log10(raw_power / lap_power.max(1e-10));
 
     (car_reduction, lap_reduction)
 }
 
 /// Write multi-channel signal to CSV file.
-fn write_spatial_csv(path: &str, data: &[[f32; CHANNELS]]) -> Result<(), Box<dyn Error>> {
+fn write_spatial_csv(path: &str, data: &[[Float; CHANNELS]]) -> Result<(), Box<dyn Error>> {
     let mut file = File::create(path)?;
 
     // Header
@@ -260,7 +265,7 @@ fn write_spatial_csv(path: &str, data: &[[f32; CHANNELS]]) -> Result<(), Box<dyn
 
     // Data rows
     for (i, sample) in data.iter().enumerate() {
-        let time_ms = (i as f32 / SAMPLE_RATE) * 1000.0;
+        let time_ms = (i as Float / SAMPLE_RATE) * 1000.0;
         write!(file, "{},{:.3}", i, time_ms)?;
         for &val in sample.iter() {
             write!(file, ",{:.6}", val)?;
@@ -402,7 +407,7 @@ fn generate_router_plot(data: &RouterDemoData, output_path: &str) -> Result<(), 
 /// Plot multi-channel signal with stacked traces.
 fn plot_multichannel<const C: usize>(
     area: &DrawingArea<BitMapBackend, plotters::coord::Shift>,
-    data: &[[f32; C]],
+    data: &[[Float; C]],
     display_samples: usize,
     title: &str,
     colors: &[RGBColor],
@@ -415,7 +420,7 @@ fn plot_multichannel<const C: usize>(
 /// Plot multi-channel signal with custom labels.
 fn plot_multichannel_with_labels<const C: usize>(
     area: &DrawingArea<BitMapBackend, plotters::coord::Shift>,
-    data: &[[f32; C]],
+    data: &[[Float; C]],
     display_samples: usize,
     title: &str,
     colors: &[RGBColor],
@@ -427,26 +432,26 @@ fn plot_multichannel_with_labels<const C: usize>(
 /// Generic multi-channel plotter.
 fn plot_multichannel_generic<const C: usize>(
     area: &DrawingArea<BitMapBackend, plotters::coord::Shift>,
-    data: &[[f32; C]],
+    data: &[[Float; C]],
     display_samples: usize,
     title: &str,
     colors: &[RGBColor],
     labels: &[&str],
 ) -> Result<(), Box<dyn Error>> {
     let display_samples = display_samples.min(data.len());
-    let display_time_ms = (display_samples as f32 / SAMPLE_RATE) * 1000.0;
+    let display_time_ms = (display_samples as Float / SAMPLE_RATE) * 1000.0;
 
     // Find y-axis range
     let y_min = data[..display_samples]
         .iter()
         .flat_map(|sample| sample.iter())
         .cloned()
-        .fold(f32::INFINITY, f32::min);
+        .fold(Float::INFINITY, Float::min);
     let y_max = data[..display_samples]
         .iter()
         .flat_map(|sample| sample.iter())
         .cloned()
-        .fold(f32::NEG_INFINITY, f32::max);
+        .fold(Float::NEG_INFINITY, Float::max);
     let y_margin = (y_max - y_min) * 0.1;
 
     let mut chart = ChartBuilder::on(area)
@@ -455,7 +460,7 @@ fn plot_multichannel_generic<const C: usize>(
         .x_label_area_size(35)
         .y_label_area_size(60)
         .build_cartesian_2d(
-            0f32..display_time_ms,
+            (0.0 as Float)..display_time_ms,
             (y_min - y_margin)..(y_max + y_margin),
         )?;
 
@@ -477,7 +482,7 @@ fn plot_multichannel_generic<const C: usize>(
         chart
             .draw_series(LineSeries::new(
                 (0..display_samples).map(|i| {
-                    let t = (i as f32 / SAMPLE_RATE) * 1000.0;
+                    let t = (i as Float / SAMPLE_RATE) * 1000.0;
                     (t, data[i][ch])
                 }),
                 ShapeStyle::from(&color).stroke_width(1),

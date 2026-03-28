@@ -5,6 +5,7 @@
 //! comparison metrics, drift estimation, quality metrics, and localization.
 
 use zerostone::drift::{estimate_drift_from_positions, DriftEstimator};
+use zerostone::float::{self, Float};
 use zerostone::localize::{center_of_mass, center_of_mass_threshold};
 use zerostone::metrics::compare_spike_trains;
 use zerostone::probe::ProbeLayout;
@@ -23,8 +24,8 @@ use zerostone::template_subtract::{PeelResult, TemplateSubtractor};
 fn sort_empty_data() {
     let config = SortConfig::default();
     let probe = ProbeLayout::<2>::linear(25.0);
-    let mut data: Vec<[f64; 2]> = vec![];
-    let mut scratch = vec![0.0f64; 256];
+    let mut data: Vec<[Float; 2]> = vec![];
+    let mut scratch = vec![0.0 as Float; 256];
     let mut events = vec![
         MultiChannelEvent {
             sample: 0,
@@ -33,8 +34,8 @@ fn sort_empty_data() {
         };
         256
     ];
-    let mut waveforms = vec![[0.0f64; 32]; 256];
-    let mut features = vec![[0.0f64; 3]; 256];
+    let mut waveforms = vec![[0.0 as Float; 32]; 256];
+    let mut features = vec![[0.0 as Float; 3]; 256];
     let mut labels = vec![0usize; 256];
 
     let result = sort_multichannel::<2, 4, 32, 3, 1024, 8>(
@@ -55,8 +56,8 @@ fn sort_empty_data() {
 fn sort_single_sample() {
     let config = SortConfig::default();
     let probe = ProbeLayout::<2>::linear(25.0);
-    let mut data: Vec<[f64; 2]> = vec![[0.5, -0.3]];
-    let mut scratch = vec![0.0f64; 256];
+    let mut data: Vec<[Float; 2]> = vec![[0.5, -0.3]];
+    let mut scratch = vec![0.0 as Float; 256];
     let mut events = vec![
         MultiChannelEvent {
             sample: 0,
@@ -65,8 +66,8 @@ fn sort_single_sample() {
         };
         256
     ];
-    let mut waveforms = vec![[0.0f64; 32]; 256];
-    let mut features = vec![[0.0f64; 3]; 256];
+    let mut waveforms = vec![[0.0 as Float; 32]; 256];
+    let mut features = vec![[0.0 as Float; 3]; 256];
     let mut labels = vec![0usize; 256];
 
     let result = sort_multichannel::<2, 4, 32, 3, 1024, 8>(
@@ -88,8 +89,8 @@ fn sort_all_zeros() {
     let config = SortConfig::default();
     let probe = ProbeLayout::<2>::linear(25.0);
     // 64 samples of all zeros -- enough for W=32
-    let mut data: Vec<[f64; 2]> = vec![[0.0, 0.0]; 64];
-    let mut scratch = vec![0.0f64; 256];
+    let mut data: Vec<[Float; 2]> = vec![[0.0, 0.0]; 64];
+    let mut scratch = vec![0.0 as Float; 256];
     let mut events = vec![
         MultiChannelEvent {
             sample: 0,
@@ -98,8 +99,8 @@ fn sort_all_zeros() {
         };
         256
     ];
-    let mut waveforms = vec![[0.0f64; 32]; 256];
-    let mut features = vec![[0.0f64; 3]; 256];
+    let mut waveforms = vec![[0.0 as Float; 32]; 256];
+    let mut features = vec![[0.0 as Float; 3]; 256];
     let mut labels = vec![0usize; 256];
 
     let result = sort_multichannel::<2, 4, 32, 3, 1024, 8>(
@@ -135,13 +136,13 @@ fn sort_very_high_threshold() {
     };
     let probe = ProbeLayout::<2>::linear(25.0);
     // Normal-ish data: small values that won't exceed threshold * noise
-    let mut data: Vec<[f64; 2]> = (0..128)
+    let mut data: Vec<[Float; 2]> = (0..128)
         .map(|i| {
-            let t = i as f64 * 0.1;
-            [libm::sin(t) * 0.5, libm::cos(t) * 0.3]
+            let t = i as Float * 0.1;
+            [float::sin(t) * 0.5, float::cos(t) * 0.3]
         })
         .collect();
-    let mut scratch = vec![0.0f64; 256];
+    let mut scratch = vec![0.0 as Float; 256];
     let mut events = vec![
         MultiChannelEvent {
             sample: 0,
@@ -150,8 +151,8 @@ fn sort_very_high_threshold() {
         };
         256
     ];
-    let mut waveforms = vec![[0.0f64; 32]; 256];
-    let mut features = vec![[0.0f64; 3]; 256];
+    let mut waveforms = vec![[0.0 as Float; 32]; 256];
+    let mut features = vec![[0.0 as Float; 3]; 256];
     let mut labels = vec![0usize; 256];
 
     let result = sort_multichannel::<2, 4, 32, 3, 1024, 8>(
@@ -180,8 +181,8 @@ fn sort_all_identical_values() {
     let config = SortConfig::default();
     let probe = ProbeLayout::<2>::linear(25.0);
     // Every sample is [1.0, 1.0] -- zero variance
-    let mut data: Vec<[f64; 2]> = vec![[1.0, 1.0]; 64];
-    let mut scratch = vec![0.0f64; 256];
+    let mut data: Vec<[Float; 2]> = vec![[1.0, 1.0]; 64];
+    let mut scratch = vec![0.0 as Float; 256];
     let mut events = vec![
         MultiChannelEvent {
             sample: 0,
@@ -190,8 +191,8 @@ fn sort_all_identical_values() {
         };
         256
     ];
-    let mut waveforms = vec![[0.0f64; 32]; 256];
-    let mut features = vec![[0.0f64; 3]; 256];
+    let mut waveforms = vec![[0.0 as Float; 32]; 256];
+    let mut features = vec![[0.0 as Float; 3]; 256];
     let mut labels = vec![0usize; 256];
 
     let result = sort_multichannel::<2, 4, 32, 3, 1024, 8>(
@@ -221,7 +222,7 @@ fn sort_all_identical_values() {
 
 #[test]
 fn detect_empty_data() {
-    let data: Vec<[f64; 2]> = vec![];
+    let data: Vec<[Float; 2]> = vec![];
     let noise = [1.0, 1.0];
     let mut events = vec![
         MultiChannelEvent {
@@ -238,7 +239,7 @@ fn detect_empty_data() {
 #[test]
 fn detect_single_channel_spike() {
     // 2 channels, spike only on channel 0
-    let mut data = vec![[0.0, 0.0]; 100];
+    let mut data = vec![[0.0 as Float, 0.0]; 100];
     // Inject a large negative spike on channel 0 at sample 50
     data[50] = [-20.0, 0.0];
     data[49] = [-10.0, 0.0];
@@ -265,7 +266,7 @@ fn detect_single_channel_spike() {
 fn detect_all_above_threshold() {
     // Every sample is a large negative value, so every sample exceeds threshold.
     // Refractory period should limit the number of detections.
-    let data: Vec<[f64; 1]> = vec![[-100.0]; 200];
+    let data: Vec<[Float; 1]> = vec![[-100.0]; 200];
     let noise = [1.0];
     let mut events = vec![
         MultiChannelEvent {
@@ -327,7 +328,7 @@ fn dedup_single_event() {
 #[test]
 fn peel_no_templates() {
     let sub = TemplateSubtractor::<8, 4>::new(50);
-    let mut data = [1.0f64; 20];
+    let mut data = [1.0 as Float; 20];
     let spike_times = [4usize, 8, 12];
     let mut results = [PeelResult {
         sample: 0,
@@ -345,7 +346,7 @@ fn peel_empty_signal() {
         .unwrap();
 
     // Signal shorter than template window W=4
-    let mut data = [0.0f64; 2];
+    let mut data = [0.0 as Float; 2];
     let spike_times = [0usize];
     let mut results = [PeelResult {
         sample: 0,
@@ -448,7 +449,7 @@ fn drift_batch_empty() {
 fn drift_batch_single_bin() {
     // All spikes in the same bin -> only 1 data point -> None
     let samples = [100, 200, 300];
-    let positions = [50.0, 55.0, 60.0];
+    let positions: [Float; 3] = [50.0, 55.0, 60.0];
     let result = estimate_drift_from_positions(&samples, &positions, 1000, 8);
     assert!(result.is_none());
 }
@@ -470,16 +471,16 @@ fn isi_violation_rate_single_spike() {
 #[test]
 fn silhouette_single_cluster_no_inter() {
     // Single cluster with no other cluster to compare to -> None
-    let intra = [0.1, 0.2, 0.15];
-    let inter: [f64; 0] = [];
+    let intra: [Float; 3] = [0.1, 0.2, 0.15];
+    let inter: [Float; 0] = [];
     let result = silhouette_score(&intra, &inter);
     assert!(result.is_none());
 }
 
 #[test]
 fn silhouette_empty_intra() {
-    let intra: [f64; 0] = [];
-    let inter = [5.0];
+    let intra: [Float; 0] = [];
+    let inter: [Float; 1] = [5.0];
     let result = silhouette_score(&intra, &inter);
     assert!(result.is_none());
 }
@@ -490,8 +491,8 @@ fn silhouette_empty_intra() {
 
 #[test]
 fn com_all_zero_amplitudes() {
-    let amps = [0.0, 0.0, 0.0, 0.0];
-    let pos = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
+    let amps: [Float; 4] = [0.0, 0.0, 0.0, 0.0];
+    let pos: [[Float; 2]; 4] = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
     let loc = center_of_mass(&amps, &pos);
     assert!(loc[0].abs() < 1e-12);
     assert!(loc[1].abs() < 1e-12);
@@ -500,8 +501,8 @@ fn com_all_zero_amplitudes() {
 #[test]
 fn com_single_channel_nonzero() {
     // 2-channel probe, amplitude only on channel 0
-    let amps = [-5.0, 0.0];
-    let pos = [[10.0, 20.0], [30.0, 40.0]];
+    let amps: [Float; 2] = [-5.0, 0.0];
+    let pos: [[Float; 2]; 2] = [[10.0, 20.0], [30.0, 40.0]];
     let loc = center_of_mass(&amps, &pos);
     assert!((loc[0] - 10.0).abs() < 1e-12);
     assert!((loc[1] - 20.0).abs() < 1e-12);
@@ -510,8 +511,8 @@ fn com_single_channel_nonzero() {
 #[test]
 fn com_threshold_all_below() {
     // All amplitudes below threshold -> None
-    let amps = [0.01, 0.02, 0.03];
-    let pos = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0]];
+    let amps: [Float; 3] = [0.01, 0.02, 0.03];
+    let pos: [[Float; 2]; 3] = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0]];
     let result = center_of_mass_threshold(&amps, &pos, 1.0);
     assert!(result.is_none());
 }
@@ -532,14 +533,14 @@ fn sort_template_subtract_no_spikes() {
         ..SortConfig::default()
     };
     let probe = ProbeLayout::<2>::linear(25.0);
-    let mut data: Vec<[f64; 2]> = (0..256)
+    let mut data: Vec<[Float; 2]> = (0..256)
         .map(|i| {
-            let t = i as f64 * 0.1;
-            [libm::sin(t) * 0.5, libm::cos(t) * 0.3]
+            let t = i as Float * 0.1;
+            [float::sin(t) * 0.5, float::cos(t) * 0.3]
         })
         .collect();
     let max_ev = 256;
-    let mut scratch = vec![0.0f64; 256];
+    let mut scratch = vec![0.0 as Float; 256];
     let mut events = vec![
         MultiChannelEvent {
             sample: 0,
@@ -548,8 +549,8 @@ fn sort_template_subtract_no_spikes() {
         };
         max_ev
     ];
-    let mut waveforms = vec![[0.0f64; 48]; max_ev];
-    let mut features = vec![[0.0f64; 4]; max_ev];
+    let mut waveforms = vec![[0.0 as Float; 48]; max_ev];
+    let mut features = vec![[0.0 as Float; 4]; max_ev];
     let mut labels = vec![0usize; max_ev];
 
     let result = sort_multichannel::<2, 4, 48, 4, 2304, 32>(
@@ -586,14 +587,14 @@ fn sort_template_subtract_single_cluster() {
     };
     let probe = ProbeLayout::<2>::linear(25.0);
     // Single large spike with noise
-    let mut data: Vec<[f64; 2]> = vec![[0.1, -0.1]; 512];
+    let mut data: Vec<[Float; 2]> = vec![[0.1, -0.1]; 512];
     // Inject one spike-like deflection
     for (i, row) in data.iter_mut().enumerate().take(260).skip(240) {
-        let t = (i as f64 - 250.0) / 3.0;
-        row[0] = -10.0 * (-0.5 * t * t).exp();
+        let t = (i as Float - 250.0) / 3.0;
+        row[0] = -10.0 * float::exp(-0.5 * t * t);
     }
     let max_ev = 256;
-    let mut scratch = vec![0.0f64; 512];
+    let mut scratch = vec![0.0 as Float; 512];
     let mut events = vec![
         MultiChannelEvent {
             sample: 0,
@@ -602,8 +603,8 @@ fn sort_template_subtract_single_cluster() {
         };
         max_ev
     ];
-    let mut waveforms = vec![[0.0f64; 48]; max_ev];
-    let mut features = vec![[0.0f64; 4]; max_ev];
+    let mut waveforms = vec![[0.0 as Float; 48]; max_ev];
+    let mut features = vec![[0.0 as Float; 4]; max_ev];
     let mut labels = vec![0usize; max_ev];
 
     let result = sort_multichannel::<2, 4, 48, 4, 2304, 32>(
@@ -636,20 +637,20 @@ fn sort_template_subtract_identical_spikes() {
         ..SortConfig::default()
     };
     let probe = ProbeLayout::<2>::linear(25.0);
-    let mut data: Vec<[f64; 2]> = vec![[0.1, -0.1]; 2048];
+    let mut data: Vec<[Float; 2]> = vec![[0.1, -0.1]; 2048];
     // Inject many identical large spikes (same waveform, well-spaced)
     for spike_idx in 0..10 {
         let center = 200 + spike_idx * 100;
         for offset in 0..20 {
-            let t = (offset as f64 - 10.0) / 3.0;
-            let val = -20.0 * (-0.5 * t * t).exp();
+            let t = (offset as Float - 10.0) / 3.0;
+            let val = -20.0 * float::exp(-0.5 * t * t);
             if center + offset < 2048 {
                 data[center + offset][0] += val;
             }
         }
     }
     let max_ev = 256;
-    let mut scratch = vec![0.0f64; 2048];
+    let mut scratch = vec![0.0 as Float; 2048];
     let mut events = vec![
         MultiChannelEvent {
             sample: 0,
@@ -658,8 +659,8 @@ fn sort_template_subtract_identical_spikes() {
         };
         max_ev
     ];
-    let mut waveforms = vec![[0.0f64; 48]; max_ev];
-    let mut features = vec![[0.0f64; 4]; max_ev];
+    let mut waveforms = vec![[0.0 as Float; 48]; max_ev];
+    let mut features = vec![[0.0 as Float; 4]; max_ev];
     let mut labels = vec![0usize; max_ev];
 
     let result = sort_multichannel::<2, 4, 48, 4, 2304, 32>(
@@ -688,13 +689,13 @@ fn sort_template_subtract_identical_spikes() {
 #[test]
 fn sort_template_vs_no_template() {
     let probe = ProbeLayout::<2>::linear(25.0);
-    let mut data: Vec<[f64; 2]> = vec![[0.1, -0.1]; 1024];
+    let mut data: Vec<[Float; 2]> = vec![[0.1, -0.1]; 1024];
     // Inject a few spikes
     for spike_idx in 0..5 {
         let center = 100 + spike_idx * 100;
         for offset in 0..20 {
-            let t = (offset as f64 - 10.0) / 3.0;
-            let val = -10.0 * (-0.5 * t * t).exp();
+            let t = (offset as Float - 10.0) / 3.0;
+            let val = -10.0 * float::exp(-0.5 * t * t);
             if center + offset < 1024 {
                 data[center + offset][0] += val;
             }
@@ -713,7 +714,7 @@ fn sort_template_vs_no_template() {
         ..SortConfig::default()
     };
     let mut data_no = data.clone();
-    let mut scratch = vec![0.0f64; 1024];
+    let mut scratch = vec![0.0 as Float; 1024];
     let mut events = vec![
         MultiChannelEvent {
             sample: 0,
@@ -722,8 +723,8 @@ fn sort_template_vs_no_template() {
         };
         max_ev
     ];
-    let mut waveforms = vec![[0.0f64; 48]; max_ev];
-    let mut features = vec![[0.0f64; 4]; max_ev];
+    let mut waveforms = vec![[0.0 as Float; 48]; max_ev];
+    let mut features = vec![[0.0 as Float; 4]; max_ev];
     let mut labels_no = vec![0usize; max_ev];
 
     let result_no = sort_multichannel::<2, 4, 48, 4, 2304, 32>(
@@ -747,7 +748,7 @@ fn sort_template_vs_no_template() {
         ..SortConfig::default()
     };
     let mut data_yes = data.clone();
-    let mut scratch2 = vec![0.0f64; 1024];
+    let mut scratch2 = vec![0.0 as Float; 1024];
     let mut events2 = vec![
         MultiChannelEvent {
             sample: 0,
@@ -756,8 +757,8 @@ fn sort_template_vs_no_template() {
         };
         max_ev
     ];
-    let mut waveforms2 = vec![[0.0f64; 48]; max_ev];
-    let mut features2 = vec![[0.0f64; 4]; max_ev];
+    let mut waveforms2 = vec![[0.0 as Float; 48]; max_ev];
+    let mut features2 = vec![[0.0 as Float; 4]; max_ev];
     let mut labels_yes = vec![0usize; max_ev];
 
     let result_yes = sort_multichannel::<2, 4, 48, 4, 2304, 32>(

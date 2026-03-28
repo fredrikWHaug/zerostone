@@ -19,22 +19,22 @@ use plotters::prelude::*;
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
-use zerostone::{BiquadCoeffs, IirFilter};
+use zerostone::float;
+use zerostone::{BiquadCoeffs, Float, IirFilter};
 
-const SAMPLE_RATE: f32 = 1000.0; // 1 kHz
-const DURATION_SECS: f32 = 1.0;
-const SAMPLES: usize = (SAMPLE_RATE * DURATION_SECS) as usize;
+const SAMPLE_RATE: Float = 1000.0; // 1 kHz
+const SAMPLES: usize = 1000;
 
 /// Data bundle for plotting and CSV export
 struct FilterDemoData {
-    input: Vec<f32>,
-    filtered: Vec<f32>,
-    reference: Vec<f32>,
-    freq_input: Vec<f32>,
-    psd_input: Vec<f32>,
-    psd_filtered: Vec<f32>,
-    freq_response: Vec<f32>,
-    mag_response: Vec<f32>,
+    input: Vec<Float>,
+    filtered: Vec<Float>,
+    reference: Vec<Float>,
+    freq_input: Vec<Float>,
+    psd_input: Vec<Float>,
+    psd_filtered: Vec<Float>,
+    freq_response: Vec<Float>,
+    mag_response: Vec<Float>,
 }
 
 #[derive(Parser)]
@@ -42,7 +42,7 @@ struct FilterDemoData {
 struct Args {
     /// Filter cutoff frequency in Hz
     #[arg(short, long, default_value_t = 30.0)]
-    cutoff: f32,
+    cutoff: Float,
 
     /// Filter type: lowpass, highpass, or bandpass
     #[arg(short = 't', long, default_value = "lowpass")]
@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let noise_60hz = common::sine_wave(SAMPLES, SAMPLE_RATE, 60.0, 0.3, 0.0);
             let white_noise = common::white_noise(SAMPLES, 0.2, 42);
 
-            let input: Vec<f32> = signal_10hz
+            let input: Vec<Float> = signal_10hz
                 .iter()
                 .zip(noise_60hz.iter())
                 .zip(white_noise.iter())
@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let signal_60hz = common::sine_wave(SAMPLES, SAMPLE_RATE, 60.0, 1.0, 0.0);
             let white_noise = common::white_noise(SAMPLES, 0.2, 42);
 
-            let input: Vec<f32> = drift
+            let input: Vec<Float> = drift
                 .iter()
                 .zip(signal_60hz.iter())
                 .zip(white_noise.iter())
@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let high_freq = common::sine_wave(SAMPLES, SAMPLE_RATE, 60.0, 0.3, 0.0);
             let white_noise = common::white_noise(SAMPLES, 0.2, 42);
 
-            let input: Vec<f32> = low_freq
+            let input: Vec<Float> = low_freq
                 .iter()
                 .zip(signal_20hz.iter())
                 .zip(high_freq.iter())
@@ -162,50 +162,54 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("\nApplying {}...", filter_description);
     let mut filter: IirFilter<2> = IirFilter::new([coeffs, coeffs]); // 2 sections = 4th order
 
-    let filtered: Vec<f32> = input.iter().map(|&x| filter.process_sample(x)).collect();
+    let filtered: Vec<Float> = input.iter().map(|&x| filter.process_sample(x)).collect();
 
     // Calculate statistics (skip first 100ms for filter settling)
     let skip_samples = (SAMPLE_RATE * 0.1) as usize;
-    let n = (input.len() - skip_samples) as f32;
+    let n = (input.len() - skip_samples) as Float;
 
     // Signal power (from pure reference)
-    let signal_power: f32 = reference[skip_samples..].iter().map(|x| x * x).sum::<f32>() / n;
+    let signal_power: Float = reference[skip_samples..]
+        .iter()
+        .map(|x| x * x)
+        .sum::<Float>()
+        / n;
 
     // Noise power before filtering: noise = input - pure_signal
-    let noise_before_power: f32 = input[skip_samples..]
+    let noise_before_power: Float = input[skip_samples..]
         .iter()
         .zip(&reference[skip_samples..])
         .map(|(inp, sig)| {
             let noise = inp - sig;
             noise * noise
         })
-        .sum::<f32>()
+        .sum::<Float>()
         / n;
 
     // Noise power after filtering: noise = filtered - pure_signal
-    let noise_after_power: f32 = filtered[skip_samples..]
+    let noise_after_power: Float = filtered[skip_samples..]
         .iter()
         .zip(&reference[skip_samples..])
         .map(|(filt, sig)| {
             let noise = filt - sig;
             noise * noise
         })
-        .sum::<f32>()
+        .sum::<Float>()
         / n;
 
     // SNR in dB
-    let snr_before = 10.0 * (signal_power / noise_before_power).log10();
-    let snr_after = 10.0 * (signal_power / noise_after_power).log10();
+    let snr_before = 10.0 * float::log10(signal_power / noise_before_power);
+    let snr_after = 10.0 * float::log10(signal_power / noise_after_power);
     let snr_improvement = snr_after - snr_before;
 
     // Correlation with original signal
     let correlation = {
-        let mean_orig: f32 = reference[skip_samples..].iter().sum::<f32>() / n;
-        let mean_filt: f32 = filtered[skip_samples..].iter().sum::<f32>() / n;
+        let mean_orig: Float = reference[skip_samples..].iter().sum::<Float>() / n;
+        let mean_filt: Float = filtered[skip_samples..].iter().sum::<Float>() / n;
 
-        let mut cov = 0.0f32;
-        let mut var_orig = 0.0f32;
-        let mut var_filt = 0.0f32;
+        let mut cov = 0.0 as Float;
+        let mut var_orig = 0.0 as Float;
+        let mut var_filt = 0.0 as Float;
 
         for i in skip_samples..reference.len() {
             let o = reference[i] - mean_orig;
@@ -215,7 +219,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             var_filt += f * f;
         }
 
-        cov / (var_orig.sqrt() * var_filt.sqrt())
+        cov / (float::sqrt(var_orig) * float::sqrt(var_filt))
     };
 
     println!("\nSignal Statistics (after 100ms settling):");
@@ -267,7 +271,7 @@ fn write_csv(data: &FilterDemoData, path: &str) -> Result<(), Box<dyn Error>> {
     writeln!(file, "# Time Domain")?;
     writeln!(file, "sample,time_ms,input,filtered,reference")?;
     for i in 0..data.input.len() {
-        let time_ms = (i as f32 / SAMPLE_RATE) * 1000.0;
+        let time_ms = (i as Float / SAMPLE_RATE) * 1000.0;
         writeln!(
             file,
             "{},{:.3},{:.6},{:.6},{:.6}",
@@ -308,7 +312,7 @@ fn write_csv(data: &FilterDemoData, path: &str) -> Result<(), Box<dyn Error>> {
 
 fn generate_plot(
     data: &FilterDemoData,
-    cutoff: f32,
+    cutoff: Float,
     filter_description: &str,
     output_path: &str,
 ) -> Result<(), Box<dyn Error>> {
@@ -329,7 +333,7 @@ fn generate_plot(
             .margin(10)
             .x_label_area_size(40)
             .y_label_area_size(60)
-            .build_cartesian_2d(0f32..500f32, -2.0f32..2.0f32)?;
+            .build_cartesian_2d(0.0 as Float..500.0 as Float, -2.0 as Float..2.0 as Float)?;
 
         chart
             .configure_mesh()
@@ -341,7 +345,7 @@ fn generate_plot(
         chart
             .draw_series(LineSeries::new(
                 (0..display_samples).map(|i| {
-                    let t = (i as f32 / SAMPLE_RATE) * 1000.0;
+                    let t = (i as Float / SAMPLE_RATE) * 1000.0;
                     (t, data.input[i])
                 }),
                 ShapeStyle::from(&RGBColor(200, 200, 200)).stroke_width(1),
@@ -353,7 +357,7 @@ fn generate_plot(
         chart
             .draw_series(LineSeries::new(
                 (0..display_samples).map(|i| {
-                    let t = (i as f32 / SAMPLE_RATE) * 1000.0;
+                    let t = (i as Float / SAMPLE_RATE) * 1000.0;
                     (t, data.filtered[i])
                 }),
                 ShapeStyle::from(&BLUE).stroke_width(2),
@@ -365,7 +369,7 @@ fn generate_plot(
         chart
             .draw_series(LineSeries::new(
                 (0..display_samples).map(|i| {
-                    let t = (i as f32 / SAMPLE_RATE) * 1000.0;
+                    let t = (i as Float / SAMPLE_RATE) * 1000.0;
                     (t, data.reference[i])
                 }),
                 ShapeStyle::from(&GREEN).stroke_width(1),
@@ -391,20 +395,20 @@ fn generate_plot(
             .iter()
             .position(|&f| f > max_freq)
             .unwrap_or(data.freq_input.len());
-        let y_min = data.psd_input[..max_idx]
-            .iter()
-            .chain(&data.psd_filtered[..max_idx])
-            .cloned()
-            .fold(f32::INFINITY, f32::min)
-            .floor()
-            - 10.0;
-        let y_max = data.psd_input[..max_idx]
-            .iter()
-            .chain(&data.psd_filtered[..max_idx])
-            .cloned()
-            .fold(f32::NEG_INFINITY, f32::max)
-            .ceil()
-            + 10.0;
+        let y_min = float::floor(
+            data.psd_input[..max_idx]
+                .iter()
+                .chain(&data.psd_filtered[..max_idx])
+                .cloned()
+                .fold(Float::INFINITY, Float::min),
+        ) - 10.0;
+        let y_max = float::ceil(
+            data.psd_input[..max_idx]
+                .iter()
+                .chain(&data.psd_filtered[..max_idx])
+                .cloned()
+                .fold(Float::NEG_INFINITY, Float::max),
+        ) + 10.0;
 
         let mut chart = ChartBuilder::on(&areas[1])
             .caption(
@@ -414,7 +418,7 @@ fn generate_plot(
             .margin(10)
             .x_label_area_size(40)
             .y_label_area_size(60)
-            .build_cartesian_2d(0f32..max_freq, y_min..y_max)?;
+            .build_cartesian_2d(0.0 as Float..max_freq, y_min..y_max)?;
 
         chart
             .configure_mesh()
@@ -472,12 +476,12 @@ fn generate_plot(
             .iter()
             .position(|&f| f > max_freq)
             .unwrap_or(data.freq_response.len());
-        let y_min = data.mag_response[..max_idx]
-            .iter()
-            .cloned()
-            .fold(f32::INFINITY, f32::min)
-            .floor()
-            - 10.0;
+        let y_min = float::floor(
+            data.mag_response[..max_idx]
+                .iter()
+                .cloned()
+                .fold(Float::INFINITY, Float::min),
+        ) - 10.0;
         let y_max = 10.0; // 0 dB at top
 
         let mut chart = ChartBuilder::on(&areas[2])
@@ -485,7 +489,7 @@ fn generate_plot(
             .margin(10)
             .x_label_area_size(40)
             .y_label_area_size(60)
-            .build_cartesian_2d(0f32..max_freq, y_min..y_max)?;
+            .build_cartesian_2d(0.0 as Float..max_freq, y_min..y_max)?;
 
         chart
             .configure_mesh()

@@ -1,4 +1,6 @@
+#![allow(clippy::unnecessary_cast)]
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use zerostone::float::{self, Float};
 use zerostone::{
     apply_window,
     hilbert::{hilbert_batch, HilbertTransform},
@@ -21,11 +23,11 @@ fn bench_push_pop_throughput(c: &mut Criterion) {
             BenchmarkId::from_parameter(format!("{}_channels", size)),
             size,
             |b, &size| {
-                let mut buffer: CircularBuffer<f32, 2048> = CircularBuffer::new();
+                let mut buffer: CircularBuffer<Float, 2048> = CircularBuffer::new();
 
                 b.iter(|| {
                     for i in 0..size {
-                        let _ = buffer.push(black_box(i as f32));
+                        let _ = buffer.push(black_box(i as Float));
                     }
                     for _ in 0..size {
                         let _ = black_box(buffer.pop());
@@ -42,11 +44,11 @@ fn bench_push_pop_throughput(c: &mut Criterion) {
 fn bench_single_push(c: &mut Criterion) {
     let mut group = c.benchmark_group("single_push_latency");
 
-    let mut buffer: CircularBuffer<f32, 2048> = CircularBuffer::new();
+    let mut buffer: CircularBuffer<Float, 2048> = CircularBuffer::new();
 
     group.bench_function("push_single_sample", |b| {
         b.iter(|| {
-            let _ = buffer.push(black_box(42.0f32));
+            let _ = buffer.push(black_box(42.0 as Float));
         });
     });
 
@@ -57,10 +59,10 @@ fn bench_single_push(c: &mut Criterion) {
 fn bench_single_pop(c: &mut Criterion) {
     let mut group = c.benchmark_group("single_pop_latency");
 
-    let mut buffer: CircularBuffer<f32, 2048> = CircularBuffer::new();
+    let mut buffer: CircularBuffer<Float, 2048> = CircularBuffer::new();
     // Pre-fill the buffer
     for i in 0..1000 {
-        buffer.push(i as f32).unwrap();
+        buffer.push(i as Float).unwrap();
     }
 
     group.bench_function("pop_single_sample", |b| {
@@ -81,13 +83,13 @@ fn bench_streaming_bci_data(c: &mut Criterion) {
             BenchmarkId::from_parameter(format!("{}_ch_streaming", channels)),
             channels,
             |b, _| {
-                let mut buffer: CircularBuffer<f32, 2048> = CircularBuffer::new();
+                let mut buffer: CircularBuffer<Float, 2048> = CircularBuffer::new();
 
                 b.iter(|| {
                     // Simulate acquiring 100 samples from each channel
                     for sample in 0..100 {
                         for ch in 0..*channels {
-                            let value = (sample * channels + ch) as f32;
+                            let value = (sample * channels + ch) as Float;
                             let _ = buffer.push(black_box(value));
                         }
                     }
@@ -108,11 +110,11 @@ fn bench_streaming_bci_data(c: &mut Criterion) {
 fn bench_try_push(c: &mut Criterion) {
     let mut group = c.benchmark_group("try_push_performance");
 
-    let buffer: CircularBuffer<f32, 2048> = CircularBuffer::new();
+    let buffer: CircularBuffer<Float, 2048> = CircularBuffer::new();
 
     group.bench_function("try_push_single", |b| {
         b.iter(|| {
-            let _ = buffer.try_push(black_box(42.0f32));
+            let _ = buffer.try_push(black_box(42.0 as Float));
         });
     });
 
@@ -156,7 +158,7 @@ fn bench_iir_filter(c: &mut Criterion) {
 
     // Block processing
     group.bench_function("block_256_samples", |b| {
-        let mut samples = [0.5f32; 256];
+        let mut samples = [0.5 as Float; 256];
         b.iter(|| {
             filter.process_block(black_box(&mut samples));
         });
@@ -210,7 +212,7 @@ fn bench_fir_filter(c: &mut Criterion) {
 
     // Block processing
     group.bench_function("block_256_samples_32_taps", |b| {
-        let mut samples = [0.5f32; 256];
+        let mut samples = [0.5 as Float; 256];
         b.iter(|| {
             filter.process_block(black_box(&mut samples));
         });
@@ -233,7 +235,7 @@ fn bench_ac_coupler(c: &mut Criterion) {
 
     // Multi-channel AC coupler (32 channels)
     let mut coupler32: AcCoupler<32> = AcCoupler::new(250.0, 0.1);
-    let samples32 = [1.0f32; 32];
+    let samples32 = [1.0 as Float; 32];
     group.throughput(Throughput::Elements(32));
     group.bench_function("32_channels", |b| {
         b.iter(|| {
@@ -244,7 +246,7 @@ fn bench_ac_coupler(c: &mut Criterion) {
     // Block processing (256 samples, 4 channels)
     let mut coupler4: AcCoupler<4> = AcCoupler::new(250.0, 0.1);
     group.bench_function("block_256_samples_4ch", |b| {
-        let mut block: Vec<[f32; 4]> = (0..256).map(|_| [1.0; 4]).collect();
+        let mut block: Vec<[Float; 4]> = (0..256).map(|_| [1.0; 4]).collect();
         b.iter(|| {
             coupler4.process_block(black_box(&mut block));
         });
@@ -259,7 +261,7 @@ fn bench_decimator(c: &mut Criterion) {
 
     // Single sample processing (32 channels, factor 4)
     let mut dec32: Decimator<32> = Decimator::new(4);
-    let samples32 = [1.0f32; 32];
+    let samples32 = [1.0 as Float; 32];
     group.bench_function("32_channels_factor_4", |b| {
         b.iter(|| {
             let _ = black_box(dec32.process(black_box(&samples32)));
@@ -269,8 +271,8 @@ fn bench_decimator(c: &mut Criterion) {
     // Block processing (256 samples, 4 channels, factor 4)
     let mut dec4: Decimator<4> = Decimator::new(4);
     group.bench_function("block_256_samples_4ch_factor_4", |b| {
-        let input: Vec<[f32; 4]> = (0..256).map(|i| [i as f32; 4]).collect();
-        let mut output = vec![[0.0f32; 4]; 64];
+        let input: Vec<[Float; 4]> = (0..256).map(|i| [i as Float; 4]).collect();
+        let mut output = vec![[0.0 as Float; 4]; 64];
         b.iter(|| {
             dec4.reset();
             let _ = black_box(dec4.process_block(black_box(&input), black_box(&mut output)));
@@ -287,7 +289,7 @@ fn bench_envelope_follower(c: &mut Criterion) {
     // Single sample processing (32 channels)
     let mut env32: EnvelopeFollower<32> =
         EnvelopeFollower::new(250.0, 0.010, 0.100, Rectification::Absolute);
-    let samples32 = [0.5f32; 32];
+    let samples32 = [0.5 as Float; 32];
     group.throughput(Throughput::Elements(32));
     group.bench_function("32_channels_absolute", |b| {
         b.iter(|| {
@@ -308,7 +310,9 @@ fn bench_envelope_follower(c: &mut Criterion) {
     let mut env4: EnvelopeFollower<4> =
         EnvelopeFollower::new(250.0, 0.010, 0.100, Rectification::Absolute);
     group.bench_function("block_256_samples_4ch", |b| {
-        let mut block: Vec<[f32; 4]> = (0..256).map(|i| [(i as f32 * 0.01).sin(); 4]).collect();
+        let mut block: Vec<[Float; 4]> = (0..256)
+            .map(|i| [float::sin(i as Float * 0.01); 4])
+            .collect();
         b.iter(|| {
             env4.process_block(black_box(&mut block));
         });
@@ -360,8 +364,8 @@ fn bench_fft(c: &mut Criterion) {
     // Power spectrum computation
     let fft256_ps = Fft::<256>::new();
     group.bench_function("256_point_power_spectrum", |b| {
-        let signal = [1.0f32; 256];
-        let mut output = [0.0f32; 129];
+        let signal = [1.0 as Float; 256];
+        let mut output = [0.0 as Float; 129];
         b.iter(|| {
             fft256_ps.power_spectrum(black_box(&signal), black_box(&mut output));
         });
@@ -371,7 +375,7 @@ fn bench_fft(c: &mut Criterion) {
     let fft256_bp = Fft::<256>::new();
     let mut bp = BandPower::new(250.0);
     group.bench_function("256_point_alpha_band_power", |b| {
-        let signal = [1.0f32; 256];
+        let signal = [1.0 as Float; 256];
         b.iter(|| {
             let _ = black_box(bp.compute(&fft256_bp, black_box(&signal), 8.0, 12.0));
         });
@@ -390,7 +394,7 @@ fn bench_threshold_detector(c: &mut Criterion) {
         match *num_channels {
             32 => {
                 let mut detector: ThresholdDetector<32> = ThresholdDetector::new(3.0, 100);
-                let samples = [1.0f32; 32];
+                let samples = [1.0 as Float; 32];
                 group.bench_with_input(
                     BenchmarkId::from_parameter(format!("{}_channels", num_channels)),
                     num_channels,
@@ -403,7 +407,7 @@ fn bench_threshold_detector(c: &mut Criterion) {
             }
             128 => {
                 let mut detector: ThresholdDetector<128> = ThresholdDetector::new(3.0, 100);
-                let samples = [1.0f32; 128];
+                let samples = [1.0 as Float; 128];
                 group.bench_with_input(
                     BenchmarkId::from_parameter(format!("{}_channels", num_channels)),
                     num_channels,
@@ -416,7 +420,7 @@ fn bench_threshold_detector(c: &mut Criterion) {
             }
             512 => {
                 let mut detector: ThresholdDetector<512> = ThresholdDetector::new(3.0, 100);
-                let samples = [1.0f32; 512];
+                let samples = [1.0 as Float; 512];
                 group.bench_with_input(
                     BenchmarkId::from_parameter(format!("{}_channels", num_channels)),
                     num_channels,
@@ -429,7 +433,7 @@ fn bench_threshold_detector(c: &mut Criterion) {
             }
             1024 => {
                 let mut detector: ThresholdDetector<1024> = ThresholdDetector::new(3.0, 100);
-                let samples = [1.0f32; 1024];
+                let samples = [1.0 as Float; 1024];
                 group.bench_with_input(
                     BenchmarkId::from_parameter(format!("{}_channels", num_channels)),
                     num_channels,
@@ -464,7 +468,7 @@ fn bench_adaptive_detector(c: &mut Criterion) {
         }
         detector.freeze();
 
-        let samples = [0.05f32; 32];
+        let samples = [0.05 as Float; 32];
         b.iter(|| {
             let _ = black_box(detector.process_sample(black_box(&samples)));
         });
@@ -482,7 +486,7 @@ fn bench_adaptive_detector(c: &mut Criterion) {
         }
         // Don't freeze - keep adapting
 
-        let samples = [0.05f32; 32];
+        let samples = [0.05 as Float; 32];
         b.iter(|| {
             let _ = black_box(detector.process_sample(black_box(&samples)));
         });
@@ -500,7 +504,7 @@ fn bench_adaptive_detector(c: &mut Criterion) {
         }
         detector.freeze();
 
-        let samples = [0.05f32; 128];
+        let samples = [0.05 as Float; 128];
         b.iter(|| {
             let _ = black_box(detector.process_sample(black_box(&samples)));
         });
@@ -577,7 +581,7 @@ fn bench_online_cov(c: &mut Criterion) {
     // Covariance matrix retrieval (32 channels)
     let mut cov32_retrieval: OnlineCov<32, 1024> = OnlineCov::new();
     for i in 0..100 {
-        let sample: [f64; 32] = core::array::from_fn(|j| (i + j) as f64);
+        let sample: [Float; 32] = core::array::from_fn(|j| (i + j) as Float);
         cov32_retrieval.update(&sample);
     }
     group.bench_function("covariance_32_channels", |b| {
@@ -841,7 +845,7 @@ fn bench_window(c: &mut Criterion) {
                     BenchmarkId::from_parameter(format!("hann_{}", size)),
                     size,
                     |b, _| {
-                        let mut signal = [1.0f32; 64];
+                        let mut signal = [1.0 as Float; 64];
                         b.iter(|| {
                             apply_window(black_box(&mut signal), WindowType::Hann);
                         });
@@ -853,7 +857,7 @@ fn bench_window(c: &mut Criterion) {
                     BenchmarkId::from_parameter(format!("hann_{}", size)),
                     size,
                     |b, _| {
-                        let mut signal = [1.0f32; 256];
+                        let mut signal = [1.0 as Float; 256];
                         b.iter(|| {
                             apply_window(black_box(&mut signal), WindowType::Hann);
                         });
@@ -865,7 +869,7 @@ fn bench_window(c: &mut Criterion) {
                     BenchmarkId::from_parameter(format!("hann_{}", size)),
                     size,
                     |b, _| {
-                        let mut signal = [1.0f32; 1024];
+                        let mut signal = [1.0 as Float; 1024];
                         b.iter(|| {
                             apply_window(black_box(&mut signal), WindowType::Hann);
                         });
@@ -877,7 +881,7 @@ fn bench_window(c: &mut Criterion) {
     }
 
     // Benchmark different window types at 256 samples
-    let mut signal256 = [1.0f32; 256];
+    let mut signal256 = [1.0 as Float; 256];
 
     group.bench_function("rectangular_256", |b| {
         b.iter(|| {
@@ -914,7 +918,7 @@ fn bench_streaming_percentile(c: &mut Criterion) {
     let mut est1: StreamingPercentile<1> = StreamingPercentile::new(0.5);
     // Pre-initialize
     for i in 0..5 {
-        est1.update(&[i as f64]);
+        est1.update(&[i as Float]);
     }
     group.bench_function("update_1_channel", |b| {
         b.iter(|| {
@@ -925,7 +929,7 @@ fn bench_streaming_percentile(c: &mut Criterion) {
     // 8-channel update (typical for motor imagery BCI)
     let mut est8: StreamingPercentile<8> = StreamingPercentile::new(0.08);
     for i in 0..5 {
-        est8.update(&[i as f64; 8]);
+        est8.update(&[i as Float; 8]);
     }
     let samples8 = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
     group.throughput(Throughput::Elements(8));
@@ -938,7 +942,7 @@ fn bench_streaming_percentile(c: &mut Criterion) {
     // 32-channel update
     let mut est32: StreamingPercentile<32> = StreamingPercentile::new(0.5);
     for i in 0..5 {
-        est32.update(&[i as f64; 32]);
+        est32.update(&[i as Float; 32]);
     }
     let samples32 = [1.0; 32];
     group.throughput(Throughput::Elements(32));
@@ -951,7 +955,7 @@ fn bench_streaming_percentile(c: &mut Criterion) {
     // Percentile retrieval
     let mut est_retrieve: StreamingPercentile<8> = StreamingPercentile::new(0.5);
     for i in 0..1000 {
-        est_retrieve.update(&[i as f64; 8]);
+        est_retrieve.update(&[i as Float; 8]);
     }
     group.bench_function("percentile_8_channels", |b| {
         b.iter(|| {
@@ -962,7 +966,7 @@ fn bench_streaming_percentile(c: &mut Criterion) {
     // Different percentiles (8th percentile for baseline estimation)
     let mut est_p8: StreamingPercentile<8> = StreamingPercentile::new(0.08);
     for i in 0..5 {
-        est_p8.update(&[i as f64; 8]);
+        est_p8.update(&[i as Float; 8]);
     }
     group.bench_function("update_8ch_p08", |b| {
         b.iter(|| {
@@ -973,7 +977,7 @@ fn bench_streaming_percentile(c: &mut Criterion) {
     // 99th percentile
     let mut est_p99: StreamingPercentile<8> = StreamingPercentile::new(0.99);
     for i in 0..5 {
-        est_p99.update(&[i as f64; 8]);
+        est_p99.update(&[i as Float; 8]);
     }
     group.bench_function("update_8ch_p99", |b| {
         b.iter(|| {
@@ -1046,11 +1050,11 @@ fn bench_oasis_full_pipeline(c: &mut Criterion) {
 
         b.iter(|| {
             let fluorescence = black_box([5.0; 8]);
-            let fluor_f64 = fluorescence.map(|x| x as f64);
+            let fluor_f64 = fluorescence.map(|x| x as Float);
             baseline.update(&fluor_f64);
 
             if let Some(b64) = baseline.percentile() {
-                let b = b64.map(|x| x as f32);
+                let b = b64.map(|x| x as Float);
                 black_box(deconv.update(&fluorescence, &b));
             }
         });
@@ -1072,11 +1076,11 @@ fn bench_oasis_full_pipeline(c: &mut Criterion) {
                 fluorescence[frame_counter % 8] = 10.0;
             }
 
-            let fluor_f64 = fluorescence.map(|x| x as f64);
+            let fluor_f64 = fluorescence.map(|x| x as Float);
             baseline.update(&fluor_f64);
 
             if let Some(b64) = baseline.percentile() {
-                let b = b64.map(|x| x as f32);
+                let b = b64.map(|x| x as Float);
                 let _result = black_box(deconv.update(&fluorescence, &b));
             }
         });
@@ -1092,7 +1096,7 @@ fn bench_cwt(c: &mut Criterion) {
     // 256-point CWT with 8 scales (typical BCI use case)
     {
         let cwt = Cwt::<256, 8>::new(250.0, 1.0, 50.0);
-        let signal = [0.5f32; 256];
+        let signal = [0.5 as Float; 256];
 
         group.bench_function("256_point_8_scales_transform", |b| {
             let mut output = [[Complex::new(0.0, 0.0); 256]; 8];
@@ -1102,7 +1106,7 @@ fn bench_cwt(c: &mut Criterion) {
         });
 
         group.bench_function("256_point_8_scales_power", |b| {
-            let mut output = [[0.0f32; 256]; 8];
+            let mut output = [[0.0 as Float; 256]; 8];
             b.iter(|| {
                 cwt.power(black_box(&signal), black_box(&mut output));
             });
@@ -1112,10 +1116,10 @@ fn bench_cwt(c: &mut Criterion) {
     // 512-point CWT with 16 scales (higher resolution)
     {
         let cwt = Cwt::<512, 16>::new(250.0, 1.0, 100.0);
-        let signal = [0.5f32; 512];
+        let signal = [0.5 as Float; 512];
 
         group.bench_function("512_point_16_scales_power", |b| {
-            let mut output = [[0.0f32; 512]; 16];
+            let mut output = [[0.0 as Float; 512]; 16];
             b.iter(|| {
                 cwt.power(black_box(&signal), black_box(&mut output));
             });
@@ -1125,7 +1129,7 @@ fn bench_cwt(c: &mut Criterion) {
     // Single scale transform (streaming use case)
     {
         let cwt = Cwt::<256, 8>::new(250.0, 1.0, 50.0);
-        let signal = [0.5f32; 256];
+        let signal = [0.5 as Float; 256];
 
         group.bench_function("256_point_single_scale", |b| {
             let mut output = [Complex::new(0.0, 0.0); 256];
@@ -1138,11 +1142,11 @@ fn bench_cwt(c: &mut Criterion) {
     // Multi-channel CWT (8 channels)
     {
         let cwt = MultiChannelCwt::<256, 8, 8>::new(250.0, 1.0, 50.0);
-        let signals = [[0.5f32; 256]; 8];
+        let signals = [[0.5 as Float; 256]; 8];
 
         group.throughput(Throughput::Elements(8));
         group.bench_function("256_point_8_scales_8_channels", |b| {
-            let mut output = [[[0.0f32; 256]; 8]; 8];
+            let mut output = [[[0.0 as Float; 256]; 8]; 8];
             b.iter(|| {
                 cwt.power(black_box(&signals), black_box(&mut output));
             });
@@ -1159,10 +1163,10 @@ fn bench_stft(c: &mut Criterion) {
     // 256-point window, 50% overlap, typical EEG analysis
     {
         let stft = Stft::<256>::new(128, WindowType::Hann);
-        let signal = [0.5f32; 1024];
+        let signal = [0.5 as Float; 1024];
 
         group.bench_function("256_window_128_hop_power", |b| {
-            let mut output = [[0.0f32; 256]; 7];
+            let mut output = [[0.0 as Float; 256]; 7];
             b.iter(|| {
                 stft.power(black_box(&signal), black_box(&mut output));
             });
@@ -1179,10 +1183,10 @@ fn bench_stft(c: &mut Criterion) {
     // 512-point window for higher frequency resolution
     {
         let stft = Stft::<512>::new(256, WindowType::Hann);
-        let signal = [0.5f32; 2048];
+        let signal = [0.5 as Float; 2048];
 
         group.bench_function("512_window_256_hop_power", |b| {
-            let mut output = [[0.0f32; 512]; 7];
+            let mut output = [[0.0 as Float; 512]; 7];
             b.iter(|| {
                 stft.power(black_box(&signal), black_box(&mut output));
             });
@@ -1192,7 +1196,7 @@ fn bench_stft(c: &mut Criterion) {
     // Single frame processing (streaming use case)
     {
         let stft = Stft::<256>::new(128, WindowType::Hann);
-        let signal = [0.5f32; 256];
+        let signal = [0.5 as Float; 256];
 
         group.bench_function("256_single_frame", |b| {
             let mut output = [Complex::new(0.0, 0.0); 256];
@@ -1205,10 +1209,10 @@ fn bench_stft(c: &mut Criterion) {
     // 75% overlap for smoother spectrogram
     {
         let stft = Stft::<256>::new(64, WindowType::Hann);
-        let signal = [0.5f32; 1024];
+        let signal = [0.5 as Float; 1024];
 
         group.bench_function("256_window_64_hop_power", |b| {
-            let mut output = [[0.0f32; 256]; 13];
+            let mut output = [[0.0 as Float; 256]; 13];
             b.iter(|| {
                 stft.power(black_box(&signal), black_box(&mut output));
             });
@@ -1226,7 +1230,7 @@ fn bench_artifact_detector(c: &mut Criterion) {
     group.throughput(Throughput::Elements(8));
     group.bench_function("8_channels_detect", |b| {
         let mut detector: ArtifactDetector<8> = ArtifactDetector::new(100.0, 50.0);
-        let samples = [50.0f32; 8];
+        let samples = [50.0 as Float; 8];
         b.iter(|| {
             let _ = black_box(detector.detect(black_box(&samples)));
         });
@@ -1236,7 +1240,7 @@ fn bench_artifact_detector(c: &mut Criterion) {
     group.throughput(Throughput::Elements(32));
     group.bench_function("32_channels_detect", |b| {
         let mut detector: ArtifactDetector<32> = ArtifactDetector::new(100.0, 50.0);
-        let samples = [50.0f32; 32];
+        let samples = [50.0 as Float; 32];
         b.iter(|| {
             let _ = black_box(detector.detect(black_box(&samples)));
         });
@@ -1246,7 +1250,7 @@ fn bench_artifact_detector(c: &mut Criterion) {
     group.throughput(Throughput::Elements(128));
     group.bench_function("128_channels_detect", |b| {
         let mut detector: ArtifactDetector<128> = ArtifactDetector::new(100.0, 50.0);
-        let samples = [50.0f32; 128];
+        let samples = [50.0 as Float; 128];
         b.iter(|| {
             let _ = black_box(detector.detect(black_box(&samples)));
         });
@@ -1256,7 +1260,7 @@ fn bench_artifact_detector(c: &mut Criterion) {
     group.throughput(Throughput::Elements(32));
     group.bench_function("32_channels_detect_detailed", |b| {
         let mut detector: ArtifactDetector<32> = ArtifactDetector::new(100.0, 50.0);
-        let samples = [50.0f32; 32];
+        let samples = [50.0 as Float; 32];
         b.iter(|| {
             let _ = black_box(detector.detect_detailed(black_box(&samples)));
         });
@@ -1280,7 +1284,7 @@ fn bench_zscore_artifact(c: &mut Criterion) {
         }
         detector.freeze();
 
-        let samples = [0.5f32; 8];
+        let samples = [0.5 as Float; 8];
         b.iter(|| {
             let _ = black_box(detector.detect(black_box(&samples)));
         });
@@ -1296,7 +1300,7 @@ fn bench_zscore_artifact(c: &mut Criterion) {
         }
         detector.freeze();
 
-        let samples = [0.5f32; 32];
+        let samples = [0.5 as Float; 32];
         b.iter(|| {
             let _ = black_box(detector.detect(black_box(&samples)));
         });
@@ -1311,7 +1315,7 @@ fn bench_zscore_artifact(c: &mut Criterion) {
         }
         // Don't freeze - keep adapting
 
-        let samples = [0.5f32; 32];
+        let samples = [0.5 as Float; 32];
         b.iter(|| {
             let _ = black_box(detector.update_and_detect(black_box(&samples)));
         });
@@ -1327,7 +1331,7 @@ fn bench_zscore_artifact(c: &mut Criterion) {
         }
         detector.freeze();
 
-        let samples = [0.5f32; 128];
+        let samples = [0.5 as Float; 128];
         b.iter(|| {
             let _ = black_box(detector.detect(black_box(&samples)));
         });
@@ -1344,8 +1348,8 @@ fn bench_interpolator(c: &mut Criterion) {
     group.throughput(Throughput::Elements(8 * 4));
     group.bench_function("8ch_zero_order_4x", |b| {
         let mut interp: Interpolator<8> = Interpolator::zero_order(4);
-        let input = [1.0f32; 8];
-        let mut output = [[0.0f32; 8]; 4];
+        let input = [1.0 as Float; 8];
+        let mut output = [[0.0 as Float; 8]; 4];
         b.iter(|| {
             let _ = black_box(interp.process(black_box(&input), black_box(&mut output)));
         });
@@ -1354,8 +1358,8 @@ fn bench_interpolator(c: &mut Criterion) {
     // 8-channel linear interpolation (4x)
     group.bench_function("8ch_linear_4x", |b| {
         let mut interp: Interpolator<8> = Interpolator::linear(4);
-        let input = [1.0f32; 8];
-        let mut output = [[0.0f32; 8]; 4];
+        let input = [1.0 as Float; 8];
+        let mut output = [[0.0 as Float; 8]; 4];
         // Initialize
         interp.process(&input, &mut output);
         b.iter(|| {
@@ -1367,8 +1371,8 @@ fn bench_interpolator(c: &mut Criterion) {
     group.throughput(Throughput::Elements(32 * 4));
     group.bench_function("32ch_zero_order_4x", |b| {
         let mut interp: Interpolator<32> = Interpolator::zero_order(4);
-        let input = [1.0f32; 32];
-        let mut output = [[0.0f32; 32]; 4];
+        let input = [1.0 as Float; 32];
+        let mut output = [[0.0 as Float; 32]; 4];
         b.iter(|| {
             let _ = black_box(interp.process(black_box(&input), black_box(&mut output)));
         });
@@ -1377,8 +1381,8 @@ fn bench_interpolator(c: &mut Criterion) {
     // 32-channel linear interpolation (4x)
     group.bench_function("32ch_linear_4x", |b| {
         let mut interp: Interpolator<32> = Interpolator::linear(4);
-        let input = [1.0f32; 32];
-        let mut output = [[0.0f32; 32]; 4];
+        let input = [1.0 as Float; 32];
+        let mut output = [[0.0 as Float; 32]; 4];
         interp.process(&input, &mut output);
         b.iter(|| {
             let _ = black_box(interp.process(black_box(&input), black_box(&mut output)));
@@ -1389,8 +1393,8 @@ fn bench_interpolator(c: &mut Criterion) {
     group.throughput(Throughput::Elements(32 * 400));
     group.bench_function("32ch_block_100_linear_4x", |b| {
         let mut interp: Interpolator<32> = Interpolator::linear(4);
-        let input = [[1.0f32; 32]; 100];
-        let mut output = [[0.0f32; 32]; 400];
+        let input = [[1.0 as Float; 32]; 100];
+        let mut output = [[0.0 as Float; 32]; 400];
         b.iter(|| {
             interp.reset();
             let _ = black_box(interp.process_block(black_box(&input), black_box(&mut output)));
@@ -1406,9 +1410,9 @@ fn bench_xcorr(c: &mut Criterion) {
 
     // 64×64 cross-correlation (small, typical for feature extraction)
     {
-        let x = [1.0f32; 64];
-        let y = [0.5f32; 64];
-        let mut output = [0.0f32; 127];
+        let x = [1.0 as Float; 64];
+        let y = [0.5 as Float; 64];
+        let mut output = [0.0 as Float; 127];
 
         group.bench_function("xcorr_64x64", |b| {
             b.iter(|| {
@@ -1424,9 +1428,9 @@ fn bench_xcorr(c: &mut Criterion) {
 
     // 256×256 cross-correlation (typical BCI segment)
     {
-        let x = [1.0f32; 256];
-        let y = [0.5f32; 256];
-        let mut output = [0.0f32; 511];
+        let x = [1.0 as Float; 256];
+        let y = [0.5 as Float; 256];
+        let mut output = [0.0 as Float; 511];
 
         group.bench_function("xcorr_256x256", |b| {
             b.iter(|| {
@@ -1454,8 +1458,8 @@ fn bench_xcorr(c: &mut Criterion) {
 
     // Auto-correlation (optimized for symmetry)
     {
-        let x = [1.0f32; 256];
-        let mut output = [0.0f32; 511];
+        let x = [1.0 as Float; 256];
+        let mut output = [0.0 as Float; 511];
 
         group.bench_function("autocorr_256", |b| {
             b.iter(|| {
@@ -1472,9 +1476,9 @@ fn bench_xcorr(c: &mut Criterion) {
 
     // Batch cross-correlation (8 channels)
     {
-        let x: [[f32; 64]; 8] = [[1.0f32; 64]; 8];
-        let y: [[f32; 64]; 8] = [[0.5f32; 64]; 8];
-        let mut output = [[0.0f32; 127]; 8];
+        let x: [[Float; 64]; 8] = [[1.0 as Float; 64]; 8];
+        let y: [[Float; 64]; 8] = [[0.5 as Float; 64]; 8];
+        let mut output = [[0.0 as Float; 127]; 8];
 
         group.throughput(Throughput::Elements(8));
         group.bench_function("xcorr_batch_8ch_64x64", |b| {
@@ -1491,8 +1495,8 @@ fn bench_xcorr(c: &mut Criterion) {
 
     // Batch auto-correlation (8 channels)
     {
-        let x: [[f32; 64]; 8] = [[1.0f32; 64]; 8];
-        let mut output = [[0.0f32; 127]; 8];
+        let x: [[Float; 64]; 8] = [[1.0 as Float; 64]; 8];
+        let mut output = [[0.0 as Float; 127]; 8];
 
         group.throughput(Throughput::Elements(8));
         group.bench_function("autocorr_batch_8ch_64", |b| {
@@ -1504,9 +1508,9 @@ fn bench_xcorr(c: &mut Criterion) {
 
     // Different signal lengths (asymmetric correlation)
     {
-        let x = [1.0f32; 256];
-        let y = [0.5f32; 64];
-        let mut output = [0.0f32; 319]; // 256 + 64 - 1
+        let x = [1.0 as Float; 256];
+        let y = [0.5 as Float; 64];
+        let mut output = [0.0 as Float; 319]; // 256 + 64 - 1
 
         group.bench_function("xcorr_256x64", |b| {
             b.iter(|| {
@@ -1527,23 +1531,23 @@ fn bench_hilbert(c: &mut Criterion) {
     let mut group = c.benchmark_group("hilbert_transform");
 
     // Generate test signal (4 Hz sine wave at 256 Hz sample rate)
-    let mut signal_128 = [0.0f32; 128];
-    let mut signal_256 = [0.0f32; 256];
-    let mut signal_512 = [0.0f32; 512];
+    let mut signal_128 = [0.0 as Float; 128];
+    let mut signal_256 = [0.0 as Float; 256];
+    let mut signal_512 = [0.0 as Float; 512];
 
     for (i, sample) in signal_128.iter_mut().enumerate() {
-        let t = i as f32 / 256.0;
-        *sample = (2.0 * core::f32::consts::PI * 4.0 * t).sin();
+        let t = i as Float / 256.0;
+        *sample = float::sin(2.0 * float::PI * 4.0 * t);
     }
 
     for (i, sample) in signal_256.iter_mut().enumerate() {
-        let t = i as f32 / 256.0;
-        *sample = (2.0 * core::f32::consts::PI * 4.0 * t).sin();
+        let t = i as Float / 256.0;
+        *sample = float::sin(2.0 * float::PI * 4.0 * t);
     }
 
     for (i, sample) in signal_512.iter_mut().enumerate() {
-        let t = i as f32 / 256.0;
-        *sample = (2.0 * core::f32::consts::PI * 4.0 * t).sin();
+        let t = i as Float / 256.0;
+        *sample = float::sin(2.0 * float::PI * 4.0 * t);
     }
 
     // Benchmark analytic_signal for different sizes
@@ -1583,7 +1587,7 @@ fn bench_hilbert(c: &mut Criterion) {
     // Benchmark instantaneous amplitude
     {
         let hilbert = HilbertTransform::<256>::new();
-        let mut output = [0.0f32; 256];
+        let mut output = [0.0 as Float; 256];
 
         group.bench_function("instantaneous_amplitude_256", |b| {
             b.iter(|| {
@@ -1595,7 +1599,7 @@ fn bench_hilbert(c: &mut Criterion) {
     // Benchmark instantaneous phase
     {
         let hilbert = HilbertTransform::<256>::new();
-        let mut output = [0.0f32; 256];
+        let mut output = [0.0 as Float; 256];
 
         group.bench_function("instantaneous_phase_256", |b| {
             b.iter(|| {
@@ -1607,7 +1611,7 @@ fn bench_hilbert(c: &mut Criterion) {
     // Benchmark instantaneous frequency
     {
         let hilbert = HilbertTransform::<256>::new();
-        let mut output = [0.0f32; 255];
+        let mut output = [0.0 as Float; 255];
 
         group.bench_function("instantaneous_frequency_256", |b| {
             b.iter(|| {
@@ -1622,7 +1626,7 @@ fn bench_hilbert(c: &mut Criterion) {
 
     // Benchmark batch processing (8 channels × 256 samples)
     {
-        let signals = [[0.0f32; 256]; 8];
+        let signals = [[0.0 as Float; 256]; 8];
         let mut output = [[Complex::new(0.0, 0.0); 256]; 8];
 
         group.bench_function("batch_8ch_x_256", |b| {
@@ -1676,8 +1680,8 @@ fn bench_lms_filter(c: &mut Criterion) {
         use zerostone::AdaptiveOutput;
         let mut lms = LmsFilter::<32>::new(0.01);
         group.bench_function("lms_32_block_256", |b| {
-            let input = [1.0f32; 256];
-            let desired = [0.5f32; 256];
+            let input = [1.0 as Float; 256];
+            let desired = [0.5 as Float; 256];
             let mut output = [AdaptiveOutput {
                 output: 0.0,
                 error: 0.0,
@@ -1736,8 +1740,8 @@ fn bench_nlms_filter(c: &mut Criterion) {
         use zerostone::AdaptiveOutput;
         let mut nlms = NlmsFilter::<32>::new(0.5, 0.01);
         group.bench_function("nlms_32_block_256", |b| {
-            let input = [1.0f32; 256];
-            let desired = [0.5f32; 256];
+            let input = [1.0 as Float; 256];
+            let desired = [0.5 as Float; 256];
             let mut output = [AdaptiveOutput {
                 output: 0.0,
                 error: 0.0,
@@ -1761,7 +1765,7 @@ fn bench_nlms_filter(c: &mut Criterion) {
             let mut counter = 0u32;
             b.iter(|| {
                 counter = counter.wrapping_add(1);
-                let amplitude = 1.0 + 0.5 * (counter as f32 * 0.1).sin();
+                let amplitude = 1.0 + 0.5 * float::sin(counter as Float * 0.1);
                 let input = amplitude;
                 let desired = amplitude * 0.5;
                 black_box(lms.process_sample(black_box(input), black_box(desired)))
@@ -1772,7 +1776,7 @@ fn bench_nlms_filter(c: &mut Criterion) {
             let mut counter = 0u32;
             b.iter(|| {
                 counter = counter.wrapping_add(1);
-                let amplitude = 1.0 + 0.5 * (counter as f32 * 0.1).sin();
+                let amplitude = 1.0 + 0.5 * float::sin(counter as Float * 0.1);
                 let input = amplitude;
                 let desired = amplitude * 0.5;
                 black_box(nlms.process_sample(black_box(input), black_box(desired)))
@@ -1790,7 +1794,7 @@ fn bench_windowed_rms(c: &mut Criterion) {
     // Single-sample processing (typical EEG window: 64 samples, 32 channels)
     {
         let mut rms: WindowedRms<32, 64> = WindowedRms::new();
-        let sample = [1.0f32; 32];
+        let sample = [1.0 as Float; 32];
         group.throughput(Throughput::Elements(32));
         group.bench_function("process_64win_32ch", |b| {
             b.iter(|| {
@@ -1827,7 +1831,7 @@ fn bench_windowed_rms(c: &mut Criterion) {
         match window_size {
             16 => {
                 let mut rms: WindowedRms<32, 16> = WindowedRms::new();
-                let sample = [1.0f32; 32];
+                let sample = [1.0 as Float; 32];
                 group.bench_with_input(
                     BenchmarkId::from_parameter(format!("process_{}win_32ch", window)),
                     window,
@@ -1840,7 +1844,7 @@ fn bench_windowed_rms(c: &mut Criterion) {
             }
             64 => {
                 let mut rms: WindowedRms<32, 64> = WindowedRms::new();
-                let sample = [1.0f32; 32];
+                let sample = [1.0 as Float; 32];
                 group.bench_with_input(
                     BenchmarkId::from_parameter(format!("process_{}win_32ch", window)),
                     window,
@@ -1853,7 +1857,7 @@ fn bench_windowed_rms(c: &mut Criterion) {
             }
             256 => {
                 let mut rms: WindowedRms<32, 256> = WindowedRms::new();
-                let sample = [1.0f32; 32];
+                let sample = [1.0 as Float; 32];
                 group.bench_with_input(
                     BenchmarkId::from_parameter(format!("process_{}win_32ch", window)),
                     window,
@@ -1874,7 +1878,7 @@ fn bench_windowed_rms(c: &mut Criterion) {
         match channel_count {
             8 => {
                 let mut rms: WindowedRms<8, 64> = WindowedRms::new();
-                let sample = [1.0f32; 8];
+                let sample = [1.0 as Float; 8];
                 group.throughput(Throughput::Elements(8));
                 group.bench_with_input(
                     BenchmarkId::from_parameter(format!("process_64win_{}ch", channels)),
@@ -1888,7 +1892,7 @@ fn bench_windowed_rms(c: &mut Criterion) {
             }
             32 => {
                 let mut rms: WindowedRms<32, 64> = WindowedRms::new();
-                let sample = [1.0f32; 32];
+                let sample = [1.0 as Float; 32];
                 group.throughput(Throughput::Elements(32));
                 group.bench_with_input(
                     BenchmarkId::from_parameter(format!("process_64win_{}ch", channels)),
@@ -1902,7 +1906,7 @@ fn bench_windowed_rms(c: &mut Criterion) {
             }
             128 => {
                 let mut rms: WindowedRms<128, 64> = WindowedRms::new();
-                let sample = [1.0f32; 128];
+                let sample = [1.0 as Float; 128];
                 group.throughput(Throughput::Elements(128));
                 group.bench_with_input(
                     BenchmarkId::from_parameter(format!("process_64win_{}ch", channels)),
@@ -1922,7 +1926,9 @@ fn bench_windowed_rms(c: &mut Criterion) {
     {
         let mut rms: WindowedRms<4, 64> = WindowedRms::new();
         group.bench_function("block_256samples_4ch_64win", |b| {
-            let mut block: Vec<[f32; 4]> = (0..256).map(|i| [(i as f32 * 0.01).sin(); 4]).collect();
+            let mut block: Vec<[Float; 4]> = (0..256)
+                .map(|i| [float::sin(i as Float * 0.01); 4])
+                .collect();
             b.iter(|| {
                 rms.process_block(black_box(&mut block));
             });
@@ -1951,7 +1957,7 @@ fn bench_surface_laplacian(c: &mut Criterion) {
         ];
 
         let laplacian: SurfaceLaplacian<8, 4> = SurfaceLaplacian::unweighted(neighbors);
-        let samples = [1.0f32; 8];
+        let samples = [1.0 as Float; 8];
 
         group.throughput(Throughput::Elements(8));
         group.bench_function("8_channels_2_neighbors", |b| {
@@ -1973,7 +1979,7 @@ fn bench_surface_laplacian(c: &mut Criterion) {
         }
 
         let laplacian: SurfaceLaplacian<32, 4> = SurfaceLaplacian::unweighted(neighbors);
-        let samples = [1.0f32; 32];
+        let samples = [1.0 as Float; 32];
 
         group.throughput(Throughput::Elements(32));
         group.bench_function("32_channels_2_neighbors", |b| {
@@ -1994,7 +2000,7 @@ fn bench_surface_laplacian(c: &mut Criterion) {
         }
 
         let laplacian: SurfaceLaplacian<32, 4> = SurfaceLaplacian::unweighted(neighbors);
-        let samples = [1.0f32; 32];
+        let samples = [1.0 as Float; 32];
 
         group.throughput(Throughput::Elements(32));
         group.bench_function("32_channels_4_neighbors", |b| {
@@ -2015,7 +2021,7 @@ fn bench_surface_laplacian(c: &mut Criterion) {
         }
 
         let laplacian: SurfaceLaplacian<64, 4> = SurfaceLaplacian::unweighted(neighbors);
-        let samples = [1.0f32; 64];
+        let samples = [1.0 as Float; 64];
 
         group.throughput(Throughput::Elements(64));
         group.bench_function("64_channels_4_neighbors", |b| {
@@ -2036,7 +2042,7 @@ fn bench_surface_laplacian(c: &mut Criterion) {
         }
 
         let laplacian: SurfaceLaplacian<128, 4> = SurfaceLaplacian::unweighted(neighbors);
-        let samples = [1.0f32; 128];
+        let samples = [1.0 as Float; 128];
 
         group.throughput(Throughput::Elements(128));
         group.bench_function("128_channels_4_neighbors", |b| {
@@ -2049,7 +2055,7 @@ fn bench_surface_laplacian(c: &mut Criterion) {
     // Weighted vs unweighted comparison (32 channels)
     {
         let mut neighbors = [[u16::MAX; 4]; 32];
-        let mut distances = [[0.0f32; 4]; 32];
+        let mut distances = [[0.0 as Float; 4]; 32];
         for (i, (neighbor, distance)) in neighbors.iter_mut().zip(distances.iter_mut()).enumerate()
         {
             neighbor[0] = ((i + 31) % 32) as u16;
@@ -2066,7 +2072,7 @@ fn bench_surface_laplacian(c: &mut Criterion) {
 
         let laplacian_weighted: SurfaceLaplacian<32, 4> =
             SurfaceLaplacian::weighted(neighbors, distances);
-        let samples = [1.0f32; 32];
+        let samples = [1.0 as Float; 32];
 
         group.throughput(Throughput::Elements(32));
         group.bench_function("32_channels_4_neighbors_weighted", |b| {
@@ -2088,7 +2094,7 @@ fn bench_surface_laplacian(c: &mut Criterion) {
         }
 
         let laplacian: SurfaceLaplacian<32, 8> = SurfaceLaplacian::unweighted(neighbors);
-        let samples = [1.0f32; 32];
+        let samples = [1.0 as Float; 32];
 
         group.throughput(Throughput::Elements(32));
         group.bench_function("32_channels_8_neighbors", |b| {
@@ -2115,10 +2121,10 @@ fn bench_surface_laplacian(c: &mut Criterion) {
             b.iter(|| {
                 counter = counter.wrapping_add(1);
                 // Simulate varying EEG signal
-                let mut samples = [0.0f32; 32];
+                let mut samples = [0.0 as Float; 32];
                 for (i, sample) in samples.iter_mut().enumerate() {
-                    let t = (counter as f32 + i as f32) * 0.1;
-                    *sample = (t * 0.5).sin() + 0.1 * (t * 2.0).sin();
+                    let t = (counter as Float + i as Float) * 0.1;
+                    *sample = float::sin(t * 0.5) + 0.1 * float::sin(t * 2.0);
                 }
                 black_box(laplacian.process(black_box(&samples)));
             });
@@ -2135,7 +2141,7 @@ fn bench_common_average_reference(c: &mut Criterion) {
     // 8-channel CAR (target: <100 ns)
     {
         let car: CommonAverageReference<8> = CommonAverageReference::new();
-        let samples = [1.0f32; 8];
+        let samples = [1.0 as Float; 8];
 
         group.throughput(Throughput::Elements(8));
         group.bench_function("8_channels", |b| {
@@ -2148,7 +2154,7 @@ fn bench_common_average_reference(c: &mut Criterion) {
     // 32-channel CAR (target: <100 ns)
     {
         let car: CommonAverageReference<32> = CommonAverageReference::new();
-        let samples = [1.0f32; 32];
+        let samples = [1.0 as Float; 32];
 
         group.throughput(Throughput::Elements(32));
         group.bench_function("32_channels", |b| {
@@ -2161,7 +2167,7 @@ fn bench_common_average_reference(c: &mut Criterion) {
     // 64-channel CAR
     {
         let car: CommonAverageReference<64> = CommonAverageReference::new();
-        let samples = [1.0f32; 64];
+        let samples = [1.0 as Float; 64];
 
         group.throughput(Throughput::Elements(64));
         group.bench_function("64_channels", |b| {
@@ -2174,7 +2180,7 @@ fn bench_common_average_reference(c: &mut Criterion) {
     // 128-channel CAR
     {
         let car: CommonAverageReference<128> = CommonAverageReference::new();
-        let samples = [1.0f32; 128];
+        let samples = [1.0 as Float; 128];
 
         group.throughput(Throughput::Elements(128));
         group.bench_function("128_channels", |b| {
@@ -2195,7 +2201,7 @@ fn bench_common_average_reference(c: &mut Criterion) {
             neighbor[1] = ((i + 1) % 32) as u16;
         }
         let laplacian: SurfaceLaplacian<32, 4> = SurfaceLaplacian::unweighted(neighbors);
-        let samples = [1.0f32; 32];
+        let samples = [1.0 as Float; 32];
 
         group.bench_function("car_32ch_vs_laplacian", |b| {
             b.iter(|| {
@@ -2219,10 +2225,10 @@ fn bench_common_average_reference(c: &mut Criterion) {
             b.iter(|| {
                 counter = counter.wrapping_add(1);
                 // Simulate varying EEG signal
-                let mut samples = [0.0f32; 32];
+                let mut samples = [0.0 as Float; 32];
                 for (i, sample) in samples.iter_mut().enumerate() {
-                    let t = (counter as f32 + i as f32) * 0.1;
-                    *sample = (t * 0.5).sin() + 0.1 * (t * 2.0).sin();
+                    let t = (counter as Float + i as Float) * 0.1;
+                    *sample = float::sin(t * 0.5) + 0.1 * float::sin(t * 2.0);
                 }
                 black_box(car.process(black_box(&samples)));
             });
@@ -2274,8 +2280,8 @@ fn bench_online_kmeans(c: &mut Criterion) {
         let mut km = OnlineKMeans::<8, 32>::new(10000);
         // Seed 16 clusters
         for i in 0..16 {
-            let mut c = [0.0f64; 8];
-            c[i % 8] = (i as f64) * 2.0;
+            let mut c = [0.0 as Float; 8];
+            c[i % 8] = (i as Float) * 2.0;
             km.seed_centroid(&c).unwrap();
         }
 
@@ -2297,18 +2303,18 @@ fn bench_entropy(c: &mut Criterion) {
     let mut group = c.benchmark_group("entropy");
 
     // Generate test data: sine wave with noise
-    let mut data_256 = [0.0f64; 256];
-    let mut data_1024 = [0.0f64; 1024];
-    let mut data_4096 = [0.0f64; 4096];
+    let mut data_256 = [0.0 as Float; 256];
+    let mut data_1024 = [0.0 as Float; 1024];
+    let mut data_4096 = [0.0 as Float; 4096];
 
     for (i, v) in data_256.iter_mut().enumerate() {
-        *v = libm::sin(i as f64 * 0.3) + (i as f64 * 0.7).sin() * 0.3;
+        *v = float::sin(i as Float * 0.3) + float::sin(i as Float * 0.7) * 0.3;
     }
     for (i, v) in data_1024.iter_mut().enumerate() {
-        *v = libm::sin(i as f64 * 0.3) + (i as f64 * 0.7).sin() * 0.3;
+        *v = float::sin(i as Float * 0.3) + float::sin(i as Float * 0.7) * 0.3;
     }
     for (i, v) in data_4096.iter_mut().enumerate() {
-        *v = libm::sin(i as f64 * 0.3) + (i as f64 * 0.7).sin() * 0.3;
+        *v = float::sin(i as Float * 0.3) + float::sin(i as Float * 0.7) * 0.3;
     }
 
     // Sample entropy at different N (O(N^2) scaling)
@@ -2338,7 +2344,7 @@ fn bench_entropy(c: &mut Criterion) {
     });
 
     // Spectral entropy (should be fast, O(N))
-    let psd = [1.0f64; 1024];
+    let psd = [1.0 as Float; 1024];
     group.bench_function("spectral_entropy_n1024", |b| {
         b.iter(|| {
             black_box(entropy::spectral_entropy(black_box(&psd), true));
@@ -2347,7 +2353,7 @@ fn bench_entropy(c: &mut Criterion) {
 
     // Multiscale entropy at N=1024, scale=4
     group.bench_function("multiscale_entropy_n1024_s4", |b| {
-        let mut scratch = [0.0f64; 256];
+        let mut scratch = [0.0 as Float; 256];
         b.iter(|| {
             black_box(entropy::multiscale_entropy(
                 black_box(&data_1024),
@@ -2370,9 +2376,9 @@ fn bench_ersp(c: &mut Criterion) {
     // 100 frames x 129 freq bins (typical for 256-point FFT)
     let n_frames = 100;
     let n_freqs = 129;
-    let mut power = [0.0f64; 100 * 129];
+    let mut power = [0.0 as Float; 100 * 129];
     for (i, v) in power.iter_mut().enumerate() {
-        *v = 1.0 + (i as f64 * 0.01).sin().abs();
+        *v = 1.0 + float::abs(float::sin(i as Float * 0.01));
     }
 
     group.bench_function("baseline_normalize_100x129", |b| {
@@ -2393,11 +2399,11 @@ fn bench_ersp(c: &mut Criterion) {
     // 20 epochs x 100 frames x 129 freqs
     let n_epochs = 20;
     let epoch_size = n_frames * n_freqs;
-    let mut epochs = vec![0.0f64; n_epochs * epoch_size];
+    let mut epochs = vec![0.0 as Float; n_epochs * epoch_size];
     for (i, v) in epochs.iter_mut().enumerate() {
-        *v = 1.0 + (i as f64 * 0.007).sin().abs();
+        *v = 1.0 + float::abs(float::sin(i as Float * 0.007));
     }
-    let mut output = vec![0.0f64; epoch_size];
+    let mut output = vec![0.0 as Float; epoch_size];
 
     group.bench_function("epoch_average_20x100x129", |b| {
         b.iter(|| {
