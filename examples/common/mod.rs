@@ -9,7 +9,7 @@
 
 #![allow(dead_code)] // Functions used across multiple examples
 
-use std::f32::consts::PI;
+use zerostone::float::{self, Float};
 use zerostone::{BiquadCoeffs, Complex, Fft};
 
 /// Generates a sine wave.
@@ -22,15 +22,15 @@ use zerostone::{BiquadCoeffs, Complex, Fft};
 /// * `phase` - Initial phase in radians
 pub fn sine_wave(
     samples: usize,
-    sample_rate: f32,
-    frequency: f32,
-    amplitude: f32,
-    phase: f32,
-) -> Vec<f32> {
+    sample_rate: Float,
+    frequency: Float,
+    amplitude: Float,
+    phase: Float,
+) -> Vec<Float> {
     (0..samples)
         .map(|i| {
-            let t = i as f32 / sample_rate;
-            amplitude * (2.0 * PI * frequency * t + phase).sin()
+            let t = i as Float / sample_rate;
+            amplitude * float::sin(2.0 * float::PI * frequency * t + phase)
         })
         .collect()
 }
@@ -41,14 +41,14 @@ pub fn sine_wave(
 /// * `samples` - Number of samples to generate
 /// * `amplitude` - Peak amplitude (noise will be in range [-amplitude, amplitude])
 /// * `seed` - Random seed for reproducibility
-pub fn white_noise(samples: usize, amplitude: f32, seed: u64) -> Vec<f32> {
+pub fn white_noise(samples: usize, amplitude: Float, seed: u64) -> Vec<Float> {
     let mut state = seed;
     (0..samples)
         .map(|_| {
             // Simple LCG: x_{n+1} = (a * x_n + c) mod m
             state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
             // Convert to [-1, 1] range
-            let normalized = (state as f32 / u64::MAX as f32) * 2.0 - 1.0;
+            let normalized = (state as Float / u64::MAX as Float) * 2.0 - 1.0;
             amplitude * normalized
         })
         .collect()
@@ -64,19 +64,19 @@ pub fn white_noise(samples: usize, amplitude: f32, seed: u64) -> Vec<f32> {
 /// * `amplitude` - Peak amplitude
 pub fn chirp(
     samples: usize,
-    sample_rate: f32,
-    start_freq: f32,
-    end_freq: f32,
-    amplitude: f32,
-) -> Vec<f32> {
-    let duration = samples as f32 / sample_rate;
+    sample_rate: Float,
+    start_freq: Float,
+    end_freq: Float,
+    amplitude: Float,
+) -> Vec<Float> {
+    let duration = samples as Float / sample_rate;
     let freq_rate = (end_freq - start_freq) / duration;
 
     (0..samples)
         .map(|i| {
-            let t = i as f32 / sample_rate;
+            let t = i as Float / sample_rate;
             let instantaneous_freq = start_freq + freq_rate * t / 2.0;
-            amplitude * (2.0 * PI * instantaneous_freq * t).sin()
+            amplitude * float::sin(2.0 * float::PI * instantaneous_freq * t)
         })
         .collect()
 }
@@ -90,10 +90,10 @@ pub fn chirp(
 /// * `amplitude` - Impulse amplitude
 pub fn impulse_train(
     samples: usize,
-    sample_rate: f32,
-    impulse_rate: f32,
-    amplitude: f32,
-) -> Vec<f32> {
+    sample_rate: Float,
+    impulse_rate: Float,
+    amplitude: Float,
+) -> Vec<Float> {
     let period_samples = (sample_rate / impulse_rate) as usize;
     (0..samples)
         .map(|i| {
@@ -118,11 +118,11 @@ pub fn impulse_train(
 /// * `seed` - Random seed for noise
 pub fn composite_signal(
     samples: usize,
-    sample_rate: f32,
-    components: &[(f32, f32)],
-    noise_amplitude: f32,
+    sample_rate: Float,
+    components: &[(Float, Float)],
+    noise_amplitude: Float,
     seed: u64,
-) -> Vec<f32> {
+) -> Vec<Float> {
     let mut signal = vec![0.0; samples];
 
     // Add sine components
@@ -154,9 +154,9 @@ pub fn composite_signal(
 pub fn step_function(
     samples: usize,
     step_sample: usize,
-    low_value: f32,
-    high_value: f32,
-) -> Vec<f32> {
+    low_value: Float,
+    high_value: Float,
+) -> Vec<Float> {
     (0..samples)
         .map(|i| {
             if i < step_sample {
@@ -176,26 +176,26 @@ pub fn step_function(
 ///
 /// # Returns
 /// Tuple of (frequency_vec, power_dB_vec) where frequencies go from 0 to Nyquist
-pub fn compute_power_spectrum(signal: &[f32], sample_rate: f32) -> (Vec<f32>, Vec<f32>) {
+pub fn compute_power_spectrum(signal: &[Float], sample_rate: Float) -> (Vec<Float>, Vec<Float>) {
     const FFT_SIZE: usize = 1024;
 
     // Prepare FFT input (zero-pad or truncate)
-    let mut fft_input = [0.0f32; FFT_SIZE];
+    let mut fft_input = [0.0 as Float; FFT_SIZE];
     let copy_len = signal.len().min(FFT_SIZE);
     fft_input[..copy_len].copy_from_slice(&signal[..copy_len]);
 
     // Compute power spectrum
     let fft = Fft::<FFT_SIZE>::new();
-    let mut power_spec = vec![0.0f32; FFT_SIZE / 2 + 1];
+    let mut power_spec = vec![0.0 as Float; FFT_SIZE / 2 + 1];
     fft.power_spectrum(&fft_input, &mut power_spec);
 
     // Convert to dB (10 * log10(power))
     // Use floor of -100 dB for numerical stability
-    let power_db: Vec<f32> = power_spec
+    let power_db: Vec<Float> = power_spec
         .iter()
         .map(|&p| {
             if p > 0.0 {
-                10.0 * p.log10()
+                10.0 * float::log10(p)
             } else {
                 -100.0 // Floor value
             }
@@ -203,9 +203,9 @@ pub fn compute_power_spectrum(signal: &[f32], sample_rate: f32) -> (Vec<f32>, Ve
         .collect();
 
     // Generate frequency vector (0 to Nyquist)
-    let freq_resolution = sample_rate / FFT_SIZE as f32;
-    let frequencies: Vec<f32> = (0..=FFT_SIZE / 2)
-        .map(|i| i as f32 * freq_resolution)
+    let freq_resolution = sample_rate / FFT_SIZE as Float;
+    let frequencies: Vec<Float> = (0..=FFT_SIZE / 2)
+        .map(|i| i as Float * freq_resolution)
         .collect();
 
     (frequencies, power_db)
@@ -222,9 +222,9 @@ pub fn compute_power_spectrum(signal: &[f32], sample_rate: f32) -> (Vec<f32>, Ve
 /// Tuple of (frequency_vec, magnitude_dB_vec, phase_deg_vec)
 pub fn compute_filter_response(
     coeffs: &[BiquadCoeffs],
-    sample_rate: f32,
+    sample_rate: Float,
     num_points: usize,
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+) -> (Vec<Float>, Vec<Float>, Vec<Float>) {
     let nyquist = sample_rate / 2.0;
     let mut frequencies = Vec::with_capacity(num_points);
     let mut magnitude_db = Vec::with_capacity(num_points);
@@ -232,13 +232,13 @@ pub fn compute_filter_response(
 
     for i in 0..num_points {
         // Frequency from 0 to Nyquist
-        let freq = (i as f32 / (num_points - 1) as f32) * nyquist;
+        let freq = (i as Float / (num_points - 1) as Float) * nyquist;
         frequencies.push(freq);
 
         // Angular frequency
-        let omega = 2.0 * PI * freq / sample_rate;
-        let cos_omega = omega.cos();
-        let sin_omega = omega.sin();
+        let omega = 2.0 * float::PI * freq / sample_rate;
+        let cos_omega = float::cos(omega);
+        let sin_omega = float::sin(omega);
 
         // Start with unity response
         let mut h = Complex::new(1.0, 0.0);
@@ -275,13 +275,13 @@ pub fn compute_filter_response(
         // Convert to magnitude (dB) and phase (degrees)
         let mag = h.magnitude();
         let mag_db = if mag > 0.0 {
-            20.0 * mag.log10()
+            20.0 * float::log10(mag)
         } else {
             -120.0
         };
         magnitude_db.push(mag_db);
 
-        let phase = h.im.atan2(h.re) * 180.0 / PI;
+        let phase = float::atan2(h.im, h.re) * 180.0 / float::PI;
         phase_deg.push(phase);
     }
 
@@ -299,7 +299,7 @@ mod tests {
         // At t=0, sin(0) = 0
         assert!(signal[0].abs() < 0.01);
         // Peak should be around amplitude
-        let max = signal.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let max = signal.iter().cloned().fold(Float::NEG_INFINITY, Float::max);
         assert!((max - 1.0).abs() < 0.1);
     }
 
@@ -312,7 +312,7 @@ mod tests {
             assert!(n >= -1.0 && n <= 1.0);
         }
         // Check it's not all zeros
-        let sum: f32 = noise.iter().map(|x| x.abs()).sum();
+        let sum: Float = noise.iter().map(|x| x.abs()).sum();
         assert!(sum > 0.0);
     }
 

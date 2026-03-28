@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::Write;
 use std::time::Instant;
 use zerostone::{
-    BiquadCoeffs, CommonAverageReference, Decimator, EnvelopeFollower, FirFilter, IirFilter,
+    BiquadCoeffs, CommonAverageReference, Decimator, EnvelopeFollower, FirFilter, Float, IirFilter,
     Rectification, SurfaceLaplacian,
 };
 
@@ -166,7 +166,7 @@ fn bench_spatial_filters() -> Vec<BenchResult> {
     // Common Average Reference - 8 channels
     {
         let car: CommonAverageReference<8> = CommonAverageReference::new();
-        let samples = [1.0f32; 8];
+        let samples = [1.0 as Float; 8];
         results.push(bench_single_sample("CAR 8ch", 8, || {
             let _ = car.process(&samples);
         }));
@@ -175,7 +175,7 @@ fn bench_spatial_filters() -> Vec<BenchResult> {
     // Common Average Reference - 32 channels
     {
         let car: CommonAverageReference<32> = CommonAverageReference::new();
-        let samples = [1.0f32; 32];
+        let samples = [1.0 as Float; 32];
         results.push(bench_single_sample("CAR 32ch", 32, || {
             let _ = car.process(&samples);
         }));
@@ -184,7 +184,7 @@ fn bench_spatial_filters() -> Vec<BenchResult> {
     // Common Average Reference - 128 channels
     {
         let car: CommonAverageReference<128> = CommonAverageReference::new();
-        let samples = [1.0f32; 128];
+        let samples = [1.0 as Float; 128];
         results.push(bench_single_sample("CAR 128ch", 128, || {
             let _ = car.process(&samples);
         }));
@@ -198,7 +198,7 @@ fn bench_spatial_filters() -> Vec<BenchResult> {
             neighbor[1] = ((i + 1) % 32) as u16;
         }
         let laplacian: SurfaceLaplacian<32, 4> = SurfaceLaplacian::unweighted(neighbors);
-        let samples = [1.0f32; 32];
+        let samples = [1.0 as Float; 32];
         results.push(bench_single_sample("Laplacian 32ch", 32, || {
             let _ = laplacian.process(&samples);
         }));
@@ -215,7 +215,7 @@ fn bench_streaming_primitives() -> Vec<BenchResult> {
     {
         let mut env: EnvelopeFollower<32> =
             EnvelopeFollower::new(250.0, 0.010, 0.100, Rectification::Absolute);
-        let samples = [0.5f32; 32];
+        let samples = [0.5 as Float; 32];
         results.push(bench_single_sample("Envelope 32ch", 32, || {
             let _ = env.process(&samples);
         }));
@@ -224,7 +224,7 @@ fn bench_streaming_primitives() -> Vec<BenchResult> {
     // Decimator - 32 channels, factor 4
     {
         let mut dec: Decimator<32> = Decimator::new(4);
-        let samples = [1.0f32; 32];
+        let samples = [1.0 as Float; 32];
         results.push(bench_single_sample("Decimator 32ch", 32, || {
             let _ = dec.process(&samples);
         }));

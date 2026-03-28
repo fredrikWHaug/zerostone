@@ -4,6 +4,7 @@
 //! regardless of platform (macOS ARM64, Linux x86_64, etc.) by using a custom
 //! LCG PRNG (no rand crate) and asserting on a byte-level fingerprint checksum.
 
+use zerostone::float::Float;
 use zerostone::probe::ProbeLayout;
 use zerostone::sorter::{sort_multichannel, DetectionMode, SortConfig};
 use zerostone::spike_sort::MultiChannelEvent;
@@ -18,17 +19,17 @@ impl Lcg {
         Self { state: seed }
     }
 
-    fn next_f64(&mut self) -> f64 {
+    fn next_float(&mut self) -> Float {
         self.state = self
             .state
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
-        (self.state >> 33) as f64 / (1u64 << 31) as f64 - 1.0
+        ((self.state >> 33) as f64 / (1u64 << 31) as f64 - 1.0) as Float
     }
 }
 
 /// Generate deterministic 4-channel synthetic recording with injected spikes.
-fn generate_test_data() -> Vec<[f64; 4]> {
+fn generate_test_data() -> Vec<[Float; 4]> {
     let n = 10000;
     let mut rng = Lcg::new(12345);
     let mut data = Vec::with_capacity(n);
@@ -36,10 +37,10 @@ fn generate_test_data() -> Vec<[f64; 4]> {
     // Fill with LCG noise
     for _ in 0..n {
         let sample = [
-            rng.next_f64(),
-            rng.next_f64(),
-            rng.next_f64(),
-            rng.next_f64(),
+            rng.next_float(),
+            rng.next_float(),
+            rng.next_float(),
+            rng.next_float(),
         ];
         data.push(sample);
     }
@@ -61,7 +62,7 @@ fn generate_test_data() -> Vec<[f64; 4]> {
 }
 
 /// Run sort_multichannel on the given data and return (events, labels, n_spikes, n_clusters).
-fn run_sort(data: &mut [[f64; 4]]) -> (Vec<MultiChannelEvent>, Vec<usize>, usize, usize) {
+fn run_sort(data: &mut [[Float; 4]]) -> (Vec<MultiChannelEvent>, Vec<usize>, usize, usize) {
     let config = SortConfig {
         detection_mode: DetectionMode::Amplitude,
         ..SortConfig::default()
@@ -69,7 +70,7 @@ fn run_sort(data: &mut [[f64; 4]]) -> (Vec<MultiChannelEvent>, Vec<usize>, usize
     let probe = ProbeLayout::<4>::linear(25.0);
 
     let n = data.len();
-    let mut scratch = vec![0.0f64; n];
+    let mut scratch = vec![0.0 as Float; n];
     let mut events = vec![
         MultiChannelEvent {
             sample: 0,
@@ -79,8 +80,8 @@ fn run_sort(data: &mut [[f64; 4]]) -> (Vec<MultiChannelEvent>, Vec<usize>, usize
         500
     ];
     // W=48, K=4
-    let mut waveforms = vec![[0.0f64; 48]; 500];
-    let mut features = vec![[0.0f64; 4]; 500];
+    let mut waveforms = vec![[0.0 as Float; 48]; 500];
+    let mut features = vec![[0.0 as Float; 4]; 500];
     let mut labels = vec![0usize; 500];
 
     // C=4, CM=16, W=48, K=4, WM=2304, N=32
