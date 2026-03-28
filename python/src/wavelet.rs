@@ -5,6 +5,7 @@
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::{Cwt as ZsCwt, WaveletType as ZsWaveletType};
 
 // ============================================================================
@@ -74,10 +75,10 @@ pub struct Cwt {
     inner: CwtInner,
     size: usize,
     num_scales: usize,
-    sample_rate: f32,
-    min_freq: f32,
-    max_freq: f32,
-    omega0: f32,
+    sample_rate: Float,
+    min_freq: Float,
+    max_freq: Float,
+    omega0: Float,
 }
 
 #[pymethods]
@@ -99,10 +100,10 @@ impl Cwt {
     fn new(
         size: usize,
         num_scales: usize,
-        sample_rate: f32,
-        min_freq: f32,
-        max_freq: f32,
-        omega0: f32,
+        sample_rate: Float,
+        min_freq: Float,
+        max_freq: Float,
+        omega0: Float,
     ) -> PyResult<Self> {
         if min_freq <= 0.0 {
             return Err(PyValueError::new_err("min_freq must be positive"));
@@ -184,7 +185,7 @@ impl Cwt {
         py: Python<'py>,
         signal: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
-        let signal_slice = signal.as_slice()?;
+        let signal_slice: Vec<Float> = signal.as_slice()?.iter().map(|&v| v as Float).collect();
         if signal_slice.len() != self.size {
             return Err(PyValueError::new_err(format!(
                 "Signal has {} elements, expected {}",
@@ -195,10 +196,10 @@ impl Cwt {
 
         macro_rules! do_power {
             ($cwt:expr, $n:expr, $s:expr) => {{
-                let input: [f32; $n] = signal_slice.try_into().unwrap();
-                let mut output = [[0.0f32; $n]; $s];
+                let input: [Float; $n] = signal_slice.try_into().unwrap();
+                let mut output = [[0.0; $n]; $s];
                 $cwt.power(&input, &mut output);
-                // Convert to Vec<Vec<f32>> for PyArray2
+                // Convert to Vec<Vec<Float>> for PyArray2
                 output.iter().map(|row| row.to_vec()).collect::<Vec<_>>()
             }};
         }
@@ -226,7 +227,8 @@ impl Cwt {
             CwtInner::N1024S32(cwt) => do_power!(cwt, 1024, 32),
         };
 
-        Ok(PyArray2::from_vec2(py, &result)?)
+        let result_f32: Vec<Vec<f32>> = result.iter().map(|row| row.iter().map(|&v| v as f32).collect()).collect();
+        Ok(PyArray2::from_vec2(py, &result_f32)?)
     }
 
     /// Compute CWT magnitude (absolute value).
@@ -241,7 +243,7 @@ impl Cwt {
         py: Python<'py>,
         signal: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
-        let signal_slice = signal.as_slice()?;
+        let signal_slice: Vec<Float> = signal.as_slice()?.iter().map(|&v| v as Float).collect();
         if signal_slice.len() != self.size {
             return Err(PyValueError::new_err(format!(
                 "Signal has {} elements, expected {}",
@@ -252,8 +254,8 @@ impl Cwt {
 
         macro_rules! do_magnitude {
             ($cwt:expr, $n:expr, $s:expr) => {{
-                let input: [f32; $n] = signal_slice.try_into().unwrap();
-                let mut output = [[0.0f32; $n]; $s];
+                let input: [Float; $n] = signal_slice.try_into().unwrap();
+                let mut output = [[0.0; $n]; $s];
                 $cwt.magnitude(&input, &mut output);
                 output.iter().map(|row| row.to_vec()).collect::<Vec<_>>()
             }};
@@ -282,7 +284,8 @@ impl Cwt {
             CwtInner::N1024S32(cwt) => do_magnitude!(cwt, 1024, 32),
         };
 
-        Ok(PyArray2::from_vec2(py, &result)?)
+        let result_f32: Vec<Vec<f32>> = result.iter().map(|row| row.iter().map(|&v| v as f32).collect()).collect();
+        Ok(PyArray2::from_vec2(py, &result_f32)?)
     }
 
     /// Get pseudo-frequencies for all scales.
@@ -319,7 +322,7 @@ impl Cwt {
             CwtInner::N1024S32(cwt) => get_freqs!(cwt),
         };
 
-        PyArray1::from_vec(py, freqs)
+        PyArray1::from_vec(py, freqs.iter().map(|&v| v as f32).collect())
     }
 
     /// Get the scales array.
@@ -356,7 +359,7 @@ impl Cwt {
             CwtInner::N1024S32(cwt) => get_scales!(cwt),
         };
 
-        PyArray1::from_vec(py, scales)
+        PyArray1::from_vec(py, scales.iter().map(|&v| v as f32).collect())
     }
 
     #[getter]
@@ -370,22 +373,22 @@ impl Cwt {
     }
 
     #[getter]
-    fn sample_rate(&self) -> f32 {
+    fn sample_rate(&self) -> Float {
         self.sample_rate
     }
 
     #[getter]
-    fn min_freq(&self) -> f32 {
+    fn min_freq(&self) -> Float {
         self.min_freq
     }
 
     #[getter]
-    fn max_freq(&self) -> f32 {
+    fn max_freq(&self) -> Float {
         self.max_freq
     }
 
     #[getter]
-    fn omega0(&self) -> f32 {
+    fn omega0(&self) -> Float {
         self.omega0
     }
 

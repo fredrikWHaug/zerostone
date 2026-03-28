@@ -6,6 +6,7 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::connectivity as zs_conn;
 
 use crate::spectral::parse_window_type;
@@ -48,8 +49,8 @@ fn coherence<'py>(
     pyo3::Bound<'py, PyArray1<f32>>,
     pyo3::Bound<'py, PyArray1<f32>>,
 )> {
-    let a_slice = signal_a.as_slice()?;
-    let b_slice = signal_b.as_slice()?;
+    let a_slice: Vec<Float> = signal_a.as_slice()?.iter().map(|&v| v as Float).collect();
+    let b_slice: Vec<Float> = signal_b.as_slice()?.iter().map(|&v| v as Float).collect();
     let window_type = parse_window_type(window)?;
 
     if a_slice.len() < fft_size {
@@ -68,12 +69,12 @@ fn coherence<'py>(
     }
 
     let bins = fft_size / 2 + 1;
-    let mut coh = vec![0.0f32; bins];
-    let mut freqs = vec![0.0f32; bins];
+    let mut coh = vec![0.0; bins];
+    let mut freqs = vec![0.0; bins];
 
     macro_rules! run_coherence {
         ($N:expr) => {{
-            zs_conn::coherence::<$N>(a_slice, b_slice, window_type, &mut coh);
+            zs_conn::coherence::<$N>(&a_slice, &b_slice, window_type, &mut coh);
             zs_conn::coherence_frequencies::<$N>(
                 // We don't have sample_rate here for single-window coherence
                 // Actually we need it for frequencies. Let's compute manually.
@@ -99,10 +100,10 @@ fn coherence<'py>(
     // Frequencies as normalized (0 to 0.5) since no sample_rate provided
     // Actually, let's return bin indices as frequencies for the simple version
     for (k, f) in freqs.iter_mut().enumerate() {
-        *f = k as f32;
+        *f = k as Float;
     }
 
-    Ok((PyArray1::from_vec(py, freqs), PyArray1::from_vec(py, coh)))
+    Ok((PyArray1::from_vec(py, freqs.iter().map(|&v| v as f32).collect()), PyArray1::from_vec(py, coh.iter().map(|&v| v as f32).collect())))
 }
 
 /// Compute Welch-style averaged coherence between two signals.
@@ -137,15 +138,15 @@ fn spectral_coherence<'py>(
     signal_a: PyReadonlyArray1<f32>,
     signal_b: PyReadonlyArray1<f32>,
     fft_size: usize,
-    sample_rate: f32,
-    overlap: f32,
+    sample_rate: Float,
+    overlap: Float,
     window: &str,
 ) -> PyResult<(
     pyo3::Bound<'py, PyArray1<f32>>,
     pyo3::Bound<'py, PyArray1<f32>>,
 )> {
-    let a_slice = signal_a.as_slice()?;
-    let b_slice = signal_b.as_slice()?;
+    let a_slice: Vec<Float> = signal_a.as_slice()?.iter().map(|&v| v as Float).collect();
+    let b_slice: Vec<Float> = signal_b.as_slice()?.iter().map(|&v| v as Float).collect();
     let window_type = parse_window_type(window)?;
 
     if a_slice.len() != b_slice.len() {
@@ -170,12 +171,12 @@ fn spectral_coherence<'py>(
     }
 
     let bins = fft_size / 2 + 1;
-    let mut coh = vec![0.0f32; bins];
-    let mut freqs = vec![0.0f32; bins];
+    let mut coh = vec![0.0; bins];
+    let mut freqs = vec![0.0; bins];
 
     macro_rules! run_spectral_coherence {
         ($N:expr) => {{
-            zs_conn::spectral_coherence::<$N>(a_slice, b_slice, overlap, window_type, &mut coh);
+            zs_conn::spectral_coherence::<$N>(&a_slice, &b_slice, overlap, window_type, &mut coh);
             zs_conn::coherence_frequencies::<$N>(sample_rate, &mut freqs);
         }};
     }
@@ -193,7 +194,7 @@ fn spectral_coherence<'py>(
         }
     }
 
-    Ok((PyArray1::from_vec(py, freqs), PyArray1::from_vec(py, coh)))
+    Ok((PyArray1::from_vec(py, freqs.iter().map(|&v| v as f32).collect()), PyArray1::from_vec(py, coh.iter().map(|&v| v as f32).collect())))
 }
 
 /// Compute Phase Locking Value between two instantaneous phase arrays.
@@ -220,9 +221,9 @@ fn spectral_coherence<'py>(
 fn phase_locking_value(
     phases_a: PyReadonlyArray1<f32>,
     phases_b: PyReadonlyArray1<f32>,
-) -> PyResult<f32> {
-    let a_slice = phases_a.as_slice()?;
-    let b_slice = phases_b.as_slice()?;
+) -> PyResult<Float> {
+    let a_slice: Vec<Float> = phases_a.as_slice()?.iter().map(|&v| v as Float).collect();
+    let b_slice: Vec<Float> = phases_b.as_slice()?.iter().map(|&v| v as Float).collect();
 
     if a_slice.len() != b_slice.len() {
         return Err(PyValueError::new_err(format!(
@@ -235,7 +236,7 @@ fn phase_locking_value(
         return Err(PyValueError::new_err("Phase arrays must not be empty"));
     }
 
-    Ok(zs_conn::phase_locking_value(a_slice, b_slice))
+    Ok(zs_conn::phase_locking_value(&a_slice, &b_slice) as Float)
 }
 
 /// Test whether x Granger-causes y.
@@ -269,8 +270,8 @@ fn granger_causality(
     y: PyReadonlyArray1<f64>,
     order: usize,
 ) -> PyResult<(f64, f64)> {
-    let x_slice = x.as_slice()?;
-    let y_slice = y.as_slice()?;
+    let x_slice: Vec<Float> = x.as_slice()?.iter().map(|&v| v as Float).collect();
+    let y_slice: Vec<Float> = y.as_slice()?.iter().map(|&v| v as Float).collect();
 
     if x_slice.len() != y_slice.len() {
         return Err(PyValueError::new_err(format!(
@@ -291,7 +292,7 @@ fn granger_causality(
         )));
     }
 
-    let result = zs_conn::granger_causality(x_slice, y_slice, order);
+    let result = zs_conn::granger_causality(&x_slice, &y_slice, order);
     Ok((result.f_statistic, result.p_value))
 }
 
@@ -329,9 +330,9 @@ fn conditional_granger(
     z: PyReadonlyArray1<f64>,
     order: usize,
 ) -> PyResult<(f64, f64)> {
-    let x_slice = x.as_slice()?;
-    let y_slice = y.as_slice()?;
-    let z_slice = z.as_slice()?;
+    let x_slice: Vec<Float> = x.as_slice()?.iter().map(|&v| v as Float).collect();
+    let y_slice: Vec<Float> = y.as_slice()?.iter().map(|&v| v as Float).collect();
+    let z_slice: Vec<Float> = z.as_slice()?.iter().map(|&v| v as Float).collect();
 
     if x_slice.len() != y_slice.len() || y_slice.len() != z_slice.len() {
         return Err(PyValueError::new_err("All signals must have equal length"));
@@ -348,7 +349,7 @@ fn conditional_granger(
         )));
     }
 
-    let result = zs_conn::conditional_granger(x_slice, y_slice, z_slice, order);
+    let result = zs_conn::conditional_granger(&x_slice, &y_slice, &z_slice, order);
     Ok((result.f_statistic, result.p_value))
 }
 

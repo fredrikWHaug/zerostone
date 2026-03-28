@@ -1,3 +1,4 @@
+use ::zerostone::float::Float;
 use ::zerostone::{BiquadCoeffs, IirFilter as ZsIirFilter};
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
@@ -98,7 +99,7 @@ use xdf::{XdfRecording, XdfStream};
 #[pyclass]
 struct IirFilter {
     inner: IirFilterInner,
-    sample_rate: f32,
+    sample_rate: Float,
     order: u32,
 }
 
@@ -110,7 +111,7 @@ enum IirFilterInner {
 }
 
 impl IirFilterInner {
-    fn process_sample(&mut self, sample: f32) -> f32 {
+    fn process_sample(&mut self, sample: Float) -> Float {
         match self {
             IirFilterInner::Sections1(f) => f.process_sample(sample),
             IirFilterInner::Sections2(f) => f.process_sample(sample),
@@ -155,7 +156,7 @@ impl IirFilter {
     ///     >>> lpf2 = IirFilter.butterworth_lowpass(1000.0, 40.0, order=2)
     #[staticmethod]
     #[pyo3(signature = (sample_rate, cutoff, order=4))]
-    fn butterworth_lowpass(sample_rate: f32, cutoff: f32, order: u32) -> PyResult<Self> {
+    fn butterworth_lowpass(sample_rate: Float, cutoff: Float, order: u32) -> PyResult<Self> {
         if cutoff <= 0.0 || cutoff >= sample_rate / 2.0 {
             return Err(PyValueError::new_err(format!(
                 "Cutoff frequency must be between 0 and {} Hz (Nyquist)",
@@ -201,7 +202,7 @@ impl IirFilter {
     ///     >>> hpf = IirFilter.butterworth_highpass(1000.0, 1.0)
     #[staticmethod]
     #[pyo3(signature = (sample_rate, cutoff, order=4))]
-    fn butterworth_highpass(sample_rate: f32, cutoff: f32, order: u32) -> PyResult<Self> {
+    fn butterworth_highpass(sample_rate: Float, cutoff: Float, order: u32) -> PyResult<Self> {
         if cutoff <= 0.0 || cutoff >= sample_rate / 2.0 {
             return Err(PyValueError::new_err(format!(
                 "Cutoff frequency must be between 0 and {} Hz (Nyquist)",
@@ -249,9 +250,9 @@ impl IirFilter {
     #[staticmethod]
     #[pyo3(signature = (sample_rate, low_cutoff, high_cutoff, order=4))]
     fn butterworth_bandpass(
-        sample_rate: f32,
-        low_cutoff: f32,
-        high_cutoff: f32,
+        sample_rate: Float,
+        low_cutoff: Float,
+        high_cutoff: Float,
         order: u32,
     ) -> PyResult<Self> {
         if low_cutoff <= 0.0 || high_cutoff >= sample_rate / 2.0 || low_cutoff >= high_cutoff {
@@ -317,14 +318,14 @@ impl IirFilter {
         py: Python<'py>,
         input: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let input_slice = input.as_slice()?;
-        let mut output = vec![0.0f32; input_slice.len()];
+        let input_slice: Vec<Float> = input.as_slice()?.iter().map(|&v| v as Float).collect();
+        let mut output = vec![0.0; input_slice.len()];
 
         for (i, &sample) in input_slice.iter().enumerate() {
             output[i] = self.inner.process_sample(sample);
         }
 
-        Ok(PyArray1::from_vec(py, output))
+        Ok(PyArray1::from_vec(py, output.iter().map(|&v| v as f32).collect()))
     }
 
     /// Reset the filter state (clear delay lines).
@@ -336,7 +337,7 @@ impl IirFilter {
 
     /// Get the sample rate of the filter.
     #[getter]
-    fn sample_rate(&self) -> f32 {
+    fn sample_rate(&self) -> Float {
         self.sample_rate
     }
 

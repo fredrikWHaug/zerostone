@@ -7,6 +7,7 @@ use numpy::ndarray::{Array2, Array3};
 use numpy::{PyArray2, PyArray3, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::ersp as zs_ersp;
 use zerostone::{Complex, Fft as ZsFft};
 
@@ -130,7 +131,7 @@ fn compute_ersp<'py>(
 
                     for (i, &sample) in epoch_slice[start..start + $N].iter().enumerate() {
                         let wc = zerostone::window_coefficient(_window_type, i, $N);
-                        temp[i] = Complex::from_real(sample * wc);
+                        temp[i] = Complex::from_real((sample as Float) * wc);
                     }
 
                     fft.forward(&mut temp);

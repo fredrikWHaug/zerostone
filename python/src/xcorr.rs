@@ -6,6 +6,7 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::xcorr::{find_peak as zs_find_peak, Normalization as ZsNormalization};
 
 /// Convert Python normalization string to Rust enum.
@@ -59,12 +60,12 @@ fn xcorr<'py>(
     y: PyReadonlyArray1<f32>,
     normalization: &str,
 ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-    let x_slice = x.as_slice()?;
-    let y_slice = y.as_slice()?;
+    let x_slice: Vec<Float> = x.as_slice()?.iter().map(|&v| v as Float).collect();
+    let y_slice: Vec<Float> = y.as_slice()?.iter().map(|&v| v as Float).collect();
     let norm = parse_normalization(normalization)?;
 
     let out_len = x_slice.len() + y_slice.len() - 1;
-    let mut output = vec![0.0f32; out_len];
+    let mut output = vec![0.0; out_len];
 
     // Implement dynamic cross-correlation (Rust API uses const generics)
     let n = x_slice.len();
@@ -72,8 +73,8 @@ fn xcorr<'py>(
 
     // Compute energy for coefficient normalization
     let (energy_x, energy_y) = if norm == ZsNormalization::Coeff {
-        let ex: f32 = x_slice.iter().map(|&v| v * v).sum();
-        let ey: f32 = y_slice.iter().map(|&v| v * v).sum();
+        let ex: Float = x_slice.iter().map(|&v| v * v).sum();
+        let ey: Float = y_slice.iter().map(|&v| v * v).sum();
         (ex, ey)
     } else {
         (0.0, 0.0)
@@ -90,12 +91,12 @@ fn xcorr<'py>(
         1.0
     };
 
-    let max_len = n.max(m) as f32;
+    let max_len = n.max(m) as Float;
 
     for (k, out_val) in output.iter_mut().enumerate() {
         let lag = k as i32 - (m as i32 - 1);
 
-        let mut sum = 0.0f32;
+        let mut sum = 0.0;
         let mut count = 0usize;
 
         let n_start = (-lag).max(0) as usize;
@@ -116,7 +117,7 @@ fn xcorr<'py>(
             ZsNormalization::Biased => sum / max_len,
             ZsNormalization::Unbiased => {
                 if count > 0 {
-                    sum / count as f32
+                    sum / count as Float
                 } else {
                     0.0
                 }
@@ -125,7 +126,7 @@ fn xcorr<'py>(
         };
     }
 
-    Ok(PyArray1::from_vec(py, output))
+    Ok(PyArray1::from_vec(py, output.iter().map(|&v| v as f32).collect()))
 }
 
 /// Compute auto-correlation of a signal.
@@ -158,7 +159,7 @@ fn autocorr<'py>(
     x: PyReadonlyArray1<f32>,
     normalization: &str,
 ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-    let x_slice = x.as_slice()?;
+    let x_slice: Vec<Float> = x.as_slice()?.iter().map(|&v| v as Float).collect();
     let norm = parse_normalization(normalization)?;
 
     let n = x_slice.len();
@@ -166,7 +167,7 @@ fn autocorr<'py>(
     let center = n - 1;
 
     // Compute energy at lag 0
-    let energy: f32 = x_slice.iter().map(|&v| v * v).sum();
+    let energy: Float = x_slice.iter().map(|&v| v * v).sum();
 
     let norm_factor = if norm == ZsNormalization::Coeff {
         if energy > 1e-10 {
@@ -178,11 +179,11 @@ fn autocorr<'py>(
         1.0
     };
 
-    let mut output = vec![0.0f32; out_len];
+    let mut output = vec![0.0; out_len];
 
     // Compute only non-negative lags and mirror (autocorr is symmetric)
     for lag in 0..n {
-        let mut sum = 0.0f32;
+        let mut sum = 0.0;
         let count = n - lag;
 
         for i in 0..count {
@@ -191,10 +192,10 @@ fn autocorr<'py>(
 
         let normalized = match norm {
             ZsNormalization::None => sum,
-            ZsNormalization::Biased => sum / n as f32,
+            ZsNormalization::Biased => sum / n as Float,
             ZsNormalization::Unbiased => {
                 if count > 0 {
-                    sum / count as f32
+                    sum / count as Float
                 } else {
                     0.0
                 }
@@ -213,7 +214,7 @@ fn autocorr<'py>(
         }
     }
 
-    Ok(PyArray1::from_vec(py, output))
+    Ok(PyArray1::from_vec(py, output.iter().map(|&v| v as f32).collect()))
 }
 
 /// Find the peak (maximum) in a correlation array.
@@ -232,13 +233,13 @@ fn autocorr<'py>(
 ///     >>> peak_idx, peak_val = zbci.find_peak(corr)
 ///     >>> lag = peak_idx - (len(y) - 1)  # Convert to lag
 #[pyfunction]
-fn find_peak(correlation: PyReadonlyArray1<f32>) -> PyResult<(usize, f32)> {
-    let corr_slice = correlation.as_slice()?;
+fn find_peak(correlation: PyReadonlyArray1<f32>) -> PyResult<(usize, Float)> {
+    let corr_slice: Vec<Float> = correlation.as_slice()?.iter().map(|&v| v as Float).collect();
     if corr_slice.is_empty() {
         return Err(PyValueError::new_err("Correlation array is empty"));
     }
 
-    let (idx, val) = zs_find_peak(corr_slice);
+    let (idx, val) = zs_find_peak(&corr_slice);
     Ok((idx, val))
 }
 

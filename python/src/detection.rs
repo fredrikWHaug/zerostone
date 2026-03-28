@@ -4,6 +4,7 @@ use numpy::ndarray::Array2;
 use numpy::{PyArray1, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::{
     AdaptiveThresholdDetector as ZsAdaptiveThresholdDetector,
     ThresholdDetector as ZsThresholdDetector, ZeroCrossingDetector as ZsZeroCrossingDetector,
@@ -23,7 +24,7 @@ enum ThresholdDetectorInner {
     Ch64(ZsThresholdDetector<64>),
     /// Dynamic implementation for non-standard channel counts
     Dynamic {
-        threshold: f32,
+        threshold: Float,
         refractory_samples: u32,
         refractory_counter: Vec<u32>,
     },
@@ -51,7 +52,7 @@ enum ThresholdDetectorInner {
 pub struct ThresholdDetector {
     inner: ThresholdDetectorInner,
     channels: usize,
-    threshold: f32,
+    threshold: Float,
     refractory: u32,
 }
 
@@ -70,7 +71,7 @@ impl ThresholdDetector {
     /// Example:
     ///     >>> det = ThresholdDetector(channels=8, threshold=3.0, refractory=100)
     #[new]
-    fn new(channels: usize, threshold: f32, refractory: u32) -> PyResult<Self> {
+    fn new(channels: usize, threshold: Float, refractory: u32) -> PyResult<Self> {
         if channels == 0 {
             return Err(PyValueError::new_err("channels must be at least 1"));
         }
@@ -109,7 +110,7 @@ impl ThresholdDetector {
     ///     >>> events = det.process(data)
     ///     >>> for sample_idx, channel, amplitude in events:
     ///     ...     print(f"Spike at sample {sample_idx}, channel {channel}: {amplitude}")
-    fn process(&mut self, input: PyReadonlyArray2<f32>) -> PyResult<Vec<(usize, usize, f32)>> {
+    fn process(&mut self, input: PyReadonlyArray2<f32>) -> PyResult<Vec<(usize, usize, Float)>> {
         let shape = input.shape();
         let (_n_samples, n_channels) = (shape[0], shape[1]);
 
@@ -126,9 +127,9 @@ impl ThresholdDetector {
         macro_rules! process_detector {
             ($det:expr, $C:expr) => {{
                 for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; $C];
+                    let mut samples = [0.0; $C];
                     for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
+                        samples[j] = *val as Float;
                     }
                     let spike_events = $det.process_sample_all(&samples);
                     for event in spike_events.iter() {
@@ -156,9 +157,10 @@ impl ThresholdDetector {
                             refractory_counter[ch] -= 1;
                             continue;
                         }
-                        if amplitude.abs() > *threshold {
+                        let amp = amplitude as Float;
+                        if amp.abs() > *threshold {
                             refractory_counter[ch] = *refractory_samples;
-                            events.push((i, ch, amplitude));
+                            events.push((i, ch, amp));
                         }
                     }
                 }
@@ -193,7 +195,7 @@ impl ThresholdDetector {
 
     /// Get the detection threshold.
     #[getter]
-    fn threshold(&self) -> f32 {
+    fn threshold(&self) -> Float {
         self.threshold
     }
 
@@ -246,7 +248,7 @@ enum AdaptiveThresholdDetectorInner {
 pub struct AdaptiveThresholdDetector {
     inner: AdaptiveThresholdDetectorInner,
     channels: usize,
-    multiplier: f32,
+    multiplier: Float,
     refractory: u32,
     min_samples: u64,
 }
@@ -267,7 +269,7 @@ impl AdaptiveThresholdDetector {
     /// Example:
     ///     >>> det = AdaptiveThresholdDetector(channels=8, multiplier=4.0, refractory=100, min_samples=500)
     #[new]
-    fn new(channels: usize, multiplier: f32, refractory: u32, min_samples: u64) -> PyResult<Self> {
+    fn new(channels: usize, multiplier: Float, refractory: u32, min_samples: u64) -> PyResult<Self> {
         let inner =
             match channels {
                 1 => AdaptiveThresholdDetectorInner::Ch1(ZsAdaptiveThresholdDetector::new(
@@ -319,7 +321,7 @@ impl AdaptiveThresholdDetector {
     ///
     /// Returns:
     ///     list[tuple[int, int, float]]: List of events as (sample_idx, channel, amplitude).
-    fn process(&mut self, input: PyReadonlyArray2<f32>) -> PyResult<Vec<(usize, usize, f32)>> {
+    fn process(&mut self, input: PyReadonlyArray2<f32>) -> PyResult<Vec<(usize, usize, Float)>> {
         let shape = input.shape();
         let (_n_samples, n_channels) = (shape[0], shape[1]);
 
@@ -336,9 +338,9 @@ impl AdaptiveThresholdDetector {
         macro_rules! process_detector {
             ($det:expr, $C:expr) => {{
                 for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; $C];
+                    let mut samples = [0.0; $C];
                     for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
+                        samples[j] = *val as Float;
                     }
                     let spike_events = $det.process_sample_all(&samples);
                     for event in spike_events.iter() {
@@ -387,7 +389,7 @@ impl AdaptiveThresholdDetector {
     /// Get current thresholds for all channels.
     #[getter]
     fn thresholds<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
-        let t: Vec<f32> = match &self.inner {
+        let t: Vec<Float> = match &self.inner {
             AdaptiveThresholdDetectorInner::Ch1(det) => det.thresholds().to_vec(),
             AdaptiveThresholdDetectorInner::Ch4(det) => det.thresholds().to_vec(),
             AdaptiveThresholdDetectorInner::Ch8(det) => det.thresholds().to_vec(),
@@ -395,7 +397,7 @@ impl AdaptiveThresholdDetector {
             AdaptiveThresholdDetectorInner::Ch32(det) => det.thresholds().to_vec(),
             AdaptiveThresholdDetectorInner::Ch64(det) => det.thresholds().to_vec(),
         };
-        PyArray1::from_vec(py, t)
+        PyArray1::from_vec(py, t.iter().map(|&v| v as f32).collect())
     }
 
     /// Check if the detector is still in calibration period.
@@ -444,7 +446,7 @@ impl AdaptiveThresholdDetector {
 
     /// Get the multiplier.
     #[getter]
-    fn multiplier(&self) -> f32 {
+    fn multiplier(&self) -> Float {
         self.multiplier
     }
 
@@ -470,8 +472,8 @@ enum ZeroCrossingDetectorInner {
     Ch64(ZsZeroCrossingDetector<64>),
     /// Dynamic implementation for non-standard channel counts
     Dynamic {
-        threshold: f32,
-        prev_sample: Vec<f32>,
+        threshold: Float,
+        prev_sample: Vec<Float>,
         initialized: bool,
     },
 }
@@ -498,7 +500,7 @@ enum ZeroCrossingDetectorInner {
 pub struct ZeroCrossingDetector {
     inner: ZeroCrossingDetectorInner,
     channels: usize,
-    threshold: f32,
+    threshold: Float,
 }
 
 #[pymethods]
@@ -517,7 +519,7 @@ impl ZeroCrossingDetector {
     ///     >>> det = ZeroCrossingDetector(channels=8, threshold=0.1)
     #[new]
     #[pyo3(signature = (channels, threshold = 0.0))]
-    fn new(channels: usize, threshold: f32) -> PyResult<Self> {
+    fn new(channels: usize, threshold: Float) -> PyResult<Self> {
         if channels == 0 {
             return Err(PyValueError::new_err("channels must be at least 1"));
         }
@@ -574,9 +576,9 @@ impl ZeroCrossingDetector {
         macro_rules! process_detector {
             ($det:expr, $C:expr) => {{
                 for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; $C];
+                    let mut samples = [0.0; $C];
                     for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
+                        samples[j] = *val as Float;
                     }
                     let crossings = $det.detect(&samples);
                     for (j, &crossed) in crossings.iter().enumerate() {
@@ -601,18 +603,19 @@ impl ZeroCrossingDetector {
                 for (i, row) in input_array.rows().into_iter().enumerate() {
                     if !*initialized {
                         for (j, &val) in row.iter().enumerate() {
-                            prev_sample[j] = val;
+                            prev_sample[j] = val as Float;
                         }
                         *initialized = true;
                         continue;
                     }
 
                     for (j, &val) in row.iter().enumerate() {
+                        let val_f = val as Float;
                         let prev_sign = get_sign(prev_sample[j], *threshold);
-                        let curr_sign = get_sign(val, *threshold);
+                        let curr_sign = get_sign(val_f, *threshold);
                         let crossed = prev_sign != 0 && curr_sign != 0 && prev_sign != curr_sign;
                         output[i * n_channels + j] = crossed;
-                        prev_sample[j] = val;
+                        prev_sample[j] = val_f;
                     }
                 }
             }
@@ -654,9 +657,9 @@ impl ZeroCrossingDetector {
         macro_rules! process_detector {
             ($det:expr, $C:expr) => {{
                 for row in input_array.rows() {
-                    let mut samples = [0.0f32; $C];
+                    let mut samples = [0.0; $C];
                     for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
+                        samples[j] = *val as Float;
                     }
                     let crossings = $det.detect(&samples);
                     for (j, &crossed) in crossings.iter().enumerate() {
@@ -683,29 +686,30 @@ impl ZeroCrossingDetector {
                 for row in input_array.rows() {
                     if !*initialized {
                         for (j, &val) in row.iter().enumerate() {
-                            prev_sample[j] = val;
+                            prev_sample[j] = val as Float;
                         }
                         *initialized = true;
                         continue;
                     }
 
                     for (j, &val) in row.iter().enumerate() {
+                        let val_f = val as Float;
                         let prev_sign = get_sign(prev_sample[j], *threshold);
-                        let curr_sign = get_sign(val, *threshold);
+                        let curr_sign = get_sign(val_f, *threshold);
                         if prev_sign != 0 && curr_sign != 0 && prev_sign != curr_sign {
                             crossing_counts[j] += 1;
                         }
-                        prev_sample[j] = val;
+                        prev_sample[j] = val_f;
                     }
                 }
             }
         }
 
-        let zcr: Vec<f32> = crossing_counts
+        let zcr: Vec<Float> = crossing_counts
             .iter()
-            .map(|&c| c as f32 / n_samples as f32)
+            .map(|&c| c as Float / n_samples as Float)
             .collect();
-        Ok(PyArray1::from_vec(py, zcr))
+        Ok(PyArray1::from_vec(py, zcr.iter().map(|&v| v as f32).collect()))
     }
 
     /// Reset the detector state.
@@ -736,7 +740,7 @@ impl ZeroCrossingDetector {
 
     /// Get the noise rejection threshold.
     #[getter]
-    fn threshold(&self) -> f32 {
+    fn threshold(&self) -> Float {
         self.threshold
     }
 
@@ -749,7 +753,7 @@ impl ZeroCrossingDetector {
 }
 
 /// Helper function to get sign with threshold.
-fn get_sign(value: f32, threshold: f32) -> i8 {
+fn get_sign(value: Float, threshold: Float) -> i8 {
     if value.abs() <= threshold {
         0
     } else if value > 0.0 {

@@ -4,6 +4,7 @@ use numpy::ndarray::Array2;
 use numpy::{PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::NotchFilter as ZsNotchFilter;
 
 // ============================================================================
@@ -21,7 +22,7 @@ enum NotchFilterInner {
 }
 
 impl NotchFilterInner {
-    fn process_row(&mut self, row: &[f32], out: &mut [f32]) {
+    fn process_row(&mut self, row: &[Float], out: &mut [Float]) {
         match self {
             NotchFilterInner::Ch1(f) => {
                 let inp = [row[0]];
@@ -34,25 +35,25 @@ impl NotchFilterInner {
                 out.copy_from_slice(&y);
             }
             NotchFilterInner::Ch8(f) => {
-                let mut inp = [0.0f32; 8];
+                let mut inp = [0.0; 8];
                 inp.copy_from_slice(row);
                 let y = f.process_sample(&inp);
                 out.copy_from_slice(&y);
             }
             NotchFilterInner::Ch16(f) => {
-                let mut inp = [0.0f32; 16];
+                let mut inp = [0.0; 16];
                 inp.copy_from_slice(row);
                 let y = f.process_sample(&inp);
                 out.copy_from_slice(&y);
             }
             NotchFilterInner::Ch32(f) => {
-                let mut inp = [0.0f32; 32];
+                let mut inp = [0.0; 32];
                 inp.copy_from_slice(row);
                 let y = f.process_sample(&inp);
                 out.copy_from_slice(&y);
             }
             NotchFilterInner::Ch64(f) => {
-                let mut inp = [0.0f32; 64];
+                let mut inp = [0.0; 64];
                 inp.copy_from_slice(row);
                 let y = f.process_sample(&inp);
                 out.copy_from_slice(&y);
@@ -97,13 +98,13 @@ impl NotchFilterInner {
 pub struct NotchFilter {
     inner: NotchFilterInner,
     channels: usize,
-    sample_rate: f32,
+    sample_rate: Float,
 }
 
 fn make_inner_powerline(
     channels: usize,
-    sample_rate: f32,
-    fundamental: f32,
+    sample_rate: Float,
+    fundamental: Float,
 ) -> PyResult<NotchFilterInner> {
     Ok(match channels {
         1 => NotchFilterInner::Ch1(if fundamental == 60.0 {
@@ -147,9 +148,9 @@ fn make_inner_powerline(
 
 fn make_inner_custom(
     channels: usize,
-    sample_rate: f32,
-    freqs: [f32; 4],
-    q: f32,
+    sample_rate: Float,
+    freqs: [Float; 4],
+    q: Float,
 ) -> PyResult<NotchFilterInner> {
     Ok(match channels {
         1 => NotchFilterInner::Ch1(ZsNotchFilter::custom(sample_rate, freqs, q)),
@@ -185,7 +186,7 @@ impl NotchFilter {
     ///     >>> f = NotchFilter.powerline_60hz(250.0, channels=8)
     #[staticmethod]
     #[pyo3(signature = (sample_rate, channels))]
-    fn powerline_60hz(sample_rate: f32, channels: usize) -> PyResult<Self> {
+    fn powerline_60hz(sample_rate: Float, channels: usize) -> PyResult<Self> {
         if sample_rate <= 0.0 {
             return Err(PyValueError::new_err("sample_rate must be positive"));
         }
@@ -213,7 +214,7 @@ impl NotchFilter {
     ///     >>> f = NotchFilter.powerline_50hz(1000.0, channels=16)
     #[staticmethod]
     #[pyo3(signature = (sample_rate, channels))]
-    fn powerline_50hz(sample_rate: f32, channels: usize) -> PyResult<Self> {
+    fn powerline_50hz(sample_rate: Float, channels: usize) -> PyResult<Self> {
         if sample_rate <= 0.0 {
             return Err(PyValueError::new_err("sample_rate must be positive"));
         }
@@ -243,7 +244,7 @@ impl NotchFilter {
     ///     >>> f = NotchFilter.custom(1000.0, 8, [60.0, 120.0])
     #[staticmethod]
     #[pyo3(signature = (sample_rate, channels, freqs, q = 30.0))]
-    fn custom(sample_rate: f32, channels: usize, freqs: Vec<f32>, q: f32) -> PyResult<Self> {
+    fn custom(sample_rate: Float, channels: usize, freqs: Vec<Float>, q: Float) -> PyResult<Self> {
         if sample_rate <= 0.0 {
             return Err(PyValueError::new_err("sample_rate must be positive"));
         }
@@ -254,7 +255,7 @@ impl NotchFilter {
         }
 
         // Pad to exactly 4 entries with 0.0 (passthrough)
-        let mut freq_arr = [0.0f32; 4];
+        let mut freq_arr = [0.0; 4];
         for (i, &f) in freqs.iter().enumerate() {
             freq_arr[i] = f;
         }
@@ -297,15 +298,16 @@ impl NotchFilter {
         }
 
         let input_array = input.as_array();
-        let mut output = vec![0.0f32; n_samples * n_channels];
+        let mut float_output = vec![0.0 as Float; n_samples * n_channels];
 
         for (i, row) in input_array.rows().into_iter().enumerate() {
-            let row_slice: Vec<f32> = row.iter().copied().collect();
-            let out_slice = &mut output[i * n_channels..(i + 1) * n_channels];
+            let row_slice: Vec<Float> = row.iter().map(|&v| v as Float).collect();
+            let out_slice = &mut float_output[i * n_channels..(i + 1) * n_channels];
             self.inner.process_row(&row_slice, out_slice);
         }
 
-        let output_array = Array2::from_shape_vec((n_samples, n_channels), output)
+        let output_f32: Vec<f32> = float_output.iter().map(|&v| v as f32).collect();
+        let output_array = Array2::from_shape_vec((n_samples, n_channels), output_f32)
             .map_err(|e| PyValueError::new_err(format!("Failed to reshape output: {}", e)))?;
         Ok(PyArray2::from_owned_array(py, output_array))
     }
@@ -320,7 +322,7 @@ impl NotchFilter {
 
     /// Get the sampling rate this filter was configured for.
     #[getter]
-    fn sample_rate(&self) -> f32 {
+    fn sample_rate(&self) -> Float {
         self.sample_rate
     }
 

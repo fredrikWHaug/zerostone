@@ -4,6 +4,7 @@ use numpy::ndarray::Array2;
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::{
     Complex, Fft as ZsFft, FrequencyBand as ZsFrequencyBand, MultiBandPower as ZsMultiBandPower,
     Stft as ZsStft, WindowType as ZsWindowType,
@@ -93,7 +94,7 @@ impl Fft {
         py: Python<'py>,
         signal: PyReadonlyArray1<f32>,
     ) -> PyResult<(Bound<'py, PyArray1<f32>>, Bound<'py, PyArray1<f32>>)> {
-        let input_slice = signal.as_slice()?;
+        let input_slice: Vec<Float> = signal.as_slice()?.iter().map(|&v| v as Float).collect();
         if input_slice.len() != self.size {
             return Err(PyValueError::new_err(format!(
                 "Signal length {} must match FFT size {}",
@@ -102,8 +103,8 @@ impl Fft {
             )));
         }
 
-        let mut real = vec![0.0f32; self.size];
-        let mut imag = vec![0.0f32; self.size];
+        let mut real = vec![0.0; self.size];
+        let mut imag = vec![0.0; self.size];
 
         macro_rules! compute_fft {
             ($fft:expr, $N:expr) => {{
@@ -126,7 +127,7 @@ impl Fft {
             FftInner::Size2048(fft) => compute_fft!(fft, 2048),
         }
 
-        Ok((PyArray1::from_vec(py, real), PyArray1::from_vec(py, imag)))
+        Ok((PyArray1::from_vec(py, real.iter().map(|&v| v as f32).collect()), PyArray1::from_vec(py, imag.iter().map(|&v| v as f32).collect())))
     }
 
     /// Compute one-sided power spectrum from real-valued signal.
@@ -145,7 +146,7 @@ impl Fft {
         py: Python<'py>,
         signal: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let input_slice = signal.as_slice()?;
+        let input_slice: Vec<Float> = signal.as_slice()?.iter().map(|&v| v as Float).collect();
         if input_slice.len() != self.size {
             return Err(PyValueError::new_err(format!(
                 "Signal length {} must match FFT size {}",
@@ -155,15 +156,15 @@ impl Fft {
         }
 
         let out_size = self.size / 2 + 1;
-        let mut output = vec![0.0f32; out_size];
+        let mut output = vec![0.0; out_size];
 
         macro_rules! compute_power {
             ($fft:expr, $N:expr) => {{
-                let mut signal_arr = [0.0f32; $N];
+                let mut signal_arr = [0.0; $N];
                 for (i, &v) in input_slice.iter().enumerate() {
                     signal_arr[i] = v;
                 }
-                let mut power_arr = [0.0f32; $N];
+                let mut power_arr = [0.0; $N];
                 $fft.power_spectrum(&signal_arr, &mut power_arr);
                 for (i, &v) in power_arr[..out_size].iter().enumerate() {
                     output[i] = v;
@@ -180,7 +181,7 @@ impl Fft {
             FftInner::Size2048(fft) => compute_power!(fft, 2048),
         }
 
-        Ok(PyArray1::from_vec(py, output))
+        Ok(PyArray1::from_vec(py, output.iter().map(|&v| v as f32).collect()))
     }
 
     /// Get the FFT size.
@@ -304,7 +305,7 @@ impl Stft {
         py: Python<'py>,
         signal: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
-        let input_slice = signal.as_slice()?;
+        let input_slice: Vec<Float> = signal.as_slice()?.iter().map(|&v| v as Float).collect();
         let signal_len = input_slice.len();
 
         // Calculate number of frames
@@ -321,14 +322,14 @@ impl Stft {
             )));
         }
 
-        let mut output = vec![0.0f32; num_frames * self.size];
+        let mut output = vec![0.0; num_frames * self.size];
 
         macro_rules! compute_power {
             ($stft:expr, $N:expr) => {{
                 // We need to process frame by frame since the Rust API expects fixed-size output
                 for frame_idx in 0..num_frames {
                     let start = frame_idx * self.hop_size;
-                    let mut frame_output = [0.0f32; $N];
+                    let mut frame_output = [0.0; $N];
                     let mut temp_buffer = [Complex::new(0.0, 0.0); $N];
 
                     // Apply window and convert to complex
@@ -364,7 +365,8 @@ impl Stft {
             StftInner::Size2048(stft) => compute_power!(stft, 2048),
         }
 
-        let output_array = Array2::from_shape_vec((num_frames, self.size), output)
+        let output_f32: Vec<f32> = output.iter().map(|&v| v as f32).collect();
+        let output_array = Array2::from_shape_vec((num_frames, self.size), output_f32)
             .map_err(|e| PyValueError::new_err(format!("Failed to reshape output: {}", e)))?;
         Ok(PyArray2::from_owned_array(py, output_array))
     }
@@ -385,7 +387,7 @@ impl Stft {
         py: Python<'py>,
         signal: PyReadonlyArray1<f32>,
     ) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<f32>>)> {
-        let input_slice = signal.as_slice()?;
+        let input_slice: Vec<Float> = signal.as_slice()?.iter().map(|&v| v as Float).collect();
         let signal_len = input_slice.len();
 
         let num_frames = if signal_len < self.size {
@@ -401,8 +403,8 @@ impl Stft {
             )));
         }
 
-        let mut real_out = vec![0.0f32; num_frames * self.size];
-        let mut imag_out = vec![0.0f32; num_frames * self.size];
+        let mut real_out = vec![0.0; num_frames * self.size];
+        let mut imag_out = vec![0.0; num_frames * self.size];
 
         macro_rules! compute_transform {
             ($stft:expr, $N:expr) => {{
@@ -436,9 +438,11 @@ impl Stft {
             StftInner::Size2048(stft) => compute_transform!(stft, 2048),
         }
 
-        let real_array = Array2::from_shape_vec((num_frames, self.size), real_out)
+        let real_f32: Vec<f32> = real_out.iter().map(|&v| v as f32).collect();
+        let imag_f32: Vec<f32> = imag_out.iter().map(|&v| v as f32).collect();
+        let real_array = Array2::from_shape_vec((num_frames, self.size), real_f32)
             .map_err(|e| PyValueError::new_err(format!("Failed to reshape output: {}", e)))?;
-        let imag_array = Array2::from_shape_vec((num_frames, self.size), imag_out)
+        let imag_array = Array2::from_shape_vec((num_frames, self.size), imag_f32)
             .map_err(|e| PyValueError::new_err(format!("Failed to reshape output: {}", e)))?;
 
         Ok((
@@ -536,7 +540,7 @@ pub struct MultiBandPower {
     inner: MultiBandPowerInner,
     fft_size: usize,
     channels: usize,
-    sample_rate: f32,
+    sample_rate: Float,
 }
 
 #[pymethods]
@@ -554,7 +558,7 @@ impl MultiBandPower {
     /// Example:
     ///     >>> bp = MultiBandPower(fft_size=256, channels=8, sample_rate=250.0)
     #[new]
-    fn new(fft_size: usize, channels: usize, sample_rate: f32) -> PyResult<Self> {
+    fn new(fft_size: usize, channels: usize, sample_rate: Float) -> PyResult<Self> {
         if sample_rate <= 0.0 {
             return Err(PyValueError::new_err("sample_rate must be positive"));
         }
@@ -622,10 +626,10 @@ impl MultiBandPower {
 
         macro_rules! compute_psd {
             ($bp:expr, $N:expr, $C:expr) => {{
-                let mut signal_arr: [[f32; $N]; $C] = [[0.0f32; $N]; $C];
+                let mut signal_arr: [[Float; $N]; $C] = [[0.0; $N]; $C];
                 for (ch, row) in input_array.rows().into_iter().enumerate() {
                     for (i, &val) in row.iter().enumerate() {
-                        signal_arr[ch][i] = val;
+                        signal_arr[ch][i] = val as Float;
                     }
                 }
                 $bp.compute(&signal_arr);
@@ -670,8 +674,8 @@ impl MultiBandPower {
     fn band_power<'py>(
         &self,
         py: Python<'py>,
-        low_hz: f32,
-        high_hz: f32,
+        low_hz: Float,
+        high_hz: Float,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
         if low_hz >= high_hz {
             return Err(PyValueError::new_err("low_hz must be less than high_hz"));
@@ -685,7 +689,7 @@ impl MultiBandPower {
             }};
         }
 
-        let power: Vec<f32> = match &self.inner {
+        let power: Vec<Float> = match &self.inner {
             MultiBandPowerInner::N256C1(bp) => get_band_power!(bp),
             MultiBandPowerInner::N256C4(bp) => get_band_power!(bp),
             MultiBandPowerInner::N256C8(bp) => get_band_power!(bp),
@@ -706,7 +710,7 @@ impl MultiBandPower {
             MultiBandPowerInner::N1024C64(bp) => get_band_power!(bp),
         };
 
-        Ok(PyArray1::from_vec(py, power))
+        Ok(PyArray1::from_vec(py, power.iter().map(|&v| v as f32).collect()))
     }
 
     /// Reset internal state.
@@ -753,7 +757,7 @@ impl MultiBandPower {
 
     /// Get the sample rate.
     #[getter]
-    fn sample_rate(&self) -> f32 {
+    fn sample_rate(&self) -> Float {
         self.sample_rate
     }
 
