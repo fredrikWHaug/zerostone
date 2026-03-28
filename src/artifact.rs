@@ -26,6 +26,8 @@
 //! assert!(!artifacts[3]); // Clean
 //! ```
 
+use crate::float::{self, Float};
+
 /// Result of artifact detection for a single sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactType {
@@ -80,9 +82,9 @@ impl ArtifactType {
 /// assert!(artifacts[1]);  // Artifact (|190| > 100 amplitude)
 /// ```
 pub struct ArtifactDetector<const C: usize> {
-    amplitude_threshold: f32,
-    gradient_threshold: f32,
-    prev_sample: [f32; C],
+    amplitude_threshold: Float,
+    gradient_threshold: Float,
+    prev_sample: [Float; C],
     initialized: bool,
 }
 
@@ -100,7 +102,7 @@ impl<const C: usize> ArtifactDetector<C> {
     /// // EEG typically: amplitude ~100-200 µV, gradient ~50-100 µV/sample
     /// let detector: ArtifactDetector<32> = ArtifactDetector::new(150.0, 75.0);
     /// ```
-    pub fn new(amplitude_threshold: f32, gradient_threshold: f32) -> Self {
+    pub fn new(amplitude_threshold: Float, gradient_threshold: Float) -> Self {
         Self {
             amplitude_threshold,
             gradient_threshold,
@@ -117,8 +119,8 @@ impl<const C: usize> ArtifactDetector<C> {
     ///
     /// let detector: ArtifactDetector<8> = ArtifactDetector::amplitude_only(100.0);
     /// ```
-    pub fn amplitude_only(threshold: f32) -> Self {
-        Self::new(threshold, f32::INFINITY)
+    pub fn amplitude_only(threshold: Float) -> Self {
+        Self::new(threshold, float::INFINITY)
     }
 
     /// Creates a detector with only gradient threshold (no amplitude check).
@@ -129,8 +131,8 @@ impl<const C: usize> ArtifactDetector<C> {
     ///
     /// let detector: ArtifactDetector<8> = ArtifactDetector::gradient_only(50.0);
     /// ```
-    pub fn gradient_only(threshold: f32) -> Self {
-        Self::new(f32::INFINITY, threshold)
+    pub fn gradient_only(threshold: Float) -> Self {
+        Self::new(float::INFINITY, threshold)
     }
 
     /// Detects artifacts in a multi-channel sample.
@@ -146,13 +148,13 @@ impl<const C: usize> ArtifactDetector<C> {
     /// let artifacts = detector.detect(&[10.0, 200.0, 30.0, 40.0]);
     /// assert!(artifacts[1]); // Channel 1 has artifact
     /// ```
-    pub fn detect(&mut self, samples: &[f32; C]) -> [bool; C] {
+    pub fn detect(&mut self, samples: &[Float; C]) -> [bool; C] {
         let mut result = [false; C];
 
         for (i, (&sample, result_out)) in samples.iter().zip(result.iter_mut()).enumerate() {
-            let amplitude_bad = libm::fabsf(sample) > self.amplitude_threshold;
+            let amplitude_bad = float::abs(sample) > self.amplitude_threshold;
             let gradient_bad = self.initialized
-                && libm::fabsf(sample - self.prev_sample[i]) > self.gradient_threshold;
+                && float::abs(sample - self.prev_sample[i]) > self.gradient_threshold;
 
             *result_out = amplitude_bad || gradient_bad;
         }
@@ -182,13 +184,13 @@ impl<const C: usize> ArtifactDetector<C> {
     /// assert_eq!(types[0], ArtifactType::Gradient);
     /// assert_eq!(types[1], ArtifactType::Clean);
     /// ```
-    pub fn detect_detailed(&mut self, samples: &[f32; C]) -> [ArtifactType; C] {
+    pub fn detect_detailed(&mut self, samples: &[Float; C]) -> [ArtifactType; C] {
         let mut result = [ArtifactType::Clean; C];
 
         for (i, (&sample, result_out)) in samples.iter().zip(result.iter_mut()).enumerate() {
-            let amplitude_bad = libm::fabsf(sample) > self.amplitude_threshold;
+            let amplitude_bad = float::abs(sample) > self.amplitude_threshold;
             let gradient_bad = self.initialized
-                && libm::fabsf(sample - self.prev_sample[i]) > self.gradient_threshold;
+                && float::abs(sample - self.prev_sample[i]) > self.gradient_threshold;
 
             *result_out = match (amplitude_bad, gradient_bad) {
                 (false, false) => ArtifactType::Clean,
@@ -217,7 +219,7 @@ impl<const C: usize> ArtifactDetector<C> {
     /// let has_artifact = detector.detect_any(&[10.0, 200.0, 30.0, 40.0]);
     /// assert!(has_artifact); // Channel 1 exceeded amplitude threshold
     /// ```
-    pub fn detect_any(&mut self, samples: &[f32; C]) -> bool {
+    pub fn detect_any(&mut self, samples: &[Float; C]) -> bool {
         let artifacts = self.detect(samples);
         artifacts.iter().any(|&a| a)
     }
@@ -232,7 +234,7 @@ impl<const C: usize> ArtifactDetector<C> {
     /// let count = detector.detect_count(&[200.0, 200.0, 30.0, 40.0]);
     /// assert_eq!(count, 2); // Channels 0 and 1 exceeded threshold
     /// ```
-    pub fn detect_count(&mut self, samples: &[f32; C]) -> usize {
+    pub fn detect_count(&mut self, samples: &[Float; C]) -> usize {
         let artifacts = self.detect(samples);
         artifacts.iter().filter(|&&a| a).count()
     }
@@ -247,22 +249,22 @@ impl<const C: usize> ArtifactDetector<C> {
     }
 
     /// Returns the amplitude threshold.
-    pub fn amplitude_threshold(&self) -> f32 {
+    pub fn amplitude_threshold(&self) -> Float {
         self.amplitude_threshold
     }
 
     /// Sets the amplitude threshold.
-    pub fn set_amplitude_threshold(&mut self, threshold: f32) {
+    pub fn set_amplitude_threshold(&mut self, threshold: Float) {
         self.amplitude_threshold = threshold;
     }
 
     /// Returns the gradient threshold.
-    pub fn gradient_threshold(&self) -> f32 {
+    pub fn gradient_threshold(&self) -> Float {
         self.gradient_threshold
     }
 
     /// Sets the gradient threshold.
-    pub fn set_gradient_threshold(&mut self, threshold: f32) {
+    pub fn set_gradient_threshold(&mut self, threshold: Float) {
         self.gradient_threshold = threshold;
     }
 
@@ -311,10 +313,10 @@ impl<const C: usize> Default for ArtifactDetector<C> {
 /// ```
 pub struct ZscoreArtifact<const C: usize> {
     stats: crate::OnlineStats<C>,
-    threshold: f32,
+    threshold: Float,
     min_samples: u64,
-    frozen_mean: Option<[f64; C]>,
-    frozen_std: Option<[f64; C]>,
+    frozen_mean: Option<[Float; C]>,
+    frozen_std: Option<[Float; C]>,
 }
 
 impl<const C: usize> ZscoreArtifact<C> {
@@ -331,7 +333,7 @@ impl<const C: usize> ZscoreArtifact<C> {
     /// // 3σ threshold with 500-sample calibration period
     /// let detector: ZscoreArtifact<32> = ZscoreArtifact::new(3.0, 500);
     /// ```
-    pub fn new(threshold: f32, min_samples: u64) -> Self {
+    pub fn new(threshold: Float, min_samples: u64) -> Self {
         Self {
             stats: crate::OnlineStats::new(),
             threshold,
@@ -358,10 +360,9 @@ impl<const C: usize> ZscoreArtifact<C> {
     ///
     /// assert!(!detector.is_calibrating());
     /// ```
-    pub fn update(&mut self, samples: &[f32; C]) {
+    pub fn update(&mut self, samples: &[Float; C]) {
         if self.frozen_mean.is_none() {
-            let samples_f64 = samples.map(|x| x as f64);
-            self.stats.update(&samples_f64);
+            self.stats.update(samples);
         }
     }
 
@@ -390,7 +391,7 @@ impl<const C: usize> ZscoreArtifact<C> {
     /// assert!(!artifacts[0]); // |0.5| / 1.0 < 3.0
     /// assert!(artifacts[1]);  // |10.0| / 1.0 > 3.0
     /// ```
-    pub fn detect(&self, samples: &[f32; C]) -> [bool; C] {
+    pub fn detect(&self, samples: &[Float; C]) -> [bool; C] {
         if self.stats.count() < self.min_samples {
             return [false; C];
         }
@@ -401,8 +402,8 @@ impl<const C: usize> ZscoreArtifact<C> {
         let mut result = [false; C];
         for (i, (&sample, result_out)) in samples.iter().zip(result.iter_mut()).enumerate() {
             if std[i] > 0.0 {
-                let z = libm::fabs((sample as f64 - mean[i]) / std[i]);
-                *result_out = z > self.threshold as f64;
+                let z = float::abs((sample - mean[i]) / std[i]);
+                *result_out = z > self.threshold;
             }
         }
 
@@ -431,7 +432,7 @@ impl<const C: usize> ZscoreArtifact<C> {
     /// let zscores = detector.zscore(&[0.0, 2.0]).unwrap();
     /// // Mean ≈ 0, std ≈ 1, so z ≈ |sample - mean| / std
     /// ```
-    pub fn zscore(&self, samples: &[f32; C]) -> Option<[f64; C]> {
+    pub fn zscore(&self, samples: &[Float; C]) -> Option<[Float; C]> {
         if self.stats.count() < self.min_samples {
             return None;
         }
@@ -439,10 +440,10 @@ impl<const C: usize> ZscoreArtifact<C> {
         let mean = self.frozen_mean.unwrap_or_else(|| *self.stats.mean());
         let std = self.frozen_std.unwrap_or_else(|| self.stats.std_dev());
 
-        let mut result = [0.0f64; C];
+        let mut result = [0.0; C];
         for (i, &sample) in samples.iter().enumerate() {
             if std[i] > 0.0 {
-                result[i] = (sample as f64 - mean[i]) / std[i];
+                result[i] = (sample - mean[i]) / std[i];
             }
         }
 
@@ -468,7 +469,7 @@ impl<const C: usize> ZscoreArtifact<C> {
     ///     // After 50 samples: actual detection
     /// }
     /// ```
-    pub fn update_and_detect(&mut self, samples: &[f32; C]) -> [bool; C] {
+    pub fn update_and_detect(&mut self, samples: &[Float; C]) -> [bool; C] {
         self.update(samples);
         self.detect(samples)
     }
@@ -511,26 +512,26 @@ impl<const C: usize> ZscoreArtifact<C> {
     }
 
     /// Returns the z-score threshold.
-    pub fn threshold(&self) -> f32 {
+    pub fn threshold(&self) -> Float {
         self.threshold
     }
 
     /// Sets the z-score threshold.
-    pub fn set_threshold(&mut self, threshold: f32) {
+    pub fn set_threshold(&mut self, threshold: Float) {
         self.threshold = threshold;
     }
 
     /// Returns the current mean for each channel.
     ///
     /// Returns the frozen mean if frozen, otherwise the current streaming mean.
-    pub fn mean(&self) -> [f64; C] {
+    pub fn mean(&self) -> [Float; C] {
         self.frozen_mean.unwrap_or_else(|| *self.stats.mean())
     }
 
     /// Returns the current standard deviation for each channel.
     ///
     /// Returns the frozen std if frozen, otherwise the current streaming std.
-    pub fn std_dev(&self) -> [f64; C] {
+    pub fn std_dev(&self) -> [Float; C] {
         self.frozen_std.unwrap_or_else(|| self.stats.std_dev())
     }
 

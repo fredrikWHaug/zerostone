@@ -32,6 +32,8 @@
 //! assert!((m.accuracy - 1.0).abs() < 1e-10);
 //! ```
 
+use crate::float::Float;
+
 /// Result of comparing one ground-truth spike train to one sorted spike train.
 #[derive(Debug, Clone, Copy)]
 pub struct UnitMatch {
@@ -42,11 +44,11 @@ pub struct UnitMatch {
     /// Number of GT spikes with no matching sorted spike.
     pub false_negatives: usize,
     /// TP / (TP + FN + FP). 0.0 when all counts are zero.
-    pub accuracy: f64,
+    pub accuracy: Float,
     /// TP / (TP + FP). 0.0 when TP + FP == 0.
-    pub precision: f64,
+    pub precision: Float,
     /// TP / (TP + FN). 0.0 when TP + FN == 0.
-    pub recall: f64,
+    pub recall: Float,
 }
 
 impl UnitMatch {
@@ -168,17 +170,17 @@ pub fn compare_spike_trains(
     let total = tp + fn_count + fp_count;
 
     let accuracy = if total > 0 {
-        tp as f64 / total as f64
+        tp as Float / total as Float
     } else {
         0.0
     };
     let precision = if tp + fp_count > 0 {
-        tp as f64 / (tp + fp_count) as f64
+        tp as Float / (tp + fp_count) as Float
     } else {
         0.0
     };
     let recall = if tp + fn_count > 0 {
-        tp as f64 / (tp + fn_count) as f64
+        tp as Float / (tp + fn_count) as Float
     } else {
         0.0
     };
@@ -264,7 +266,7 @@ pub fn compare_sorting(
     const MAX_GT: usize = 256;
     let n_gt_capped = if n_gt <= MAX_GT { n_gt } else { MAX_GT };
     let mut best_idx = [0usize; MAX_GT];
-    let mut best_acc = [0.0f64; MAX_GT];
+    let mut best_acc = [0.0 as Float; MAX_GT];
     let mut best_match = [UnitMatch::empty(); MAX_GT];
 
     // For greedy assignment: iteratively find the (gt, sorted) pair with
@@ -277,7 +279,7 @@ pub fn compare_sorting(
         // against any unclaimed sorted unit.
         let mut round_best_gt = 0;
         let mut round_best_sorted = 0;
-        let mut round_best_acc = -1.0f64;
+        let mut round_best_acc: Float = -1.0;
         let mut round_best_um = UnitMatch::empty();
 
         for gi in 0..n_gt_capped {

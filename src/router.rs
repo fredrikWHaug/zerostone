@@ -32,6 +32,7 @@
 
 #![allow(clippy::module_name_repetitions)]
 
+use crate::float::Float;
 use crate::pipeline::BlockProcessor;
 
 /// Routes channels between pipeline stages by selecting, reordering, or duplicating them.
@@ -251,15 +252,15 @@ impl<const IN: usize, const OUT: usize> ChannelRouter<IN, OUT> {
     /// assert_eq!(output, [20.0, 40.0]);
     /// ```
     #[must_use]
-    pub fn process(&self, input: &[f32; IN]) -> [f32; OUT] {
+    pub fn process(&self, input: &[Float; IN]) -> [Float; OUT] {
         core::array::from_fn(|i| input[self.indices[i]])
     }
 }
 
 impl<const IN: usize, const OUT: usize> BlockProcessor<IN, OUT> for ChannelRouter<IN, OUT> {
-    type Sample = f32;
+    type Sample = Float;
 
-    fn process_block(&mut self, input: &[[f32; IN]], output: &mut [[f32; OUT]]) -> usize {
+    fn process_block(&mut self, input: &[[Float; IN]], output: &mut [[Float; OUT]]) -> usize {
         let len = input.len().min(output.len());
         for i in 0..len {
             output[i] = self.process(&input[i]);

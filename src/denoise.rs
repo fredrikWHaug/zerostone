@@ -36,13 +36,14 @@
 //!
 //! ```
 //! use zerostone::denoise::{denoise_haar, ThresholdMode};
+//! use zerostone::Float;
 //!
-//! let mut signal = [0.0f64; 64];
+//! let mut signal = [0.0 as Float; 64];
 //! // Add a "spike" at sample 32
 //! signal[32] = -5.0;
 //! signal[33] = 3.0;
 //!
-//! let mut scratch = [0.0f64; 64 * 5]; // need signal.len() * (levels + 2)
+//! let mut scratch = [0.0 as Float; 64 * 5]; // need signal.len() * (levels + 2)
 //! denoise_haar(&mut signal, &mut scratch, 3, ThresholdMode::Soft);
 //!
 //! // The spike shape is largely preserved (large amplitude survives thresholding)
@@ -50,6 +51,8 @@
 //! ```
 
 #![allow(clippy::needless_range_loop)]
+
+use crate::float::{self, Float};
 
 /// Thresholding mode for wavelet denoising.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,11 +79,11 @@ pub enum ThresholdMode {
 /// assert!((soft_threshold(0.5, 1.0) - 0.0).abs() < 1e-12);
 /// ```
 #[inline]
-pub fn soft_threshold(x: f64, lambda: f64) -> f64 {
+pub fn soft_threshold(x: Float, lambda: Float) -> Float {
     if lambda <= 0.0 {
         return x;
     }
-    let ax = libm::fabs(x);
+    let ax = float::abs(x);
     if ax <= lambda {
         0.0
     } else if x > 0.0 {
@@ -104,11 +107,11 @@ pub fn soft_threshold(x: f64, lambda: f64) -> f64 {
 /// assert!((hard_threshold(-2.0, 1.0) - (-2.0)).abs() < 1e-12);
 /// ```
 #[inline]
-pub fn hard_threshold(x: f64, lambda: f64) -> f64 {
+pub fn hard_threshold(x: Float, lambda: Float) -> Float {
     if lambda <= 0.0 {
         return x;
     }
-    if libm::fabs(x) >= lambda {
+    if float::abs(x) >= lambda {
         x
     } else {
         0.0
@@ -132,11 +135,11 @@ pub fn hard_threshold(x: f64, lambda: f64) -> f64 {
 /// assert!(lambda > 3.0 && lambda < 3.1, "lambda = {}", lambda);
 /// ```
 #[inline]
-pub fn universal_threshold(sigma: f64, n: usize) -> f64 {
+pub fn universal_threshold(sigma: Float, n: usize) -> Float {
     if n <= 1 {
         return 0.0;
     }
-    sigma * libm::sqrt(2.0 * libm::log(n as f64))
+    sigma * float::sqrt(2.0 * float::log(n as Float))
 }
 
 /// Estimate noise standard deviation from detail coefficients using MAD / 0.6745.
@@ -146,13 +149,13 @@ pub fn universal_threshold(sigma: f64, n: usize) -> f64 {
 ///
 /// `scratch` is used for sorting and must be at least as long as `details`.
 #[cfg(test)]
-fn estimate_sigma_mad(details: &[f64], scratch: &mut [f64]) -> f64 {
+fn estimate_sigma_mad(details: &[Float], scratch: &mut [Float]) -> Float {
     let n = details.len();
     if n == 0 {
         return 0.0;
     }
     for i in 0..n {
-        scratch[i] = libm::fabs(details[i]);
+        scratch[i] = float::abs(details[i]);
     }
     let s = &mut scratch[..n];
     s.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
@@ -181,7 +184,12 @@ fn estimate_sigma_mad(details: &[f64], scratch: &mut [f64]) -> f64 {
 /// # Panics
 ///
 /// Panics if `levels == 0`, `signal.len() < 2`, or `scratch` is too small.
-pub fn denoise_haar(signal: &mut [f64], scratch: &mut [f64], levels: usize, mode: ThresholdMode) {
+pub fn denoise_haar(
+    signal: &mut [Float],
+    scratch: &mut [Float],
+    levels: usize,
+    mode: ThresholdMode,
+) {
     let n = signal.len();
     assert!(levels >= 1, "levels must be >= 1");
     assert!(n >= 2, "signal must have at least 2 samples");
@@ -209,7 +217,7 @@ pub fn denoise_haar(signal: &mut [f64], scratch: &mut [f64], levels: usize, mode
         let detail_start = level * n;
 
         // Read from approx_buf, write new approx to signal (temp), detail to rest.
-        let inv_sqrt2 = 1.0 / libm::sqrt(2.0);
+        let inv_sqrt2 = 1.0 / float::sqrt(2.0);
         for i in 0..n {
             let j = if i >= step { i - step } else { n + i - step };
             let a = approx_buf[j];
@@ -226,7 +234,7 @@ pub fn denoise_haar(signal: &mut [f64], scratch: &mut [f64], levels: usize, mode
     // Copy detail[0] into the temp region for MAD sorting (preserves original details).
     let temp_start = levels * n;
     for i in 0..n {
-        rest[temp_start + i] = libm::fabs(rest[i]);
+        rest[temp_start + i] = float::abs(rest[i]);
     }
     // Save the coarsest approximation into signal temporarily (we need approx_buf later).
     signal.copy_from_slice(approx_buf);
@@ -264,7 +272,7 @@ pub fn denoise_haar(signal: &mut [f64], scratch: &mut [f64], levels: usize, mode
         let detail_start = level * n;
 
         // Inverse Haar: reconstruct into signal (temp).
-        let inv_sqrt2 = 1.0 / libm::sqrt(2.0);
+        let inv_sqrt2 = 1.0 / float::sqrt(2.0);
         for i in 0..n {
             let k = (i + step) % n;
             let a_i = approx_buf[i];
@@ -286,6 +294,7 @@ pub fn denoise_haar(signal: &mut [f64], scratch: &mut [f64], levels: usize, mode
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::float::Float;
 
     #[test]
     fn test_soft_threshold_values() {
@@ -333,8 +342,8 @@ mod tests {
 
     #[test]
     fn test_denoise_zero_input() {
-        let mut signal = [0.0f64; 32];
-        let mut scratch = [0.0f64; 32 * 5];
+        let mut signal = [0.0 as Float; 32];
+        let mut scratch = [0.0 as Float; 32 * 5];
         denoise_haar(&mut signal, &mut scratch, 3, ThresholdMode::Soft);
         for &s in signal.iter() {
             assert!(s.abs() < 1e-15, "Zero input should stay zero, got {}", s);
@@ -345,15 +354,15 @@ mod tests {
     fn test_denoise_pure_signal_unchanged() {
         // A large-amplitude sine wave should be mostly preserved (well above noise threshold).
         let n = 128;
-        let mut signal = [0.0f64; 128];
-        let mut original = [0.0f64; 128];
+        let mut signal = [0.0 as Float; 128];
+        let mut original = [0.0 as Float; 128];
         for i in 0..n {
-            let val = 100.0 * libm::sin(2.0 * core::f64::consts::PI * 5.0 * i as f64 / n as f64);
+            let val = 100.0 * float::sin(2.0 * float::PI * 5.0 * i as Float / n as Float);
             signal[i] = val;
             original[i] = val;
         }
 
-        let mut scratch = [0.0f64; 128 * 6];
+        let mut scratch = [0.0 as Float; 128 * 6];
         denoise_haar(&mut signal, &mut scratch, 3, ThresholdMode::Soft);
 
         // Compute RMS error relative to original
@@ -364,7 +373,7 @@ mod tests {
             err_sq += e * e;
             sig_sq += original[i] * original[i];
         }
-        let snr = 10.0 * libm::log10(sig_sq / (err_sq + 1e-30));
+        let snr = 10.0 * float::log10(sig_sq / (err_sq + 1e-30));
         assert!(
             snr > 10.0,
             "Clean large-amplitude signal should be well-preserved, SNR = {:.1} dB",
@@ -376,14 +385,14 @@ mod tests {
     fn test_denoise_reduces_noise() {
         // Signal with added noise: denoising should reduce variance of the noise portion.
         let n = 256;
-        let mut signal = [0.0f64; 256];
-        let mut scratch = [0.0f64; 256 * 6];
+        let mut signal = [0.0 as Float; 256];
+        let mut scratch = [0.0 as Float; 256 * 6];
 
         // Simple LCG pseudo-random noise
         let mut rng_state: u64 = 42;
         for i in 0..n {
             rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
-            let noise = ((rng_state >> 33) as f64 / (1u64 << 31) as f64) - 1.0;
+            let noise = ((rng_state >> 33) as Float / (1u64 << 31) as Float) - 1.0;
             signal[i] = noise * 0.5; // noise with std ~ 0.29
         }
 
@@ -394,7 +403,7 @@ mod tests {
             sum += s;
             sum_sq += s * s;
         }
-        let var_before = sum_sq / n as f64 - (sum / n as f64) * (sum / n as f64);
+        let var_before = sum_sq / n as Float - (sum / n as Float) * (sum / n as Float);
 
         denoise_haar(&mut signal, &mut scratch, 3, ThresholdMode::Soft);
 
@@ -405,7 +414,7 @@ mod tests {
             sum2 += s;
             sum_sq2 += s * s;
         }
-        let var_after = sum_sq2 / n as f64 - (sum2 / n as f64) * (sum2 / n as f64);
+        let var_after = sum_sq2 / n as Float - (sum2 / n as Float) * (sum2 / n as Float);
 
         assert!(
             var_after < var_before,
@@ -418,7 +427,7 @@ mod tests {
     #[test]
     fn test_denoise_single_level() {
         let mut signal = [0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0];
-        let mut scratch = [0.0f64; 8 * 4];
+        let mut scratch = [0.0 as Float; 8 * 4];
         denoise_haar(&mut signal, &mut scratch, 1, ThresholdMode::Hard);
 
         // With only 1 level and hard thresholding, large coefficients should survive.
@@ -440,14 +449,14 @@ mod tests {
     #[test]
     fn test_denoise_multi_level() {
         let _n = 64;
-        let mut signal = [0.0f64; 64];
+        let mut signal = [0.0 as Float; 64];
         // Put a spike-like feature
         signal[30] = -4.0;
         signal[31] = -8.0;
         signal[32] = 3.0;
         signal[33] = 1.0;
 
-        let mut scratch = [0.0f64; 64 * 7];
+        let mut scratch = [0.0 as Float; 64 * 7];
         denoise_haar(&mut signal, &mut scratch, 4, ThresholdMode::Soft);
 
         // The spike peak should be partially preserved (large amplitude)
@@ -472,20 +481,20 @@ mod tests {
     #[test]
     fn test_denoise_hard_vs_soft() {
         let _n = 32;
-        let mut sig_soft = [0.0f64; 32];
-        let mut sig_hard = [0.0f64; 32];
+        let mut sig_soft = [0.0 as Float; 32];
+        let mut sig_hard = [0.0 as Float; 32];
         sig_soft[16] = -10.0;
         sig_hard[16] = -10.0;
 
-        let mut scratch_s = [0.0f64; 32 * 5];
-        let mut scratch_h = [0.0f64; 32 * 5];
+        let mut scratch_s = [0.0 as Float; 32 * 5];
+        let mut scratch_h = [0.0 as Float; 32 * 5];
 
         denoise_haar(&mut sig_soft, &mut scratch_s, 2, ThresholdMode::Soft);
         denoise_haar(&mut sig_hard, &mut scratch_h, 2, ThresholdMode::Hard);
 
         // Hard thresholding preserves amplitudes better than soft
         assert!(
-            libm::fabs(sig_hard[16]) >= libm::fabs(sig_soft[16]),
+            float::abs(sig_hard[16]) >= float::abs(sig_soft[16]),
             "Hard threshold should preserve amplitude >= soft: hard={}, soft={}",
             sig_hard[16],
             sig_soft[16]
@@ -499,7 +508,7 @@ mod tests {
             -0.67, 0.32, -1.21, 0.78, 0.11, -0.45, 1.03, -0.89, 0.54, -0.15, 0.66, -1.10, 0.27,
             -0.58, 0.91, -0.33,
         ];
-        let mut scratch = [0.0f64; 16];
+        let mut scratch = [0.0 as Float; 16];
         let sigma = estimate_sigma_mad(&details, &mut scratch);
         assert!(sigma > 0.0, "Sigma must be positive");
         assert!(sigma < 3.0, "Sigma should be reasonable, got {}", sigma);
@@ -509,11 +518,12 @@ mod tests {
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
+    use crate::float::Float;
 
     #[kani::proof]
     fn soft_threshold_panic_free() {
-        let x: f64 = kani::any();
-        let lambda: f64 = kani::any();
+        let x: Float = kani::any();
+        let lambda: Float = kani::any();
         kani::assume(x.is_finite());
         kani::assume(lambda.is_finite());
         let result = soft_threshold(x, lambda);
@@ -523,8 +533,8 @@ mod kani_proofs {
 
     #[kani::proof]
     fn hard_threshold_panic_free() {
-        let x: f64 = kani::any();
-        let lambda: f64 = kani::any();
+        let x: Float = kani::any();
+        let lambda: Float = kani::any();
         kani::assume(x.is_finite());
         kani::assume(lambda.is_finite());
         let result = hard_threshold(x, lambda);

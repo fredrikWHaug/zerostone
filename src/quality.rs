@@ -37,6 +37,8 @@
 //! assert!(snr.unwrap() > 1.0);
 //! ```
 
+use crate::float::{self, Float, INFINITY, MAX};
+
 /// Compute the ISI violation rate for a sorted spike train.
 ///
 /// Counts the fraction of consecutive inter-spike intervals that fall below
@@ -68,7 +70,7 @@
 /// let rate = isi_violation_rate(&spikes, 0.001).unwrap();
 /// assert!((rate - 0.25).abs() < 1e-10); // 1 of 4 intervals
 /// ```
-pub fn isi_violation_rate(spike_times: &[f64], refractory_period: f64) -> Option<f64> {
+pub fn isi_violation_rate(spike_times: &[Float], refractory_period: Float) -> Option<Float> {
     let n = spike_times.len();
     if n < 2 {
         return None;
@@ -81,7 +83,7 @@ pub fn isi_violation_rate(spike_times: &[f64], refractory_period: f64) -> Option
             violations += 1;
         }
     }
-    Some(violations as f64 / n_intervals as f64)
+    Some(violations as Float / n_intervals as Float)
 }
 
 /// Estimate the contamination rate from ISI violations (Hill et al. 2011).
@@ -119,10 +121,10 @@ pub fn isi_violation_rate(spike_times: &[f64], refractory_period: f64) -> Option
 /// assert!(c < 1e-10);
 /// ```
 pub fn contamination_rate(
-    spike_times: &[f64],
-    refractory_period: f64,
-    recording_duration: f64,
-) -> Option<f64> {
+    spike_times: &[Float],
+    refractory_period: Float,
+    recording_duration: Float,
+) -> Option<Float> {
     let n = spike_times.len();
     if n < 2 || recording_duration <= 0.0 || refractory_period <= 0.0 {
         return None;
@@ -143,10 +145,10 @@ pub fn contamination_rate(
 
     // Hill et al. 2011 formula:
     // C = sqrt(n_violations * T / (2 * T_r * N^2))
-    let n_f = n as f64;
-    let numer = n_violations as f64 * recording_duration;
+    let n_f = n as Float;
+    let numer = n_violations as Float * recording_duration;
     let denom = 2.0 * refractory_period * n_f * n_f;
-    let c = libm::sqrt(numer / denom);
+    let c = float::sqrt(numer / denom);
 
     // Clamp to [0, 1]
     if c > 1.0 {
@@ -185,20 +187,20 @@ pub fn contamination_rate(
 /// let s = silhouette_score(&intra, &inter).unwrap();
 /// assert!(s > 0.9);
 /// ```
-pub fn silhouette_score(intra_distances: &[f64], inter_distances: &[f64]) -> Option<f64> {
+pub fn silhouette_score(intra_distances: &[Float], inter_distances: &[Float]) -> Option<Float> {
     if intra_distances.is_empty() || inter_distances.is_empty() {
         return None;
     }
 
     // a = mean intra-cluster distance
-    let mut sum_a = 0.0;
+    let mut sum_a: Float = 0.0;
     for &d in intra_distances {
         sum_a += d;
     }
-    let a = sum_a / intra_distances.len() as f64;
+    let a = sum_a / intra_distances.len() as Float;
 
     // b = minimum mean inter-cluster distance (nearest cluster)
-    let mut b = f64::MAX;
+    let mut b: Float = MAX;
     for &d in inter_distances {
         if d < b {
             b = d;
@@ -245,11 +247,11 @@ pub fn silhouette_score(intra_distances: &[f64], inter_distances: &[f64]) -> Opt
 /// ```
 pub fn mean_silhouette(
     n_points: usize,
-    intra_dist_flat: &[f64],
+    intra_dist_flat: &[Float],
     n_intra: usize,
-    inter_means_flat: &[f64],
+    inter_means_flat: &[Float],
     n_clusters: usize,
-) -> Option<f64> {
+) -> Option<Float> {
     if n_points == 0 || n_intra == 0 || n_clusters == 0 {
         return None;
     }
@@ -260,7 +262,7 @@ pub fn mean_silhouette(
         return None;
     }
 
-    let mut sum = 0.0;
+    let mut sum: Float = 0.0;
     for i in 0..n_points {
         let intra_start = i * n_intra;
         let inter_start = i * n_clusters;
@@ -274,7 +276,7 @@ pub fn mean_silhouette(
         }
     }
 
-    Some(sum / n_points as f64)
+    Some(sum / n_points as Float)
 }
 
 /// Compute the signal-to-noise ratio of a mean waveform.
@@ -304,7 +306,7 @@ pub fn mean_silhouette(
 /// // peak-to-peak = 1.0 - (-5.0) = 6.0, SNR = 6.0 / 2.0 = 3.0
 /// assert!((snr - 3.0).abs() < 1e-10);
 /// ```
-pub fn waveform_snr(mean_waveform: &[f64], noise_std: f64) -> Option<f64> {
+pub fn waveform_snr(mean_waveform: &[Float], noise_std: Float) -> Option<Float> {
     if mean_waveform.is_empty() || noise_std <= 0.0 {
         return None;
     }
@@ -365,7 +367,7 @@ pub fn waveform_snr(mean_waveform: &[f64], noise_std: f64) -> Option<f64> {
 /// let dp = d_prime(&a, &b).unwrap();
 /// assert!(dp > 0.0 && dp < 3.0);
 /// ```
-pub fn d_prime(cluster_a: &[f64], cluster_b: &[f64]) -> Option<f64> {
+pub fn d_prime(cluster_a: &[Float], cluster_b: &[Float]) -> Option<Float> {
     let na = cluster_a.len();
     let nb = cluster_b.len();
     if na < 2 || nb < 2 {
@@ -373,41 +375,41 @@ pub fn d_prime(cluster_a: &[f64], cluster_b: &[f64]) -> Option<f64> {
     }
 
     // Mean and variance for cluster A
-    let mut sum_a = 0.0;
+    let mut sum_a: Float = 0.0;
     for &v in cluster_a {
         sum_a += v;
     }
-    let mean_a = sum_a / na as f64;
-    let mut var_a = 0.0;
+    let mean_a = sum_a / na as Float;
+    let mut var_a: Float = 0.0;
     for &v in cluster_a {
         let d = v - mean_a;
         var_a += d * d;
     }
-    var_a /= (na - 1) as f64;
+    var_a /= (na - 1) as Float;
 
     // Mean and variance for cluster B
-    let mut sum_b = 0.0;
+    let mut sum_b: Float = 0.0;
     for &v in cluster_b {
         sum_b += v;
     }
-    let mean_b = sum_b / nb as f64;
-    let mut var_b = 0.0;
+    let mean_b = sum_b / nb as Float;
+    let mut var_b: Float = 0.0;
     for &v in cluster_b {
         let d = v - mean_b;
         var_b += d * d;
     }
-    var_b /= (nb - 1) as f64;
+    var_b /= (nb - 1) as Float;
 
-    let pooled_std = libm::sqrt(0.5 * (var_a + var_b));
+    let pooled_std = float::sqrt(0.5 * (var_a + var_b));
     if pooled_std <= 0.0 {
         // Both clusters have zero variance -- either identical or single values
-        if libm::fabs(mean_a - mean_b) > 0.0 {
-            return Some(f64::INFINITY);
+        if float::abs(mean_a - mean_b) > 0.0 {
+            return Some(INFINITY);
         }
         return Some(0.0);
     }
 
-    Some(libm::fabs(mean_a - mean_b) / pooled_std)
+    Some(float::abs(mean_a - mean_b) / pooled_std)
 }
 
 /// Compute isolation distance for a cluster in feature space.
@@ -448,7 +450,7 @@ pub fn d_prime(cluster_a: &[f64], cluster_b: &[f64]) -> Option<f64> {
 /// // Sorted: [1.0, 2.0, 3.0, 5.0, 8.0], 3rd smallest = 3.0
 /// assert!((iso - 3.0).abs() < 1e-10);
 /// ```
-pub fn isolation_distance(n_cluster: usize, other_mahal_sq: &mut [f64]) -> Option<f64> {
+pub fn isolation_distance(n_cluster: usize, other_mahal_sq: &mut [Float]) -> Option<Float> {
     if n_cluster == 0 || other_mahal_sq.len() < n_cluster {
         return None;
     }
@@ -482,17 +484,17 @@ pub fn isolation_distance(n_cluster: usize, other_mahal_sq: &mut [f64]) -> Optio
 /// let d = euclidean_distance(&a, &b);
 /// assert!((d - core::f64::consts::SQRT_2).abs() < 1e-10);
 /// ```
-pub fn euclidean_distance(a: &[f64], b: &[f64]) -> f64 {
+pub fn euclidean_distance(a: &[Float], b: &[Float]) -> Float {
     let len = if a.len() < b.len() { a.len() } else { b.len() };
     if len == 0 {
         return 0.0;
     }
-    let mut sum = 0.0;
+    let mut sum: Float = 0.0;
     for i in 0..len {
         let d = a[i] - b[i];
         sum += d * d;
     }
-    libm::sqrt(sum)
+    float::sqrt(sum)
 }
 
 #[cfg(test)]
@@ -506,7 +508,7 @@ mod tests {
     #[test]
     fn test_isi_violation_no_violations() {
         // Regular 50ms intervals -- no violations with 1ms refractory
-        let spikes = [0.0, 0.050, 0.100, 0.150, 0.200];
+        let spikes: [Float; 5] = [0.0, 0.050, 0.100, 0.150, 0.200];
         let rate = isi_violation_rate(&spikes, 0.001).unwrap();
         assert!(rate < 1e-10, "Expected 0 violations, got {}", rate);
     }
@@ -514,7 +516,7 @@ mod tests {
     #[test]
     fn test_isi_violation_one_violation() {
         // One pair is 0.5ms apart (below 1ms refractory)
-        let spikes = [0.0, 0.050, 0.100, 0.1005, 0.200];
+        let spikes: [Float; 5] = [0.0, 0.050, 0.100, 0.1005, 0.200];
         let rate = isi_violation_rate(&spikes, 0.001).unwrap();
         assert!(
             (rate - 0.25).abs() < 1e-10,
@@ -526,7 +528,7 @@ mod tests {
     #[test]
     fn test_isi_violation_all_violations() {
         // All intervals below refractory period
-        let spikes = [0.0, 0.0001, 0.0002, 0.0003];
+        let spikes: [Float; 4] = [0.0, 0.0001, 0.0002, 0.0003];
         let rate = isi_violation_rate(&spikes, 0.001).unwrap();
         assert!((rate - 1.0).abs() < 1e-10, "Expected 1.0, got {}", rate);
     }
@@ -539,7 +541,7 @@ mod tests {
 
     #[test]
     fn test_isi_violation_two_spikes() {
-        let spikes = [0.0, 0.050];
+        let spikes: [Float; 2] = [0.0, 0.050];
         let rate = isi_violation_rate(&spikes, 0.001).unwrap();
         assert!(rate < 1e-10);
     }
@@ -550,7 +552,7 @@ mod tests {
 
     #[test]
     fn test_contamination_no_violations() {
-        let spikes = [0.0, 0.050, 0.100, 0.150, 0.200];
+        let spikes: [Float; 5] = [0.0, 0.050, 0.100, 0.150, 0.200];
         let c = contamination_rate(&spikes, 0.0015, 1.0).unwrap();
         assert!(c < 1e-10, "Expected 0 contamination, got {}", c);
     }
@@ -558,7 +560,7 @@ mod tests {
     #[test]
     fn test_contamination_with_violations() {
         // Create a spike train with known violations
-        let spikes = [0.0, 0.050, 0.100, 0.1005, 0.200, 0.300];
+        let spikes: [Float; 6] = [0.0, 0.050, 0.100, 0.1005, 0.200, 0.300];
         let c = contamination_rate(&spikes, 0.0015, 1.0).unwrap();
         assert!(c > 0.0, "Expected nonzero contamination");
         assert!(c <= 1.0, "Contamination should be <= 1.0, got {}", c);
@@ -567,7 +569,7 @@ mod tests {
     #[test]
     fn test_contamination_clamped_at_one() {
         // Many violations relative to total -- should clamp to 1.0
-        let spikes = [0.0, 0.0001, 0.0002, 0.0003, 0.0004];
+        let spikes: [Float; 5] = [0.0, 0.0001, 0.0002, 0.0003, 0.0004];
         let c = contamination_rate(&spikes, 0.001, 0.001).unwrap();
         assert!(
             c <= 1.0,
@@ -591,8 +593,8 @@ mod tests {
     #[test]
     fn test_silhouette_well_separated() {
         // Tight cluster, far from others
-        let intra = [0.1, 0.2, 0.15, 0.12];
-        let inter = [10.0, 15.0];
+        let intra: [Float; 4] = [0.1, 0.2, 0.15, 0.12];
+        let inter: [Float; 2] = [10.0, 15.0];
         let s = silhouette_score(&intra, &inter).unwrap();
         assert!(s > 0.95, "Well-separated should give s~1, got {}", s);
     }
@@ -600,8 +602,8 @@ mod tests {
     #[test]
     fn test_silhouette_overlapping() {
         // Intra distances larger than inter distances
-        let intra = [5.0, 6.0, 7.0];
-        let inter = [2.0, 3.0];
+        let intra: [Float; 3] = [5.0, 6.0, 7.0];
+        let inter: [Float; 2] = [2.0, 3.0];
         let s = silhouette_score(&intra, &inter).unwrap();
         assert!(s < 0.0, "Overlapping should give negative s, got {}", s);
     }
@@ -609,8 +611,8 @@ mod tests {
     #[test]
     fn test_silhouette_perfect() {
         // Zero intra distance, positive inter distance
-        let intra = [0.0, 0.0, 0.0];
-        let inter = [5.0];
+        let intra: [Float; 3] = [0.0, 0.0, 0.0];
+        let inter: [Float; 1] = [5.0];
         let s = silhouette_score(&intra, &inter).unwrap();
         assert!(
             (s - 1.0).abs() < 1e-10,
@@ -622,8 +624,8 @@ mod tests {
     #[test]
     fn test_silhouette_range() {
         // Verify result is in [-1, 1]
-        let intra = [1.0, 2.0, 3.0];
-        let inter = [2.5];
+        let intra: [Float; 3] = [1.0, 2.0, 3.0];
+        let inter: [Float; 1] = [2.5];
         let s = silhouette_score(&intra, &inter).unwrap();
         assert!(
             (-1.0..=1.0).contains(&s),
@@ -645,8 +647,8 @@ mod tests {
     #[test]
     fn test_mean_silhouette_uniform() {
         // 3 points, each with 2 intra distances and 1 other cluster
-        let intra = [0.1, 0.2, 0.15, 0.1, 0.12, 0.18];
-        let inter = [5.0, 5.0, 5.0];
+        let intra: [Float; 6] = [0.1, 0.2, 0.15, 0.1, 0.12, 0.18];
+        let inter: [Float; 3] = [5.0, 5.0, 5.0];
         let s = mean_silhouette(3, &intra, 2, &inter, 1).unwrap();
         assert!(s > 0.9, "Expected high mean silhouette, got {}", s);
     }
@@ -662,7 +664,7 @@ mod tests {
 
     #[test]
     fn test_snr_known() {
-        let wf = [0.0, -1.0, -5.0, -3.0, 0.0, 1.0, 0.5, 0.0];
+        let wf: [Float; 8] = [0.0, -1.0, -5.0, -3.0, 0.0, 1.0, 0.5, 0.0];
         let snr = waveform_snr(&wf, 1.0).unwrap();
         // peak-to-peak = 1.0 - (-5.0) = 6.0, SNR = 6.0 / 2.0 = 3.0
         assert!((snr - 3.0).abs() < 1e-10, "Expected SNR = 3.0, got {}", snr);
@@ -670,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_snr_flat_waveform() {
-        let wf = [3.0; 10];
+        let wf = [3.0 as Float; 10];
         let snr = waveform_snr(&wf, 1.0).unwrap();
         assert!(
             snr < 1e-10,
@@ -681,13 +683,13 @@ mod tests {
 
     #[test]
     fn test_snr_zero_noise() {
-        let wf = [0.0, -5.0, 0.0];
+        let wf: [Float; 3] = [0.0, -5.0, 0.0];
         assert!(waveform_snr(&wf, 0.0).is_none());
     }
 
     #[test]
     fn test_snr_negative_noise() {
-        let wf = [0.0, -5.0, 0.0];
+        let wf: [Float; 3] = [0.0, -5.0, 0.0];
         assert!(waveform_snr(&wf, -1.0).is_none());
     }
 
@@ -698,7 +700,7 @@ mod tests {
 
     #[test]
     fn test_snr_single_sample() {
-        let wf = [5.0];
+        let wf: [Float; 1] = [5.0];
         let snr = waveform_snr(&wf, 1.0).unwrap();
         assert!(snr < 1e-10, "Single-sample waveform has 0 peak-to-peak");
     }
@@ -709,8 +711,8 @@ mod tests {
 
     #[test]
     fn test_dprime_well_separated() {
-        let a = [1.0, 1.1, 0.9, 1.05, 0.95];
-        let b = [5.0, 5.1, 4.9, 5.05, 4.95];
+        let a: [Float; 5] = [1.0, 1.1, 0.9, 1.05, 0.95];
+        let b: [Float; 5] = [5.0, 5.1, 4.9, 5.05, 4.95];
         let dp = d_prime(&a, &b).unwrap();
         assert!(
             dp > 10.0,
@@ -721,8 +723,8 @@ mod tests {
 
     #[test]
     fn test_dprime_overlapping() {
-        let a = [1.0, 2.0, 3.0, 4.0, 5.0];
-        let b = [3.0, 4.0, 5.0, 6.0, 7.0];
+        let a: [Float; 5] = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let b: [Float; 5] = [3.0, 4.0, 5.0, 6.0, 7.0];
         let dp = d_prime(&a, &b).unwrap();
         assert!(
             dp > 0.0 && dp < 3.0,
@@ -733,8 +735,8 @@ mod tests {
 
     #[test]
     fn test_dprime_identical() {
-        let a = [1.0, 2.0, 3.0, 4.0, 5.0];
-        let b = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let a: [Float; 5] = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let b: [Float; 5] = [1.0, 2.0, 3.0, 4.0, 5.0];
         let dp = d_prime(&a, &b).unwrap();
         assert!(
             dp < 1e-10,
@@ -745,8 +747,8 @@ mod tests {
 
     #[test]
     fn test_dprime_symmetric() {
-        let a = [1.0, 1.5, 2.0, 2.5, 3.0];
-        let b = [5.0, 5.5, 6.0, 6.5, 7.0];
+        let a: [Float; 5] = [1.0, 1.5, 2.0, 2.5, 3.0];
+        let b: [Float; 5] = [5.0, 5.5, 6.0, 6.5, 7.0];
         let dp_ab = d_prime(&a, &b).unwrap();
         let dp_ba = d_prime(&b, &a).unwrap();
         assert!(
@@ -767,8 +769,8 @@ mod tests {
     #[test]
     fn test_dprime_zero_variance() {
         // Both clusters constant but different
-        let a = [3.0, 3.0, 3.0];
-        let b = [7.0, 7.0, 7.0];
+        let a: [Float; 3] = [3.0, 3.0, 3.0];
+        let b: [Float; 3] = [7.0, 7.0, 7.0];
         let dp = d_prime(&a, &b).unwrap();
         assert!(
             dp.is_infinite(),
@@ -783,7 +785,7 @@ mod tests {
     #[test]
     fn test_isolation_distance_basic() {
         let n_cluster = 3;
-        let mut distances = [1.0, 5.0, 2.0, 8.0, 3.0];
+        let mut distances: [Float; 5] = [1.0, 5.0, 2.0, 8.0, 3.0];
         let iso = isolation_distance(n_cluster, &mut distances).unwrap();
         assert!((iso - 3.0).abs() < 1e-10, "Expected 3.0, got {}", iso);
     }
@@ -791,21 +793,21 @@ mod tests {
     #[test]
     fn test_isolation_distance_sorted() {
         let n_cluster = 2;
-        let mut distances = [1.0, 2.0, 3.0, 4.0];
+        let mut distances: [Float; 4] = [1.0, 2.0, 3.0, 4.0];
         let iso = isolation_distance(n_cluster, &mut distances).unwrap();
         assert!((iso - 2.0).abs() < 1e-10, "Expected 2.0, got {}", iso);
     }
 
     #[test]
     fn test_isolation_distance_single() {
-        let mut distances = [42.0];
+        let mut distances: [Float; 1] = [42.0];
         let iso = isolation_distance(1, &mut distances).unwrap();
         assert!((iso - 42.0).abs() < 1e-10);
     }
 
     #[test]
     fn test_isolation_distance_insufficient() {
-        let mut distances = [1.0, 2.0];
+        let mut distances: [Float; 2] = [1.0, 2.0];
         assert!(isolation_distance(3, &mut distances).is_none());
         assert!(isolation_distance(0, &mut distances).is_none());
     }
@@ -816,11 +818,11 @@ mod tests {
 
     #[test]
     fn test_euclidean_basic() {
-        let a = [1.0, 0.0, 0.0];
-        let b = [0.0, 1.0, 0.0];
+        let a: [Float; 3] = [1.0, 0.0, 0.0];
+        let b: [Float; 3] = [0.0, 1.0, 0.0];
         let d = euclidean_distance(&a, &b);
         assert!(
-            (d - core::f64::consts::SQRT_2).abs() < 1e-10,
+            (d - float::sqrt(2.0)).abs() < 1e-10,
             "Expected sqrt(2), got {}",
             d
         );
@@ -828,7 +830,7 @@ mod tests {
 
     #[test]
     fn test_euclidean_same() {
-        let a = [1.0, 2.0, 3.0];
+        let a: [Float; 3] = [1.0, 2.0, 3.0];
         let d = euclidean_distance(&a, &a);
         assert!(d < 1e-10, "Same point should have distance 0");
     }
@@ -841,8 +843,8 @@ mod tests {
 
     #[test]
     fn test_euclidean_1d() {
-        let a = [3.0];
-        let b = [7.0];
+        let a: [Float; 1] = [3.0];
+        let b: [Float; 1] = [7.0];
         let d = euclidean_distance(&a, &b);
         assert!((d - 4.0).abs() < 1e-10);
     }
@@ -854,7 +856,7 @@ mod tests {
     #[test]
     fn test_identical_spike_times() {
         // Two spikes at the same time -- ISI = 0, which is < any positive refractory
-        let spikes = [0.1, 0.1];
+        let spikes: [Float; 2] = [0.1, 0.1];
         let rate = isi_violation_rate(&spikes, 0.001).unwrap();
         assert!(
             (rate - 1.0).abs() < 1e-10,
@@ -869,9 +871,9 @@ mod tests {
         // refractory = 1ms, 5 violations.
         // C = sqrt(5 * 10 / (2 * 0.001 * 100^2)) = sqrt(50 / 20) = sqrt(2.5) ~ 1.58
         // Should be clamped to 1.0
-        let mut spikes = [0.0f64; 100];
+        let mut spikes = [0.0 as Float; 100];
         for (i, spike) in spikes.iter_mut().enumerate() {
-            *spike = i as f64 * 0.1; // 10 Hz, regular
+            *spike = i as Float * 0.1; // 10 Hz, regular
         }
         // Inject 5 violations by placing spikes close together
         spikes[10] = spikes[9] + 0.0005; // violation
@@ -906,8 +908,8 @@ mod kani_proofs {
         kani::assume(s3.is_finite() && s3 >= s2 && s3 <= 1e6);
         kani::assume(rp.is_finite() && rp > 0.0 && rp <= 1.0);
 
-        let spikes = [s0, s1, s2, s3];
-        let result = isi_violation_rate(&spikes, rp);
+        let spikes = [s0 as Float, s1 as Float, s2 as Float, s3 as Float];
+        let result = isi_violation_rate(&spikes, rp as Float);
         if let Some(rate) = result {
             assert!(rate >= 0.0 && rate <= 1.0, "rate must be in [0, 1]");
         }
@@ -924,8 +926,8 @@ mod kani_proofs {
         kani::assume(a1.is_finite() && a1 >= 0.0 && a1 <= 1e6);
         kani::assume(b0.is_finite() && b0 >= 0.0 && b0 <= 1e6);
 
-        let intra = [a0, a1];
-        let inter = [b0];
+        let intra = [a0 as Float, a1 as Float];
+        let inter = [b0 as Float];
         if let Some(s) = silhouette_score(&intra, &inter) {
             assert!(s >= -1.0 && s <= 1.0, "silhouette must be in [-1, 1]");
         }
@@ -942,8 +944,8 @@ mod kani_proofs {
         kani::assume(w1.is_finite() && w1 >= -1e6 && w1 <= 1e6);
         kani::assume(noise.is_finite() && noise > 0.0 && noise <= 1e6);
 
-        let wf = [w0, w1];
-        if let Some(snr) = waveform_snr(&wf, noise) {
+        let wf = [w0 as Float, w1 as Float];
+        if let Some(snr) = waveform_snr(&wf, noise as Float) {
             assert!(snr.is_finite(), "SNR must be finite for valid input");
             assert!(snr >= 0.0, "SNR must be non-negative");
         }
@@ -965,8 +967,8 @@ mod kani_proofs {
         kani::assume(rp.is_finite() && rp > 0.0 && rp <= 1.0);
         kani::assume(dur.is_finite() && dur > 0.0 && dur <= 1e6);
 
-        let spikes = [s0, s1, s2];
-        if let Some(c) = contamination_rate(&spikes, rp, dur) {
+        let spikes = [s0 as Float, s1 as Float, s2 as Float];
+        if let Some(c) = contamination_rate(&spikes, rp as Float, dur as Float) {
             assert!(c >= 0.0, "contamination must be >= 0");
             assert!(c <= 1.0, "contamination must be <= 1 (clamped)");
         }
@@ -986,7 +988,7 @@ mod kani_proofs {
         kani::assume(b0.is_finite() && b0 >= -1e6 && b0 <= 1e6);
         kani::assume(b1.is_finite() && b1 >= -1e6 && b1 <= 1e6);
 
-        let d = euclidean_distance(&[a0, a1], &[b0, b1]);
+        let d = euclidean_distance(&[a0 as Float, a1 as Float], &[b0 as Float, b1 as Float]);
         assert!(d >= 0.0, "distance must be non-negative");
         assert!(d.is_finite(), "distance must be finite for finite inputs");
     }
@@ -1005,8 +1007,8 @@ mod kani_proofs {
         kani::assume(b0.is_finite() && b0 >= -1e3 && b0 <= 1e3);
         kani::assume(b1.is_finite() && b1 >= -1e3 && b1 <= 1e3);
 
-        let ca = [a0, a1];
-        let cb = [b0, b1];
+        let ca = [a0 as Float, a1 as Float];
+        let cb = [b0 as Float, b1 as Float];
         if let Some(dp) = d_prime(&ca, &cb) {
             assert!(dp >= 0.0, "d-prime must be non-negative");
         }

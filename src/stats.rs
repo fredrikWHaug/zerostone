@@ -1,7 +1,9 @@
+use crate::float::{self, Float};
+
 pub struct OnlineStats<const C: usize> {
     count: u64,
-    mean: [f64; C],
-    m2: [f64; C],
+    mean: [Float; C],
+    m2: [Float; C],
 }
 
 impl<const C: usize> Default for OnlineStats<C> {
@@ -19,9 +21,9 @@ impl<const C: usize> OnlineStats<C> {
         }
     }
 
-    pub fn update(&mut self, sample: &[f64; C]) {
+    pub fn update(&mut self, sample: &[Float; C]) {
         self.count += 1;
-        let n = self.count as f64;
+        let n = self.count as Float;
 
         for (i, &s) in sample.iter().enumerate() {
             let delta = s - self.mean[i];
@@ -31,18 +33,18 @@ impl<const C: usize> OnlineStats<C> {
         }
     }
 
-    pub fn mean(&self) -> &[f64; C] {
+    pub fn mean(&self) -> &[Float; C] {
         &self.mean
     }
 
-    pub fn variance(&self) -> [f64; C] {
+    pub fn variance(&self) -> [Float; C] {
         if self.count < 2 {
             return [0.0; C];
         }
 
         let mut var = [0.0; C];
         for (v, &m) in var.iter_mut().zip(self.m2.iter()) {
-            *v = m / (self.count - 1) as f64;
+            *v = m / (self.count - 1) as Float;
         }
         var
     }
@@ -50,11 +52,11 @@ impl<const C: usize> OnlineStats<C> {
     /// Returns the standard deviation for each dimension.
     ///
     /// This is the square root of the sample variance.
-    pub fn std_dev(&self) -> [f64; C] {
+    pub fn std_dev(&self) -> [Float; C] {
         let var = self.variance();
         let mut std = [0.0; C];
         for (s, &v) in std.iter_mut().zip(var.iter()) {
-            *s = libm::sqrt(v);
+            *s = float::sqrt(v);
         }
         std
     }
@@ -101,9 +103,9 @@ impl<const C: usize> OnlineStats<C> {
 /// ```
 pub struct OnlineCov<const C: usize, const M: usize> {
     count: u64,
-    mean: [f64; C],
+    mean: [Float; C],
     /// Covariance accumulator stored as row-major C×C matrix
-    cov_accum: [f64; M],
+    cov_accum: [Float; M],
 }
 
 impl<const C: usize, const M: usize> Default for OnlineCov<C, M> {
@@ -134,9 +136,9 @@ impl<const C: usize, const M: usize> OnlineCov<C, M> {
     /// # Arguments
     ///
     /// * `sample` - Multi-channel sample (length C)
-    pub fn update(&mut self, sample: &[f64; C]) {
+    pub fn update(&mut self, sample: &[Float; C]) {
         self.count += 1;
-        let n = self.count as f64;
+        let n = self.count as Float;
 
         // Compute delta before updating mean
         let mut delta_before = [0.0; C];
@@ -170,7 +172,7 @@ impl<const C: usize, const M: usize> OnlineCov<C, M> {
     }
 
     /// Get the current mean vector.
-    pub fn mean(&self) -> &[f64; C] {
+    pub fn mean(&self) -> &[Float; C] {
         &self.mean
     }
 
@@ -180,13 +182,13 @@ impl<const C: usize, const M: usize> OnlineCov<C, M> {
     /// Element `[i * C + j]` is the covariance between channels i and j.
     ///
     /// Returns zero matrix if count < 2.
-    pub fn covariance(&self) -> [f64; M] {
+    pub fn covariance(&self) -> [Float; M] {
         if self.count < 2 {
             return [0.0; M];
         }
 
         let mut cov = [0.0; M];
-        let divisor = (self.count - 1) as f64;
+        let divisor = (self.count - 1) as Float;
 
         for (c, &accum) in cov.iter_mut().zip(self.cov_accum.iter()) {
             *c = accum / divisor;
@@ -205,17 +207,17 @@ impl<const C: usize, const M: usize> OnlineCov<C, M> {
     /// # Returns
     ///
     /// Covariance between channels i and j
-    pub fn get(&self, i: usize, j: usize) -> f64 {
+    pub fn get(&self, i: usize, j: usize) -> Float {
         if self.count < 2 {
             return 0.0;
         }
-        self.cov_accum[i * C + j] / (self.count - 1) as f64
+        self.cov_accum[i * C + j] / (self.count - 1) as Float
     }
 
     /// Get the correlation matrix (normalized covariances).
     ///
     /// Each element is cov(i,j) / sqrt(var(i) * var(j))
-    pub fn correlation(&self) -> [f64; M] {
+    pub fn correlation(&self) -> [Float; M] {
         if self.count < 2 {
             return [0.0; M];
         }
@@ -226,7 +228,7 @@ impl<const C: usize, const M: usize> OnlineCov<C, M> {
         // Get diagonal (variances)
         let mut std_dev = [0.0; C];
         for i in 0..C {
-            std_dev[i] = libm::sqrt(cov[i * C + i]);
+            std_dev[i] = float::sqrt(cov[i * C + i]);
         }
 
         // Compute correlation
@@ -266,7 +268,7 @@ mod kani_proofs {
         let mut stats: OnlineStats<1> = OnlineStats::new();
         let mut i: u32 = 0;
         while i < 8 {
-            let val: f64 = kani::any();
+            let val: Float = kani::any();
             kani::assume(val.is_finite() && val >= -1e6 && val <= 1e6);
             stats.update(&[val]);
             assert!(stats.mean[0].is_finite(), "mean must stay finite");
@@ -311,7 +313,7 @@ mod tests {
 
         // Feed perfectly correlated data
         for i in 0..100 {
-            let val = i as f64;
+            let val = i as Float;
             cov.update(&[val, val]); // x1 = x0
         }
 
@@ -330,7 +332,7 @@ mod tests {
         let mut cov: OnlineCov<3, 9> = OnlineCov::new();
 
         for i in 0..50 {
-            cov.update(&[i as f64, (i * 2) as f64, (i * 3) as f64]);
+            cov.update(&[i as Float, (i * 2) as Float, (i * 3) as Float]);
         }
 
         // Test individual element access
@@ -346,7 +348,7 @@ mod tests {
 
         // Feed perfectly correlated data
         for i in 0..100 {
-            let val = i as f64;
+            let val = i as Float;
             cov.update(&[val, val]);
         }
 
@@ -400,7 +402,7 @@ mod tests {
         let mut cov: OnlineCov<3, 9> = OnlineCov::new();
 
         for i in 0..100 {
-            cov.update(&[i as f64, (i * 2) as f64, (i + 5) as f64]);
+            cov.update(&[i as Float, (i * 2) as Float, (i + 5) as Float]);
         }
 
         let cov_matrix = cov.covariance();

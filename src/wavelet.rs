@@ -14,34 +14,33 @@
 //! # Example
 //!
 //! ```
-//! use zerostone::{Cwt, Complex};
+//! use zerostone::{Cwt, Complex, Float};
 //!
 //! // Create CWT for motor imagery analysis (8-30 Hz)
 //! let cwt = Cwt::<256, 8>::new(250.0, 8.0, 30.0);
 //!
 //! // Process EEG signal
-//! let signal = [0.0f32; 256];
-//! let mut power = [[0.0f32; 256]; 8];
+//! let signal = [0.0 as Float; 256];
+//! let mut power = [[0.0 as Float; 256]; 8];
 //! cwt.power(&signal, &mut power);
 //!
 //! // Access power at each time-frequency point
 //! let alpha_power_at_center = power[4][128];
 //! ```
 
-use core::f32::consts::PI;
-
+use crate::float::{self, Float, PI};
 use crate::Complex;
 
 /// Threshold for wavelet truncation (exp(-8) ≈ 0.00034).
 ///
 /// Wavelet coefficients below this amplitude are considered negligible.
-const WAVELET_THRESHOLD: f32 = 0.000335;
+const WAVELET_THRESHOLD: Float = 0.000335;
 
 /// Default Morlet wavelet central frequency.
 ///
 /// omega0 = 6.0 provides a good balance between time and frequency resolution
 /// for neural signal analysis.
-const DEFAULT_OMEGA0: f32 = 6.0;
+const DEFAULT_OMEGA0: Float = 6.0;
 
 /// Wavelet type for CWT analysis.
 ///
@@ -61,7 +60,7 @@ pub enum WaveletType {
     /// - omega0 = 8.0: Better frequency resolution
     Morlet {
         /// Central frequency parameter
-        omega0: f32,
+        omega0: Float,
     },
 }
 
@@ -99,21 +98,21 @@ impl Default for WaveletType {
 /// assert!(w.re > 0.0); // Peak at center
 /// ```
 #[inline]
-pub fn morlet_coefficient(t: f32, scale: f32, omega0: f32, sample_rate: f32) -> Complex {
+pub fn morlet_coefficient(t: Float, scale: Float, omega0: Float, sample_rate: Float) -> Complex {
     // Convert time offset to scaled units
     let dt = 1.0 / sample_rate;
     let t_scaled = t * dt / scale;
 
     // Gaussian envelope: exp(-t²/2)
-    let gaussian = libm::expf(-0.5 * t_scaled * t_scaled);
+    let gaussian = float::exp(-0.5 * t_scaled * t_scaled);
 
     // Complex exponential: exp(i * omega0 * t)
     let phase = omega0 * t_scaled;
-    let cos_phase = libm::cosf(phase);
-    let sin_phase = libm::sinf(phase);
+    let cos_phase = float::cos(phase);
+    let sin_phase = float::sin(phase);
 
     // Normalization: 1/√scale for energy preservation
-    let norm = 1.0 / libm::sqrtf(scale);
+    let norm = 1.0 / float::sqrt(scale);
 
     Complex::new(norm * gaussian * cos_phase, norm * gaussian * sin_phase)
 }
@@ -143,10 +142,10 @@ pub fn morlet_coefficient(t: f32, scale: f32, omega0: f32, sample_rate: f32) -> 
 /// assert!(w2 > w1);
 /// ```
 #[inline]
-pub fn wavelet_half_width(scale: f32, sample_rate: f32) -> usize {
+pub fn wavelet_half_width(scale: Float, sample_rate: Float) -> usize {
     // Solve: exp(-0.5 * t²) = threshold
     // t = sqrt(-2 * ln(threshold))
-    let t_limit = libm::sqrtf(-2.0 * libm::logf(WAVELET_THRESHOLD));
+    let t_limit = float::sqrt(-2.0 * float::log(WAVELET_THRESHOLD));
 
     // Convert to samples: t_limit is in scaled units, convert back
     let samples = (t_limit * scale * sample_rate) as usize;
@@ -160,24 +159,24 @@ pub fn wavelet_half_width(scale: f32, sample_rate: f32) -> usize {
 ///
 /// Log-spacing provides uniform resolution on a logarithmic frequency scale,
 /// which matches human perception and is appropriate for neural oscillations.
-fn generate_scales<const S: usize>(min_freq: f32, max_freq: f32, omega0: f32) -> [f32; S] {
+fn generate_scales<const S: usize>(min_freq: Float, max_freq: Float, omega0: Float) -> [Float; S] {
     // Convert frequencies to scales (inverse relationship)
     // Higher frequency → smaller scale
     let max_scale = omega0 / (2.0 * PI * min_freq);
     let min_scale = omega0 / (2.0 * PI * max_freq);
 
-    let log_min = libm::logf(min_scale);
-    let log_max = libm::logf(max_scale);
+    let log_min = float::log(min_scale);
+    let log_max = float::log(max_scale);
 
-    let mut scales = [0.0f32; S];
+    let mut scales = [0.0 as Float; S];
 
     if S == 1 {
-        scales[0] = libm::expf((log_min + log_max) / 2.0);
+        scales[0] = float::exp((log_min + log_max) / 2.0);
     } else {
         for (i, scale) in scales.iter_mut().enumerate() {
-            let t = i as f32 / (S - 1) as f32;
+            let t = i as Float / (S - 1) as Float;
             let log_scale = log_min + t * (log_max - log_min);
-            *scale = libm::expf(log_scale);
+            *scale = float::exp(log_scale);
         }
     }
 
@@ -198,24 +197,24 @@ fn generate_scales<const S: usize>(min_freq: f32, max_freq: f32, omega0: f32) ->
 /// # Example
 ///
 /// ```
-/// use zerostone::{Cwt, Complex};
+/// use zerostone::{Cwt, Complex, Float};
 ///
 /// // Create CWT processor for 256-sample signals with 8 scales
 /// let cwt = Cwt::<256, 8>::new(250.0, 1.0, 30.0);
 ///
 /// // Process a signal
-/// let signal = [0.0f32; 256];
-/// let mut power = [[0.0f32; 256]; 8];
+/// let signal = [0.0 as Float; 256];
+/// let mut power = [[0.0 as Float; 256]; 8];
 /// cwt.power(&signal, &mut power);
 /// ```
 #[derive(Debug, Clone)]
 pub struct Cwt<const N: usize, const S: usize> {
     /// Sample rate in Hz
-    sample_rate: f32,
+    sample_rate: Float,
     /// Scales array (computed from frequency range)
-    scales: [f32; S],
+    scales: [Float; S],
     /// Central frequency of Morlet wavelet
-    omega0: f32,
+    omega0: Float,
 }
 
 impl<const N: usize, const S: usize> Cwt<N, S> {
@@ -241,7 +240,7 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
     /// // Create CWT for 1-50 Hz range at 250 Hz sample rate
     /// let cwt = Cwt::<256, 16>::new(250.0, 1.0, 50.0);
     /// ```
-    pub fn new(sample_rate: f32, min_freq: f32, max_freq: f32) -> Self {
+    pub fn new(sample_rate: Float, min_freq: Float, max_freq: Float) -> Self {
         assert!(min_freq > 0.0, "min_freq must be positive");
         assert!(
             max_freq > min_freq,
@@ -282,9 +281,9 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
     /// );
     /// ```
     pub fn with_wavelet(
-        sample_rate: f32,
-        min_freq: f32,
-        max_freq: f32,
+        sample_rate: Float,
+        min_freq: Float,
+        max_freq: Float,
         wavelet: WaveletType,
     ) -> Self {
         assert!(min_freq > 0.0, "min_freq must be positive");
@@ -329,7 +328,7 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
     /// let scales = [0.5, 1.0, 2.0, 4.0];
     /// let cwt = Cwt::<256, 4>::from_scales(250.0, scales, 6.0);
     /// ```
-    pub fn from_scales(sample_rate: f32, scales: [f32; S], omega0: f32) -> Self {
+    pub fn from_scales(sample_rate: Float, scales: [Float; S], omega0: Float) -> Self {
         Self {
             sample_rate,
             scales,
@@ -352,14 +351,14 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
     /// # Example
     ///
     /// ```
-    /// use zerostone::{Cwt, Complex};
+    /// use zerostone::{Cwt, Complex, Float};
     ///
     /// let cwt = Cwt::<128, 4>::new(250.0, 5.0, 30.0);
-    /// let signal = [0.0f32; 128];
+    /// let signal = [0.0 as Float; 128];
     /// let mut coeffs = [[Complex::new(0.0, 0.0); 128]; 4];
     /// cwt.transform(&signal, &mut coeffs);
     /// ```
-    pub fn transform(&self, signal: &[f32; N], output: &mut [[Complex; N]; S]) {
+    pub fn transform(&self, signal: &[Float; N], output: &mut [[Complex; N]; S]) {
         for (scale_idx, &scale) in self.scales.iter().enumerate() {
             self.convolve_scale(signal, scale, &mut output[scale_idx]);
         }
@@ -378,14 +377,14 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
     /// # Example
     ///
     /// ```
-    /// use zerostone::Cwt;
+    /// use zerostone::{Cwt, Float};
     ///
     /// let cwt = Cwt::<256, 8>::new(250.0, 1.0, 50.0);
-    /// let signal = [0.5f32; 256];
-    /// let mut power = [[0.0f32; 256]; 8];
+    /// let signal = [0.5 as Float; 256];
+    /// let mut power = [[0.0 as Float; 256]; 8];
     /// cwt.power(&signal, &mut power);
     /// ```
-    pub fn power(&self, signal: &[f32; N], output: &mut [[f32; N]; S]) {
+    pub fn power(&self, signal: &[Float; N], output: &mut [[Float; N]; S]) {
         for (scale_idx, &scale) in self.scales.iter().enumerate() {
             self.convolve_scale_power(signal, scale, &mut output[scale_idx]);
         }
@@ -401,14 +400,14 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
     /// # Example
     ///
     /// ```
-    /// use zerostone::Cwt;
+    /// use zerostone::{Cwt, Float};
     ///
     /// let cwt = Cwt::<256, 8>::new(250.0, 1.0, 50.0);
-    /// let signal = [0.5f32; 256];
-    /// let mut magnitude = [[0.0f32; 256]; 8];
+    /// let signal = [0.5 as Float; 256];
+    /// let mut magnitude = [[0.0 as Float; 256]; 8];
     /// cwt.magnitude(&signal, &mut magnitude);
     /// ```
-    pub fn magnitude(&self, signal: &[f32; N], output: &mut [[f32; N]; S]) {
+    pub fn magnitude(&self, signal: &[Float; N], output: &mut [[Float; N]; S]) {
         for (scale_idx, &scale) in self.scales.iter().enumerate() {
             self.convolve_scale_magnitude(signal, scale, &mut output[scale_idx]);
         }
@@ -432,16 +431,21 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
     /// # Example
     ///
     /// ```
-    /// use zerostone::{Cwt, Complex};
+    /// use zerostone::{Cwt, Complex, Float};
     ///
     /// let cwt = Cwt::<128, 8>::new(250.0, 5.0, 30.0);
-    /// let signal = [0.0f32; 128];
+    /// let signal = [0.0 as Float; 128];
     /// let mut coeffs = [Complex::new(0.0, 0.0); 128];
     ///
     /// // Compute only the 4th scale
     /// cwt.transform_scale(&signal, 3, &mut coeffs);
     /// ```
-    pub fn transform_scale(&self, signal: &[f32; N], scale_idx: usize, output: &mut [Complex; N]) {
+    pub fn transform_scale(
+        &self,
+        signal: &[Float; N],
+        scale_idx: usize,
+        output: &mut [Complex; N],
+    ) {
         assert!(scale_idx < S, "scale_idx out of bounds");
         let scale = self.scales[scale_idx];
         self.convolve_scale(signal, scale, output);
@@ -459,7 +463,7 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
     ///
     /// Corresponding pseudo-frequency in Hz.
     #[inline]
-    pub fn scale_to_frequency(&self, scale: f32) -> f32 {
+    pub fn scale_to_frequency(&self, scale: Float) -> Float {
         self.omega0 / (2.0 * PI * scale)
     }
 
@@ -475,13 +479,13 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
     ///
     /// Corresponding wavelet scale.
     #[inline]
-    pub fn frequency_to_scale(&self, frequency: f32) -> f32 {
+    pub fn frequency_to_scale(&self, frequency: Float) -> Float {
         self.omega0 / (2.0 * PI * frequency)
     }
 
     /// Returns the scales array.
     #[inline]
-    pub fn scales(&self) -> &[f32; S] {
+    pub fn scales(&self) -> &[Float; S] {
         &self.scales
     }
 
@@ -497,8 +501,8 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
     /// // freqs[0] corresponds to highest frequency (smallest scale)
     /// // freqs[S-1] corresponds to lowest frequency (largest scale)
     /// ```
-    pub fn frequencies(&self) -> [f32; S] {
-        let mut freqs = [0.0f32; S];
+    pub fn frequencies(&self) -> [Float; S] {
+        let mut freqs = [0.0 as Float; S];
         for (i, &scale) in self.scales.iter().enumerate() {
             freqs[i] = self.scale_to_frequency(scale);
         }
@@ -507,32 +511,32 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
 
     /// Returns the sample rate.
     #[inline]
-    pub fn sample_rate(&self) -> f32 {
+    pub fn sample_rate(&self) -> Float {
         self.sample_rate
     }
 
     /// Returns the omega0 parameter.
     #[inline]
-    pub fn omega0(&self) -> f32 {
+    pub fn omega0(&self) -> Float {
         self.omega0
     }
 
     /// Performs convolution of signal with wavelet at a single scale.
     ///
     /// Uses direct time-domain convolution with zero-padding boundary handling.
-    fn convolve_scale(&self, signal: &[f32; N], scale: f32, output: &mut [Complex; N]) {
+    fn convolve_scale(&self, signal: &[Float; N], scale: Float, output: &mut [Complex; N]) {
         let half_width = wavelet_half_width(scale, self.sample_rate);
 
         for (t, out) in output.iter_mut().enumerate() {
-            let mut sum_re = 0.0f32;
-            let mut sum_im = 0.0f32;
+            let mut sum_re: Float = 0.0;
+            let mut sum_im: Float = 0.0;
 
             // Compute convolution bounds with zero-padding
             let start = t.saturating_sub(half_width);
             let end = (t + half_width + 1).min(N);
 
             for (tau, &sample) in signal.iter().enumerate().take(end).skip(start) {
-                let dt = tau as f32 - t as f32;
+                let dt = tau as Float - t as Float;
                 let wavelet = morlet_coefficient(dt, scale, self.omega0, self.sample_rate);
 
                 // Use conjugate for convolution (not correlation)
@@ -547,18 +551,18 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
     /// Computes power directly without storing complex coefficients.
     ///
     /// Optimization for when only power spectrum is needed.
-    fn convolve_scale_power(&self, signal: &[f32; N], scale: f32, output: &mut [f32; N]) {
+    fn convolve_scale_power(&self, signal: &[Float; N], scale: Float, output: &mut [Float; N]) {
         let half_width = wavelet_half_width(scale, self.sample_rate);
 
         for (t, out) in output.iter_mut().enumerate() {
-            let mut sum_re = 0.0f32;
-            let mut sum_im = 0.0f32;
+            let mut sum_re: Float = 0.0;
+            let mut sum_im: Float = 0.0;
 
             let start = t.saturating_sub(half_width);
             let end = (t + half_width + 1).min(N);
 
             for (tau, &sample) in signal.iter().enumerate().take(end).skip(start) {
-                let dt = tau as f32 - t as f32;
+                let dt = tau as Float - t as Float;
                 let wavelet = morlet_coefficient(dt, scale, self.omega0, self.sample_rate);
 
                 sum_re += sample * wavelet.re;
@@ -570,25 +574,25 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
     }
 
     /// Computes magnitude directly.
-    fn convolve_scale_magnitude(&self, signal: &[f32; N], scale: f32, output: &mut [f32; N]) {
+    fn convolve_scale_magnitude(&self, signal: &[Float; N], scale: Float, output: &mut [Float; N]) {
         let half_width = wavelet_half_width(scale, self.sample_rate);
 
         for (t, out) in output.iter_mut().enumerate() {
-            let mut sum_re = 0.0f32;
-            let mut sum_im = 0.0f32;
+            let mut sum_re: Float = 0.0;
+            let mut sum_im: Float = 0.0;
 
             let start = t.saturating_sub(half_width);
             let end = (t + half_width + 1).min(N);
 
             for (tau, &sample) in signal.iter().enumerate().take(end).skip(start) {
-                let dt = tau as f32 - t as f32;
+                let dt = tau as Float - t as Float;
                 let wavelet = morlet_coefficient(dt, scale, self.omega0, self.sample_rate);
 
                 sum_re += sample * wavelet.re;
                 sum_im += sample * (-wavelet.im);
             }
 
-            *out = libm::sqrtf(sum_re * sum_re + sum_im * sum_im);
+            *out = float::sqrt(sum_re * sum_re + sum_im * sum_im);
         }
     }
 }
@@ -607,13 +611,13 @@ impl<const N: usize, const S: usize> Cwt<N, S> {
 /// # Example
 ///
 /// ```
-/// use zerostone::MultiChannelCwt;
+/// use zerostone::{MultiChannelCwt, Float};
 ///
 /// // 8-channel CWT processor
 /// let cwt = MultiChannelCwt::<256, 8, 8>::new(250.0, 1.0, 50.0);
 ///
-/// let signals = [[0.0f32; 256]; 8];
-/// let mut power = [[[0.0f32; 256]; 8]; 8];
+/// let signals = [[0.0 as Float; 256]; 8];
+/// let mut power = [[[0.0 as Float; 256]; 8]; 8];
 /// cwt.power(&signals, &mut power);
 /// ```
 #[derive(Debug, Clone)]
@@ -629,7 +633,7 @@ impl<const N: usize, const S: usize, const C: usize> MultiChannelCwt<N, S, C> {
     /// * `sample_rate` - Sample rate in Hz
     /// * `min_freq` - Minimum frequency in Hz
     /// * `max_freq` - Maximum frequency in Hz
-    pub fn new(sample_rate: f32, min_freq: f32, max_freq: f32) -> Self {
+    pub fn new(sample_rate: Float, min_freq: Float, max_freq: Float) -> Self {
         Self {
             cwt: Cwt::new(sample_rate, min_freq, max_freq),
         }
@@ -637,9 +641,9 @@ impl<const N: usize, const S: usize, const C: usize> MultiChannelCwt<N, S, C> {
 
     /// Creates multi-channel CWT with custom wavelet parameters.
     pub fn with_wavelet(
-        sample_rate: f32,
-        min_freq: f32,
-        max_freq: f32,
+        sample_rate: Float,
+        min_freq: Float,
+        max_freq: Float,
         wavelet: WaveletType,
     ) -> Self {
         Self {
@@ -653,7 +657,7 @@ impl<const N: usize, const S: usize, const C: usize> MultiChannelCwt<N, S, C> {
     ///
     /// * `signals` - Input signals for all channels `[channel][time]`
     /// * `output` - Output buffer `[channel][scale][time]`
-    pub fn transform(&self, signals: &[[f32; N]; C], output: &mut [[[Complex; N]; S]; C]) {
+    pub fn transform(&self, signals: &[[Float; N]; C], output: &mut [[[Complex; N]; S]; C]) {
         for ch in 0..C {
             self.cwt.transform(&signals[ch], &mut output[ch]);
         }
@@ -665,14 +669,14 @@ impl<const N: usize, const S: usize, const C: usize> MultiChannelCwt<N, S, C> {
     ///
     /// * `signals` - Input signals `[channel][time]`
     /// * `output` - Output buffer `[channel][scale][time]`
-    pub fn power(&self, signals: &[[f32; N]; C], output: &mut [[[f32; N]; S]; C]) {
+    pub fn power(&self, signals: &[[Float; N]; C], output: &mut [[[Float; N]; S]; C]) {
         for ch in 0..C {
             self.cwt.power(&signals[ch], &mut output[ch]);
         }
     }
 
     /// Computes magnitude for all channels.
-    pub fn magnitude(&self, signals: &[[f32; N]; C], output: &mut [[[f32; N]; S]; C]) {
+    pub fn magnitude(&self, signals: &[[Float; N]; C], output: &mut [[[Float; N]; S]; C]) {
         for ch in 0..C {
             self.cwt.magnitude(&signals[ch], &mut output[ch]);
         }
@@ -684,12 +688,12 @@ impl<const N: usize, const S: usize, const C: usize> MultiChannelCwt<N, S, C> {
     }
 
     /// Returns the scales array.
-    pub fn scales(&self) -> &[f32; S] {
+    pub fn scales(&self) -> &[Float; S] {
         self.cwt.scales()
     }
 
     /// Returns pseudo-frequencies for all scales.
-    pub fn frequencies(&self) -> [f32; S] {
+    pub fn frequencies(&self) -> [Float; S] {
         self.cwt.frequencies()
     }
 }
@@ -769,22 +773,22 @@ mod tests {
         let cwt = Cwt::<256, 16>::new(250.0, 5.0, 50.0);
 
         // Generate 20 Hz sine wave
-        let mut signal = [0.0f32; 256];
+        let mut signal = [0.0 as Float; 256];
         for (i, s) in signal.iter_mut().enumerate() {
-            let t = i as f32 / 250.0;
-            *s = libm::sinf(2.0 * PI * 20.0 * t);
+            let t = i as Float / 250.0;
+            *s = float::sin(2.0 * PI * 20.0 * t);
         }
 
-        let mut power = [[0.0f32; 256]; 16];
+        let mut power = [[0.0 as Float; 256]; 16];
         cwt.power(&signal, &mut power);
 
         // Find scale with maximum average power
         let frequencies = cwt.frequencies();
-        let mut max_power = 0.0f32;
-        let mut max_freq = 0.0f32;
+        let mut max_power: Float = 0.0;
+        let mut max_freq: Float = 0.0;
 
         for (s, &freq) in frequencies.iter().enumerate() {
-            let avg_power: f32 = power[s].iter().sum::<f32>() / 256.0;
+            let avg_power: Float = power[s].iter().sum::<Float>() / 256.0;
             if avg_power > max_power {
                 max_power = avg_power;
                 max_freq = freq;
@@ -804,15 +808,15 @@ mod tests {
         let cwt = Cwt::<64, 4>::new(250.0, 5.0, 30.0);
 
         // Impulse signal
-        let mut signal = [0.0f32; 64];
+        let mut signal = [0.0 as Float; 64];
         signal[32] = 1.0;
 
-        let mut power = [[0.0f32; 64]; 4];
+        let mut power = [[0.0 as Float; 64]; 4];
         cwt.power(&signal, &mut power);
 
         // All scales should have some response to impulse
         for scale_power in &power {
-            let total: f32 = scale_power.iter().sum();
+            let total: Float = scale_power.iter().sum();
             assert!(total > 0.0);
         }
 
@@ -828,13 +832,13 @@ mod tests {
     fn test_transform_vs_power() {
         let cwt = Cwt::<64, 4>::new(250.0, 5.0, 30.0);
 
-        let mut signal = [0.0f32; 64];
+        let mut signal = [0.0 as Float; 64];
         for (i, s) in signal.iter_mut().enumerate() {
-            *s = libm::sinf(2.0 * PI * 10.0 * i as f32 / 250.0);
+            *s = float::sin(2.0 * PI * 10.0 * i as Float / 250.0);
         }
 
         let mut coeffs = [[Complex::new(0.0, 0.0); 64]; 4];
-        let mut power = [[0.0f32; 64]; 4];
+        let mut power = [[0.0 as Float; 64]; 4];
 
         cwt.transform(&signal, &mut coeffs);
         cwt.power(&signal, &mut power);
@@ -858,20 +862,20 @@ mod tests {
         let cwt = MultiChannelCwt::<64, 4, 2>::new(250.0, 5.0, 30.0);
 
         // Different signals per channel
-        let mut signals = [[0.0f32; 64]; 2];
+        let mut signals = [[0.0 as Float; 64]; 2];
         for (i, s) in signals[0].iter_mut().enumerate() {
-            *s = libm::sinf(2.0 * PI * 10.0 * i as f32 / 250.0);
+            *s = float::sin(2.0 * PI * 10.0 * i as Float / 250.0);
         }
         for (i, s) in signals[1].iter_mut().enumerate() {
-            *s = libm::sinf(2.0 * PI * 25.0 * i as f32 / 250.0);
+            *s = float::sin(2.0 * PI * 25.0 * i as Float / 250.0);
         }
 
-        let mut output = [[[0.0f32; 64]; 4]; 2];
+        let mut output = [[[0.0 as Float; 64]; 4]; 2];
         cwt.power(&signals, &mut output);
 
         // Both channels should have non-zero power
-        let ch0_power: f32 = output[0].iter().flat_map(|r| r.iter()).sum();
-        let ch1_power: f32 = output[1].iter().flat_map(|r| r.iter()).sum();
+        let ch0_power: Float = output[0].iter().flat_map(|r| r.iter()).sum();
+        let ch1_power: Float = output[1].iter().flat_map(|r| r.iter()).sum();
 
         assert!(ch0_power > 0.0);
         assert!(ch1_power > 0.0);
@@ -881,7 +885,7 @@ mod tests {
     fn test_transform_scale_matches_full() {
         let cwt = Cwt::<64, 4>::new(250.0, 5.0, 30.0);
 
-        let signal = [0.5f32; 64];
+        let signal = [0.5 as Float; 64];
         let mut full_output = [[Complex::new(0.0, 0.0); 64]; 4];
         let mut single_output = [Complex::new(0.0, 0.0); 64];
 

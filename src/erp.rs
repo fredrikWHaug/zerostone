@@ -50,6 +50,7 @@
 //!
 //! - Rivet et al. (2009): "xDAWN Algorithm to Enhance Evoked Potentials: Application to Brain-Computer Interface"
 
+use crate::float::Float;
 use crate::linalg::{generalized_eigen, Matrix};
 use crate::stats::OnlineCov;
 
@@ -83,7 +84,7 @@ pub enum ErpError {
 ///
 /// # Arguments
 ///
-/// * `epochs` - Slice of references to epochs, each epoch is `&[[f64; C]]` (samples × channels)
+/// * `epochs` - Slice of references to epochs, each epoch is `&[[Float; C]]` (samples × channels)
 /// * `output` - Output array to store averaged epoch (samples × channels)
 ///
 /// # Example
@@ -102,13 +103,13 @@ pub enum ErpError {
 /// assert!((avg[0][0] - 1.25).abs() < 1e-10);
 /// assert!((avg[0][1] - 2.25).abs() < 1e-10);
 /// ```
-pub fn epoch_average<const C: usize>(epochs: &[&[[f64; C]]], output: &mut [[f64; C]]) {
+pub fn epoch_average<const C: usize>(epochs: &[&[[Float; C]]], output: &mut [[Float; C]]) {
     if epochs.is_empty() {
         return;
     }
 
     let n_samples = output.len();
-    let n_epochs = epochs.len() as f64;
+    let n_epochs = epochs.len() as Float;
 
     // Zero output
     for sample in output.iter_mut() {
@@ -182,13 +183,13 @@ pub fn epoch_average<const C: usize>(epochs: &[&[[f64; C]]], output: &mut [[f64;
 /// assert!(filters[0][0].abs() > 0.1 || filters[0][1].abs() > 0.1);
 /// ```
 pub fn xdawn_filters<const C: usize, const M: usize, const F: usize>(
-    target_epochs: &[&[[f64; C]]],
-    nontarget_epochs: &[&[[f64; C]]],
-    evoked_workspace: &mut [[f64; C]],
-    filters: &mut [[f64; C]; F],
-    regularization: f64,
+    target_epochs: &[&[[Float; C]]],
+    nontarget_epochs: &[&[[Float; C]]],
+    evoked_workspace: &mut [[Float; C]],
+    filters: &mut [[Float; C]; F],
+    regularization: Float,
     max_iters: usize,
-    tol: f64,
+    tol: Float,
 ) -> Result<(), ErpError> {
     if target_epochs.is_empty() || nontarget_epochs.is_empty() {
         return Err(ErpError::InsufficientData);
@@ -287,15 +288,15 @@ pub fn xdawn_filters<const C: usize, const M: usize, const F: usize>(
 /// assert!((output[1][0] - 3.5).abs() < 1e-10);
 /// ```
 pub fn apply_spatial_filter<const C: usize, const F: usize>(
-    epoch: &[[f64; C]],
-    filters: &[[f64; C]; F],
-    output: &mut [[f64; F]],
+    epoch: &[[Float; C]],
+    filters: &[[Float; C]; F],
+    output: &mut [[Float; F]],
 ) {
     let n_samples = epoch.len();
 
     for t in 0..n_samples {
         for f in 0..F {
-            let mut sum = 0.0;
+            let mut sum: Float = 0.0;
             for c in 0..C {
                 sum += epoch[t][c] * filters[f][c];
             }
@@ -307,6 +308,7 @@ pub fn apply_spatial_filter<const C: usize, const F: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::float;
 
     extern crate alloc;
     use alloc::vec;
@@ -335,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_epoch_average_empty() {
-        let epochs: &[&[[f64; 2]]] = &[];
+        let epochs: &[&[[Float; 2]]] = &[];
         let mut avg = [[0.0; 2]; 2];
         epoch_average(epochs, &mut avg);
 
@@ -381,8 +383,8 @@ mod tests {
         let mut target1 = [[0.0; 2]; N_SAMPLES];
         let mut target2 = [[0.0; 2]; N_SAMPLES];
         for t in 0..N_SAMPLES {
-            let phase = (t as f64 / N_SAMPLES as f64) * 2.0 * core::f64::consts::PI;
-            let signal = 2.0 * libm::sin(phase);
+            let phase = (t as Float / N_SAMPLES as Float) * 2.0 * float::PI;
+            let signal = 2.0 * float::sin(phase);
             target1[t] = [signal, signal * 1.2];
             target2[t] = [signal * 0.9, signal * 1.1];
         }
@@ -391,8 +393,8 @@ mod tests {
         let mut nontarget1 = [[0.0; 2]; N_SAMPLES];
         let mut nontarget2 = [[0.0; 2]; N_SAMPLES];
         for t in 0..N_SAMPLES {
-            nontarget1[t] = [0.1 * (t as f64 / 10.0), 0.12 * (t as f64 / 10.0)];
-            nontarget2[t] = [0.09 * (t as f64 / 10.0), 0.11 * (t as f64 / 10.0)];
+            nontarget1[t] = [0.1 * (t as Float / 10.0), 0.12 * (t as Float / 10.0)];
+            nontarget2[t] = [0.09 * (t as Float / 10.0), 0.11 * (t as Float / 10.0)];
         }
 
         let target_epochs = vec![&target1[..], &target2[..]];
@@ -415,7 +417,8 @@ mod tests {
         assert!(result.is_ok());
 
         // Filter should have non-zero weights
-        let filter_norm = (filters[0][0].powi(2) + filters[0][1].powi(2)).sqrt();
+        let filter_norm =
+            float::sqrt(filters[0][0] * filters[0][0] + filters[0][1] * filters[0][1]);
         assert!(
             filter_norm > 0.1,
             "Filter should have significant magnitude"
@@ -424,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_xdawn_filters_insufficient_data() {
-        let target_epochs: &[&[[f64; 2]]] = &[];
+        let target_epochs: &[&[[Float; 2]]] = &[];
         let nontarget_epochs = vec![&[[0.0; 2]; 10][..]];
         let mut evoked_workspace = [[0.0; 2]; 10];
         let mut filters = [[0.0; 2]; 1];
@@ -452,7 +455,7 @@ mod tests {
         let mut target1 = [[0.0; 2]; N_SAMPLES];
         let mut target2 = [[0.0; 2]; N_SAMPLES];
         for t in 0..N_SAMPLES {
-            let val = (t as f64) / 10.0;
+            let val = (t as Float) / 10.0;
             target1[t] = [val, val * 1.5];
             target2[t] = [val * 1.1, val * 1.4];
         }
@@ -484,7 +487,7 @@ mod tests {
         // Apply to new epoch
         let mut new_epoch = [[0.0; 2]; N_SAMPLES];
         for t in 0..N_SAMPLES {
-            new_epoch[t] = [(t as f64) / 10.0, (t as f64) * 1.5 / 10.0];
+            new_epoch[t] = [(t as Float) / 10.0, (t as Float) * 1.5 / 10.0];
         }
 
         let mut output = [[0.0; 1]; N_SAMPLES];

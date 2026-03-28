@@ -47,7 +47,7 @@
 //! bank.add_template(&template, 0).unwrap();
 //!
 //! // Inject a spike into noise-free single-channel data
-//! let mut data = [[0.0f64; 1]; 30];
+//! let mut data = [[0.0; 1]; 30];
 //! for i in 0..8 {
 //!     data[10 + i] = [template[i]];
 //! }
@@ -59,6 +59,8 @@
 //! assert_eq!(detections[0].template_idx, 0);
 //! assert!((detections[0].amplitude - 1.0).abs() < 0.2);
 //! ```
+
+use crate::float::{self, Float};
 
 /// A single detection from matched filter processing.
 ///
@@ -83,11 +85,11 @@ pub struct MatchedDetection {
     /// Index of the template that produced this detection.
     pub template_idx: usize,
     /// Raw detection statistic `d(t) = Σ h[τ] · x[t+τ]`.
-    pub statistic: f64,
+    pub statistic: Float,
     /// Normalized statistic `z(t) = d(t) / ‖h‖`. Under H0: z ~ N(0,1).
-    pub normalized: f64,
+    pub normalized: Float,
     /// Amplitude estimate `α = d(t) / ‖h‖²`.
-    pub amplitude: f64,
+    pub amplitude: Float,
 }
 
 impl MatchedDetection {
@@ -122,11 +124,11 @@ impl MatchedDetection {
 /// ```
 pub struct MatchedFilterBank<const W: usize, const N: usize> {
     /// Filter kernels (= templates for pre-whitened data).
-    kernels: [[f64; W]; N],
+    kernels: [[Float; W]; N],
     /// Squared norm of each kernel: ‖h‖² = Σ h²[τ].
-    norms_sq: [f64; N],
+    norms_sq: [Float; N],
     /// Norm of each kernel: ‖h‖ = √(‖h‖²).
-    norms: [f64; N],
+    norms: [Float; N],
     /// Peak channel for each template.
     peak_channels: [usize; N],
     /// Number of active filters.
@@ -188,7 +190,7 @@ impl<const W: usize, const N: usize> MatchedFilterBank<W, N> {
     /// // Bank full
     /// assert_eq!(bank.add_template(&[1.0; 4], 0), None);
     /// ```
-    pub fn add_template(&mut self, template: &[f64; W], peak_channel: usize) -> Option<usize> {
+    pub fn add_template(&mut self, template: &[Float; W], peak_channel: usize) -> Option<usize> {
         if self.n_filters >= N {
             return None;
         }
@@ -204,7 +206,7 @@ impl<const W: usize, const N: usize> MatchedFilterBank<W, N> {
         let idx = self.n_filters;
         self.kernels[idx] = *template;
         self.norms_sq[idx] = norm_sq;
-        self.norms[idx] = libm::sqrt(norm_sq);
+        self.norms[idx] = float::sqrt(norm_sq);
         self.peak_channels[idx] = peak_channel;
         self.n_filters += 1;
         Some(idx)
@@ -230,7 +232,7 @@ impl<const W: usize, const N: usize> MatchedFilterBank<W, N> {
     /// assert_eq!(bank.n_filters(), 1);
     /// ```
     pub fn from_cluster_templates(
-        templates: &[[f64; W]; N],
+        templates: &[[Float; W]; N],
         counts: &[u32; N],
         peak_channels: &[usize; N],
         n_clusters: usize,
@@ -252,7 +254,7 @@ impl<const W: usize, const N: usize> MatchedFilterBank<W, N> {
     /// This is the theoretical SNR of the template in whitened space:
     /// a spike matching this template exactly will produce a normalized
     /// detection statistic of ‖h‖ standard deviations above noise.
-    pub fn template_snr(&self, idx: usize) -> f64 {
+    pub fn template_snr(&self, idx: usize) -> Float {
         if idx < self.n_filters {
             self.norms[idx]
         } else {
@@ -274,7 +276,7 @@ impl<const W: usize, const N: usize> MatchedFilterBank<W, N> {
     /// `window` must be a W-sample slice from the data on the filter's peak channel.
     /// Returns `(statistic, normalized, amplitude)`.
     #[inline]
-    fn correlate_window(&self, filter_idx: usize, window: &[f64; W]) -> (f64, f64, f64) {
+    fn correlate_window(&self, filter_idx: usize, window: &[Float; W]) -> (Float, Float, Float) {
         let kernel = &self.kernels[filter_idx];
         let mut dot = 0.0;
         let mut w = 0;
@@ -319,7 +321,7 @@ impl<const W: usize, const N: usize> MatchedFilterBank<W, N> {
     /// bank.add_template(&template, 0).unwrap();
     ///
     /// // Single-channel data with one spike
-    /// let mut data = [0.0f64; 40];
+    /// let mut data = [0.0; 40];
     /// for i in 0..8 { data[12 + i] = 1.5 * template[i]; }
     ///
     /// let mut det = [MatchedDetection::ZERO; 16];
@@ -328,9 +330,9 @@ impl<const W: usize, const N: usize> MatchedFilterBank<W, N> {
     /// ```
     pub fn detect_interleaved(
         &self,
-        data: &[f64],
+        data: &[Float],
         n_channels: usize,
-        threshold: f64,
+        threshold: Float,
         refractory: usize,
         pre_samples: usize,
         out: &mut [MatchedDetection],
@@ -369,7 +371,7 @@ impl<const W: usize, const N: usize> MatchedFilterBank<W, N> {
             while t < end_t {
                 // Extract window: data[(t - pre_samples) .. (t - pre_samples + W)] on channel ch
                 let win_start = t - pre_samples;
-                let mut window = [0.0f64; W];
+                let mut window = [0.0; W];
                 let mut w = 0;
                 while w < W {
                     window[w] = data[(win_start + w) * n_channels + ch];
@@ -391,7 +393,7 @@ impl<const W: usize, const N: usize> MatchedFilterBank<W, N> {
                     let mut tt = t + 1;
                     while tt < scan_end {
                         let ws = tt - pre_samples;
-                        let mut w2 = [0.0f64; W];
+                        let mut w2 = [0.0; W];
                         let mut ww = 0;
                         while ww < W {
                             w2[ww] = data[(ws + ww) * n_channels + ch];
@@ -486,7 +488,7 @@ impl<const W: usize, const N: usize> MatchedFilterBank<W, N> {
     /// bank.add_template(&template, 0).unwrap();
     ///
     /// // 2-channel data, spike on channel 0
-    /// let mut data = [[0.0f64; 2]; 20];
+    /// let mut data = [[0.0; 2]; 20];
     /// for i in 0..4 { data[6 + i][0] = template[i]; }
     ///
     /// let mut det = [MatchedDetection::ZERO; 8];
@@ -495,8 +497,8 @@ impl<const W: usize, const N: usize> MatchedFilterBank<W, N> {
     /// ```
     pub fn detect<const C: usize>(
         &self,
-        data: &[[f64; C]],
-        threshold: f64,
+        data: &[[Float; C]],
+        threshold: Float,
         refractory: usize,
         out: &mut [MatchedDetection],
     ) -> usize {
@@ -509,7 +511,7 @@ impl<const W: usize, const N: usize> MatchedFilterBank<W, N> {
 
         // Safety: [[f64; C]] has the same memory layout as [f64] with stride C
         let flat =
-            unsafe { core::slice::from_raw_parts(data.as_ptr() as *const f64, data.len() * C) };
+            unsafe { core::slice::from_raw_parts(data.as_ptr() as *const Float, data.len() * C) };
         self.detect_interleaved(flat, C, threshold, refractory, pre_samples, out)
     }
 }
@@ -558,23 +560,23 @@ impl<const W: usize, const N: usize> MatchedFilterBank<W, N> {
 /// ```
 pub struct OnlineMatchedDetector<const W: usize, const N: usize, const MC: usize> {
     /// Circular buffer: `buffer[ch][pos]` stores the last W samples per channel.
-    buffer: [[f64; W]; MC],
+    buffer: [[Float; W]; MC],
     /// Write position in the circular buffer (wraps at W).
     write_pos: usize,
     /// Total samples pushed (for absolute sample index).
     samples_seen: usize,
     /// Filter kernels (copied from bank at construction).
-    kernels: [[f64; W]; N],
+    kernels: [[Float; W]; N],
     /// Template norms.
-    norms: [f64; N],
+    norms: [Float; N],
     /// Template squared norms.
-    norms_sq: [f64; N],
+    norms_sq: [Float; N],
     /// Peak channel per filter.
     peak_channels: [usize; N],
     /// Number of active filters.
     n_filters: usize,
     /// Detection threshold in sigma units.
-    threshold: f64,
+    threshold: Float,
     /// Refractory period in samples.
     refractory: usize,
     /// Last detection sample per filter (for refractory enforcement).
@@ -583,7 +585,7 @@ pub struct OnlineMatchedDetector<const W: usize, const N: usize, const MC: usize
     has_detected: [bool; N],
     /// Running dot products for incremental update: `dots[f]` accumulates
     /// the correlation of filter f with the current buffer contents.
-    dots: [f64; N],
+    dots: [Float; N],
     /// Pre-samples offset (peak position within template).
     pre_samples: usize,
 }
@@ -596,7 +598,7 @@ impl<const W: usize, const N: usize, const MC: usize> OnlineMatchedDetector<W, N
     /// * `bank` - The matched filter bank (templates)
     /// * `threshold` - Detection threshold in sigma units
     /// * `refractory` - Minimum samples between detections per filter
-    pub fn new(bank: &MatchedFilterBank<W, N>, threshold: f64, refractory: usize) -> Self {
+    pub fn new(bank: &MatchedFilterBank<W, N>, threshold: Float, refractory: usize) -> Self {
         let mut det = Self {
             buffer: [[0.0; W]; MC],
             write_pos: 0,
@@ -635,7 +637,7 @@ impl<const W: usize, const N: usize, const MC: usize> OnlineMatchedDetector<W, N
     ///
     /// The detection's `sample` field is the absolute sample index
     /// (counting from the first push).
-    pub fn push(&mut self, sample: &[f64; MC]) -> Option<MatchedDetection> {
+    pub fn push(&mut self, sample: &[Float; MC]) -> Option<MatchedDetection> {
         let pos = self.write_pos;
 
         // Update circular buffer
@@ -662,7 +664,7 @@ impl<const W: usize, const N: usize, const MC: usize> OnlineMatchedDetector<W, N
         // The buffer is circular: position write_pos is the oldest sample,
         // write_pos+1 is the second oldest, etc.
         let mut best_f = 0usize;
-        let mut best_norm = f64::NEG_INFINITY;
+        let mut best_norm = Float::NEG_INFINITY;
         let mut best_stat = 0.0;
         let mut best_amp = 0.0;
         let mut any_above = false;
@@ -745,18 +747,18 @@ mod tests {
     use super::*;
 
     // Typical negative-going spike template (48 samples)
-    fn spike_template_48() -> [f64; 48] {
-        let mut t = [0.0f64; 48];
+    fn spike_template_48() -> [Float; 48] {
+        let mut t = [0.0; 48];
         // Gaussian-ish negative spike at sample 20 (the "peak")
         for (i, tv) in t.iter_mut().enumerate() {
-            let x = (i as f64 - 20.0) / 4.0;
-            *tv = -5.0 * libm::exp(-0.5 * x * x);
+            let x = (i as Float - 20.0) / 4.0;
+            *tv = -5.0 * float::exp(-0.5 * x * x);
         }
         t
     }
 
     // Short 8-sample template for fast tests
-    fn spike_template_8() -> [f64; 8] {
+    fn spike_template_8() -> [Float; 8] {
         [0.2, -0.5, -2.0, -5.0, -3.0, -1.0, 0.5, 0.3]
     }
 
@@ -774,7 +776,7 @@ mod tests {
         assert_eq!(bank.n_filters(), 1);
         assert_eq!(bank.peak_channel(0), 3);
         // SNR should be the template norm
-        let expected_norm = libm::sqrt(t.iter().map(|x| x * x).sum::<f64>());
+        let expected_norm = float::sqrt(t.iter().map(|x| x * x).sum::<Float>());
         assert!((bank.template_snr(0) - expected_norm).abs() < 1e-10);
     }
 
@@ -815,7 +817,7 @@ mod tests {
         bank.add_template(&t, 0).unwrap();
 
         // Single-channel data with one spike at sample 10
-        let mut data = [[0.0f64; 1]; 30];
+        let mut data = [[0.0; 1]; 30];
         for i in 0..8 {
             data[7 + i][0] = t[i]; // unit amplitude spike
         }
@@ -838,7 +840,7 @@ mod tests {
         bank.add_template(&t, 0).unwrap();
 
         // Spike with amplitude 2.0
-        let mut data = [[0.0f64; 1]; 30];
+        let mut data = [[0.0; 1]; 30];
         for i in 0..8 {
             data[7 + i][0] = 2.0 * t[i];
         }
@@ -860,7 +862,7 @@ mod tests {
         bank.add_template(&t, 0).unwrap();
 
         // Two spikes separated by 20 samples
-        let mut data = [[0.0f64; 1]; 50];
+        let mut data = [[0.0; 1]; 50];
         for i in 0..8 {
             data[5 + i][0] = t[i];
             data[25 + i][0] = 1.5 * t[i];
@@ -882,7 +884,7 @@ mod tests {
         bank.add_template(&t2, 1).unwrap();
 
         // Channel 0 has template 1 spike, channel 1 has template 2 spike
-        let mut data = [[0.0f64; 2]; 40];
+        let mut data = [[0.0; 2]; 40];
         for i in 0..8 {
             data[5 + i][0] = t1[i]; // template 0 on channel 0
             data[25 + i][1] = t2[i]; // template 1 on channel 1
@@ -907,7 +909,7 @@ mod tests {
         bank.add_template(&t, 0).unwrap();
 
         // Two spikes very close together (only 5 samples apart, refractory = 10)
-        let mut data = [[0.0f64; 1]; 30];
+        let mut data = [[0.0; 1]; 30];
         for i in 0..8 {
             data[3 + i][0] = t[i];
             data[8 + i][0] += t[i]; // overlapping
@@ -925,7 +927,7 @@ mod tests {
         bank.add_template(&t, 0).unwrap();
 
         // Pure zeros (no noise, no spikes)
-        let data = [[0.0f64; 1]; 100];
+        let data = [[0.0; 1]; 100];
         let mut det = [MatchedDetection::ZERO; 8];
         let n = bank.detect(&data, 3.0, 8, &mut det);
         assert_eq!(n, 0, "no spikes in zero data");
@@ -938,7 +940,7 @@ mod tests {
         bank.add_template(&t, 0).unwrap();
 
         // Inject spike at known position
-        let mut data = [[0.0f64; 2]; 200];
+        let mut data = [[0.0; 2]; 200];
         for i in 0..48 {
             data[80 + i][0] = t[i];
         }
@@ -954,8 +956,8 @@ mod tests {
         // Demonstrate matched filter SNR gain: a weak spike detectable by
         // matched filter but below amplitude threshold.
         let t = spike_template_8();
-        let norm = libm::sqrt(t.iter().map(|x| x * x).sum::<f64>());
-        let peak = t.iter().copied().fold(f64::INFINITY, f64::min).abs();
+        let norm = float::sqrt(t.iter().map(|x| x * x).sum::<Float>());
+        let peak = t.iter().copied().fold(float::INFINITY, Float::min).abs();
 
         // SNR in amplitude space: peak / 1.0 (unit noise)
         // SNR in matched filter space: norm * amplitude / 1.0
@@ -1107,7 +1109,7 @@ mod tests {
         bank.add_template(&t, 0).unwrap();
 
         // 2-channel interleaved data, spike on channel 0
-        let mut data = [0.0f64; 80]; // 40 samples, 2 channels
+        let mut data = [0.0; 80]; // 40 samples, 2 channels
         for i in 0..8 {
             data[(10 + i) * 2] = t[i]; // channel 0
         }
@@ -1139,7 +1141,7 @@ mod tests {
         bank.add_template(&t, 0).unwrap();
 
         for alpha in [0.5, 1.0, 1.5, 2.0, 3.0] {
-            let mut window = [0.0f64; 8];
+            let mut window = [0.0; 8];
             for i in 0..8 {
                 window[i] = alpha * t[i];
             }
@@ -1157,8 +1159,8 @@ mod tests {
     fn test_normalized_statistic_distribution() {
         // For a unit-amplitude spike (data = template), normalized = ‖h‖
         let t = spike_template_8();
-        let norm_sq: f64 = t.iter().map(|x| x * x).sum();
-        let expected_norm = libm::sqrt(norm_sq);
+        let norm_sq: Float = t.iter().map(|x| x * x).sum();
+        let expected_norm = float::sqrt(norm_sq);
 
         let mut bank = MatchedFilterBank::<8, 2>::new();
         bank.add_template(&t, 0).unwrap();
@@ -1177,8 +1179,8 @@ mod tests {
         // Matched filter detects weaker spikes than amplitude threshold would.
         // Template peak = 5.0, template norm = ~6.3 for spike_template_8
         let t = spike_template_8();
-        let peak = t.iter().copied().fold(f64::INFINITY, f64::min).abs();
-        let norm = libm::sqrt(t.iter().map(|x| x * x).sum::<f64>());
+        let peak = t.iter().copied().fold(float::INFINITY, Float::min).abs();
+        let norm = float::sqrt(t.iter().map(|x| x * x).sum::<Float>());
 
         // A spike at amplitude 0.6× would have:
         //   peak amplitude = 0.6 * 5.0 = 3.0 (below threshold=4.0 in amplitude space)
@@ -1208,7 +1210,7 @@ mod kani_proofs {
     #[kani::proof]
     fn add_template_panic_free() {
         let mut bank = MatchedFilterBank::<4, 2>::new();
-        let t: [f64; 4] = [kani::any(), kani::any(), kani::any(), kani::any()];
+        let t: [Float; 4] = [kani::any(), kani::any(), kani::any(), kani::any()];
         // Filter NaN/Inf to valid floating point
         for v in &t {
             kani::assume(v.is_finite());
@@ -1224,7 +1226,7 @@ mod kani_proofs {
         let mut bank = MatchedFilterBank::<4, 2>::new();
         let t = [1.0, -2.0, -5.0, 1.0];
         bank.add_template(&t, 0);
-        let w: [f64; 4] = [kani::any(), kani::any(), kani::any(), kani::any()];
+        let w: [Float; 4] = [kani::any(), kani::any(), kani::any(), kani::any()];
         for v in &w {
             kani::assume(v.is_finite());
             kani::assume(v.abs() < 1e6);
@@ -1240,7 +1242,7 @@ mod kani_proofs {
     #[kani::proof]
     fn template_snr_nonneg_finite() {
         let mut bank = MatchedFilterBank::<4, 2>::new();
-        let t: [f64; 4] = [kani::any(), kani::any(), kani::any(), kani::any()];
+        let t: [Float; 4] = [kani::any(), kani::any(), kani::any(), kani::any()];
         for v in &t {
             kani::assume(v.is_finite());
             kani::assume(v.abs() > 0.01); // ensure non-zero
@@ -1278,7 +1280,7 @@ mod kani_proofs {
         let mut bank = MatchedFilterBank::<4, 2>::new();
         bank.add_template(&t, 0);
         let mut det = OnlineMatchedDetector::<4, 2, 1>::new(&bank, 3.0, 4);
-        let sample: [f64; 1] = [kani::any()];
+        let sample: [Float; 1] = [kani::any()];
         kani::assume(sample[0].is_finite());
         kani::assume(sample[0].abs() < 1e6);
         let _ = det.push(&sample);

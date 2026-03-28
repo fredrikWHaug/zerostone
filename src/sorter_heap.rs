@@ -7,25 +7,26 @@
 //! Heap-allocated sorting pipeline for >128 channels.
 //!
 //! Provides `sort_heap()` for channel counts not supported by the const-generic
-//! `sort_multichannel` (e.g. 256, 384 for Neuropixels). Uses `Vec<f64>` for all
+//! `sort_multichannel` (e.g. 256, 384 for Neuropixels). Uses `Vec<Float>` for all
 //! channel-dimension arrays while keeping W, K, N as const generics.
 //!
-//! Data layout: row-major flat `&mut [f64]` of shape `(n_samples, n_channels)`.
+//! Data layout: row-major flat `&mut [Float]` of shape `(n_samples, n_channels)`.
 //!
 //! # Example
 //!
 //! ```
+//! use zerostone::float::{self, Float};
 //! use zerostone::sorter::SortConfig;
 //! use zerostone::sorter_heap::sort_heap;
 //!
 //! let n_ch = 256;
 //! let n_samples = 3000;
-//! let mut data = vec![0.0f64; n_samples * n_ch];
+//! let mut data = vec![0.0 as Float; n_samples * n_ch];
 //! // Fill with small noise
 //! for (i, d) in data.iter_mut().enumerate() {
-//!     *d = ((i * 17 + 3) % 100) as f64 * 0.001 - 0.05;
+//!     *d = ((i * 17 + 3) % 100) as Float * 0.001 - 0.05;
 //! }
-//! let positions: Vec<[f64; 2]> = (0..n_ch).map(|i| [0.0, i as f64 * 25.0]).collect();
+//! let positions: Vec<[Float; 2]> = (0..n_ch).map(|i| [0.0, i as Float * 25.0]).collect();
 //! let config = SortConfig::default();
 //! let result = sort_heap(&config, &positions, &mut data, n_samples, n_ch);
 //! assert!(result.is_ok());
@@ -37,6 +38,7 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::float::{self, Float};
 use crate::linalg::LinalgError;
 use crate::online_kmeans::OnlineKMeans;
 use crate::sorter::{amplitude_bimodality_split, merge_clusters, split_clusters, SortConfig};
@@ -55,7 +57,7 @@ const N: usize = 32; // max clusters
 
 /// Heap-allocated square matrix with row-major storage.
 struct HeapMatrix {
-    data: Vec<f64>,
+    data: Vec<Float>,
     dim: usize,
 }
 
@@ -76,12 +78,12 @@ impl HeapMatrix {
     }
 
     #[inline]
-    fn get(&self, i: usize, j: usize) -> f64 {
+    fn get(&self, i: usize, j: usize) -> Float {
         self.data[i * self.dim + j]
     }
 
     #[inline]
-    fn set(&mut self, i: usize, j: usize, v: f64) {
+    fn set(&mut self, i: usize, j: usize, v: Float) {
         self.data[i * self.dim + j] = v;
     }
 
@@ -90,8 +92,8 @@ impl HeapMatrix {
     fn eigen_symmetric(
         &self,
         max_iters: usize,
-        tol: f64,
-    ) -> Result<(Vec<f64>, HeapMatrix), LinalgError> {
+        tol: Float,
+    ) -> Result<(Vec<Float>, HeapMatrix), LinalgError> {
         let c = self.dim;
         let mut a = Self {
             data: self.data.clone(),
@@ -103,7 +105,7 @@ impl HeapMatrix {
         for val in &a.data {
             matrix_norm += val * val;
         }
-        matrix_norm = libm::sqrt(matrix_norm);
+        matrix_norm = float::sqrt(matrix_norm);
         if matrix_norm < 1e-300 {
             matrix_norm = 1.0;
         }
@@ -117,16 +119,16 @@ impl HeapMatrix {
                     off_diag_norm_sq += val * val;
                 }
             }
-            let off_diag_norm = libm::sqrt(2.0 * off_diag_norm_sq);
+            let off_diag_norm = float::sqrt(2.0 * off_diag_norm_sq);
 
             if off_diag_norm < abs_tol {
-                let mut eigenvalues: Vec<f64> = (0..c).map(|i| a.get(i, i)).collect();
+                let mut eigenvalues: Vec<Float> = (0..c).map(|i| a.get(i, i)).collect();
                 sort_eigen_heap(&mut eigenvalues, &mut v);
                 return Ok((eigenvalues, v));
             }
 
             let threshold = if sweep < 3 {
-                0.2 * off_diag_norm_sq / ((c * c) as f64)
+                0.2 * off_diag_norm_sq / ((c * c) as Float)
             } else {
                 0.0
             };
@@ -134,14 +136,14 @@ impl HeapMatrix {
             for i in 0..c {
                 for j in (i + 1)..c {
                     let a_ij = a.get(i, j);
-                    let abs_a_ij = libm::fabs(a_ij);
+                    let abs_a_ij = float::abs(a_ij);
 
                     if sweep < 3 && abs_a_ij * abs_a_ij < threshold {
                         continue;
                     }
                     if sweep >= 3 {
-                        let a_ii = libm::fabs(a.get(i, i));
-                        let a_jj = libm::fabs(a.get(j, j));
+                        let a_ii = float::abs(a.get(i, i));
+                        let a_jj = float::abs(a.get(j, j));
                         if abs_a_ij < 1e-15 * (a_ii + a_jj) {
                             continue;
                         }
@@ -161,27 +163,27 @@ impl HeapMatrix {
     }
 }
 
-fn jacobi_rotation(a: &HeapMatrix, i: usize, j: usize) -> (f64, f64) {
+fn jacobi_rotation(a: &HeapMatrix, i: usize, j: usize) -> (Float, Float) {
     let a_ii = a.get(i, i);
     let a_jj = a.get(j, j);
     let a_ij = a.get(i, j);
     if a_ii == a_jj {
-        let c = libm::cos(core::f64::consts::PI / 4.0);
-        let s = libm::sin(core::f64::consts::PI / 4.0);
+        let c = float::cos(float::PI / 4.0);
+        let s = float::sin(float::PI / 4.0);
         return (c, s);
     }
     let tau = (a_jj - a_ii) / (2.0 * a_ij);
     let t = if tau >= 0.0 {
-        1.0 / (tau + libm::sqrt(1.0 + tau * tau))
+        1.0 / (tau + float::sqrt(1.0 + tau * tau))
     } else {
-        -1.0 / (-tau + libm::sqrt(1.0 + tau * tau))
+        -1.0 / (-tau + float::sqrt(1.0 + tau * tau))
     };
-    let cos_t = 1.0 / libm::sqrt(1.0 + t * t);
+    let cos_t = 1.0 / float::sqrt(1.0 + t * t);
     let sin_t = t * cos_t;
     (cos_t, sin_t)
 }
 
-fn apply_rotation(a: &mut HeapMatrix, i: usize, j: usize, c: f64, s: f64) {
+fn apply_rotation(a: &mut HeapMatrix, i: usize, j: usize, c: Float, s: Float) {
     let dim = a.dim;
     let a_ii = a.get(i, i);
     let a_jj = a.get(j, j);
@@ -204,7 +206,7 @@ fn apply_rotation(a: &mut HeapMatrix, i: usize, j: usize, c: f64, s: f64) {
     }
 }
 
-fn apply_rotation_vectors(v: &mut HeapMatrix, i: usize, j: usize, c: f64, s: f64) {
+fn apply_rotation_vectors(v: &mut HeapMatrix, i: usize, j: usize, c: Float, s: Float) {
     let dim = v.dim;
     for k in 0..dim {
         let v_ki = v.get(k, i);
@@ -214,7 +216,7 @@ fn apply_rotation_vectors(v: &mut HeapMatrix, i: usize, j: usize, c: f64, s: f64
     }
 }
 
-fn sort_eigen_heap(eigenvalues: &mut [f64], eigenvectors: &mut HeapMatrix) {
+fn sort_eigen_heap(eigenvalues: &mut [Float], eigenvectors: &mut HeapMatrix) {
     let c = eigenvalues.len();
     for i in 0..c {
         let mut max_idx = i;
@@ -239,10 +241,10 @@ fn sort_eigen_heap(eigenvalues: &mut [f64], eigenvectors: &mut HeapMatrix) {
 // ---------------------------------------------------------------------------
 
 /// Estimate per-channel noise via MAD on flat row-major data.
-fn estimate_noise_heap(data: &[f64], n_samples: usize, n_ch: usize) -> Vec<f64> {
-    let mut noise = vec![1.0f64; n_ch];
+fn estimate_noise_heap(data: &[Float], n_samples: usize, n_ch: usize) -> Vec<Float> {
+    let mut noise = vec![1.0 as Float; n_ch];
     let cal_n = n_samples.min(2000);
-    let mut buf = vec![0.0f64; cal_n];
+    let mut buf = vec![0.0 as Float; cal_n];
     for ch in 0..n_ch {
         for t in 0..cal_n {
             buf[t] = data[t * n_ch + ch];
@@ -254,7 +256,7 @@ fn estimate_noise_heap(data: &[f64], n_samples: usize, n_ch: usize) -> Vec<f64> 
             (buf[cal_n / 2 - 1] + buf[cal_n / 2]) * 0.5
         };
         for t in 0..cal_n {
-            buf[t] = libm::fabs(buf[t] - median);
+            buf[t] = float::abs(buf[t] - median);
         }
         buf.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
         let mad = if cal_n % 2 == 1 {
@@ -271,11 +273,11 @@ fn estimate_noise_heap(data: &[f64], n_samples: usize, n_ch: usize) -> Vec<f64> 
 }
 
 /// Compute sample covariance matrix (flat C*C row-major).
-fn compute_covariance_heap(data: &[f64], n_samples: usize, n_ch: usize) -> Vec<f64> {
-    let mut cov = vec![0.0f64; n_ch * n_ch];
-    let n = n_samples as f64;
+fn compute_covariance_heap(data: &[Float], n_samples: usize, n_ch: usize) -> Vec<Float> {
+    let mut cov = vec![0.0 as Float; n_ch * n_ch];
+    let n = n_samples as Float;
     // Compute means
-    let mut means = vec![0.0f64; n_ch];
+    let mut means = vec![0.0 as Float; n_ch];
     for t in 0..n_samples {
         let row = t * n_ch;
         for ch in 0..n_ch {
@@ -309,21 +311,25 @@ fn compute_covariance_heap(data: &[f64], n_samples: usize, n_ch: usize) -> Vec<f
 }
 
 /// Build ZCA whitening matrix from covariance. Returns flat C*C matrix.
-fn build_whitening_heap(cov: &[f64], n_ch: usize, epsilon: f64) -> Result<Vec<f64>, LinalgError> {
+fn build_whitening_heap(
+    cov: &[Float],
+    n_ch: usize,
+    epsilon: Float,
+) -> Result<Vec<Float>, LinalgError> {
     let mut mat = HeapMatrix::zeros(n_ch);
     mat.data.copy_from_slice(&cov[..n_ch * n_ch]);
 
     let (eigenvalues, eigenvectors) = mat.eigen_symmetric(50, 1e-12)?;
 
     // ZCA: W = E * diag(1/sqrt(lambda + eps)) * E^T
-    let mut w = vec![0.0f64; n_ch * n_ch];
+    let mut w = vec![0.0 as Float; n_ch * n_ch];
     for i in 0..n_ch {
         for j in 0..n_ch {
             let mut sum = 0.0;
             for k in 0..n_ch {
                 let lambda = eigenvalues[k] + epsilon;
                 let clamped = if lambda > epsilon { lambda } else { epsilon };
-                let inv_sqrt = 1.0 / libm::sqrt(clamped);
+                let inv_sqrt = 1.0 / float::sqrt(clamped);
                 sum += eigenvectors.get(i, k) * inv_sqrt * eigenvectors.get(j, k);
             }
             w[i * n_ch + j] = sum;
@@ -333,8 +339,8 @@ fn build_whitening_heap(cov: &[f64], n_ch: usize, epsilon: f64) -> Result<Vec<f6
 }
 
 /// Apply whitening matrix to data in-place.
-fn apply_whitening_heap(data: &mut [f64], n_samples: usize, n_ch: usize, w: &[f64]) {
-    let mut tmp = vec![0.0f64; n_ch];
+fn apply_whitening_heap(data: &mut [Float], n_samples: usize, n_ch: usize, w: &[Float]) {
+    let mut tmp = vec![0.0 as Float; n_ch];
     for t in 0..n_samples {
         let row = t * n_ch;
         for i in 0..n_ch {
@@ -350,10 +356,10 @@ fn apply_whitening_heap(data: &mut [f64], n_samples: usize, n_ch: usize, w: &[f6
 
 /// Detect spikes on flat row-major whitened data (amplitude mode).
 fn detect_spikes_heap(
-    data: &[f64],
+    data: &[Float],
     n_samples: usize,
     n_ch: usize,
-    threshold: f64,
+    threshold: Float,
     refractory: usize,
     events: &mut [MultiChannelEvent],
 ) -> usize {
@@ -398,24 +404,24 @@ fn detect_spikes_heap(
 /// Compute per-channel adaptive thresholds for heap-allocated data.
 /// Returns absolute thresholds (positive values) for each channel.
 fn compute_adaptive_thresholds_heap(
-    data: &[f64],
+    data: &[Float],
     n_samples: usize,
     n_ch: usize,
-    base_multiplier: f64,
-    min_threshold: f64,
-    max_rate_hz: f64,
-    sample_rate: f64,
-) -> Vec<f64> {
+    base_multiplier: Float,
+    min_threshold: Float,
+    max_rate_hz: Float,
+    sample_rate: Float,
+) -> Vec<Float> {
     let mut thresholds = vec![min_threshold; n_ch];
     if n_samples == 0 {
         return thresholds;
     }
 
     // Per-channel MAD noise estimation
-    let mut scratch = vec![0.0f64; n_samples];
+    let mut scratch = vec![0.0 as Float; n_samples];
     for ch in 0..n_ch {
         for t in 0..n_samples {
-            scratch[t] = libm::fabs(data[t * n_ch + ch]);
+            scratch[t] = float::abs(data[t * n_ch + ch]);
         }
         scratch[..n_samples]
             .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
@@ -434,7 +440,7 @@ fn compute_adaptive_thresholds_heap(
     }
 
     // Activity check: scale up overactive channels
-    let duration_s = n_samples as f64 / sample_rate;
+    let duration_s = n_samples as Float / sample_rate;
     if duration_s > 0.0 && max_rate_hz > 0.0 {
         for ch in 0..n_ch {
             let thresh = thresholds[ch];
@@ -444,9 +450,9 @@ fn compute_adaptive_thresholds_heap(
                     crossings += 1;
                 }
             }
-            let rate = crossings as f64 / duration_s;
+            let rate = crossings as Float / duration_s;
             if rate > max_rate_hz {
-                let scale = libm::sqrt(rate / max_rate_hz);
+                let scale = float::sqrt(rate / max_rate_hz);
                 thresholds[ch] *= scale;
                 if thresholds[ch] < min_threshold {
                     thresholds[ch] = min_threshold;
@@ -460,10 +466,10 @@ fn compute_adaptive_thresholds_heap(
 
 /// Detect spikes with per-channel adaptive thresholds on heap data.
 fn detect_spikes_heap_adaptive(
-    data: &[f64],
+    data: &[Float],
     n_samples: usize,
     n_ch: usize,
-    thresholds: &[f64],
+    thresholds: &[Float],
     refractory: usize,
     events: &mut [MultiChannelEvent],
 ) -> usize {
@@ -501,8 +507,8 @@ fn detect_spikes_heap_adaptive(
 fn deduplicate_events_heap(
     events: &mut [MultiChannelEvent],
     n: usize,
-    positions: &[[f64; 2]],
-    spatial_radius: f64,
+    positions: &[[Float; 2]],
+    spatial_radius: Float,
     temporal_radius: usize,
 ) -> usize {
     if n == 0 {
@@ -555,7 +561,7 @@ fn deduplicate_events_heap(
 
 /// Align events to negative peak within half_window on flat data.
 fn align_to_peak_heap(
-    data: &[f64],
+    data: &[Float],
     n_samples: usize,
     n_ch: usize,
     events: &mut [MultiChannelEvent],
@@ -586,15 +592,15 @@ fn align_to_peak_heap(
     }
 }
 
-/// Extract peak-channel waveforms from flat data into [f64; W] buffers.
+/// Extract peak-channel waveforms from flat data into [Float; W] buffers.
 fn extract_peak_channel_heap(
-    data: &[f64],
+    data: &[Float],
     n_samples: usize,
     n_ch: usize,
     events: &[MultiChannelEvent],
     n: usize,
     pre_samples: usize,
-    waveforms: &mut [[f64; W]],
+    waveforms: &mut [[Float; W]],
 ) -> usize {
     let post = W - pre_samples;
     let mut out = 0;
@@ -619,8 +625,8 @@ fn extract_peak_channel_heap(
 }
 
 /// Common median reference on flat data in-place.
-fn cmr_heap(data: &mut [f64], n_samples: usize, n_ch: usize) {
-    let mut buf = vec![0.0f64; n_ch];
+fn cmr_heap(data: &mut [Float], n_samples: usize, n_ch: usize) {
+    let mut buf = vec![0.0 as Float; n_ch];
     for t in 0..n_samples {
         let row = t * n_ch;
         buf.copy_from_slice(&data[row..row + n_ch]);
@@ -639,19 +645,18 @@ fn cmr_heap(data: &mut [f64], n_samples: usize, n_ch: usize) {
 
 /// Bandpass filter on flat data in-place (4th order Butterworth, 2 biquad passes).
 fn bandpass_heap(
-    data: &mut [f64],
+    data: &mut [Float],
     n_samples: usize,
     n_ch: usize,
-    sample_rate: f64,
-    low: f64,
-    high: f64,
+    sample_rate: Float,
+    low: Float,
+    high: Float,
 ) {
-    use core::f64::consts::PI;
     if n_samples < 4 || low >= high || sample_rate <= 0.0 {
         return;
     }
-    let w_low = libm::tan(PI * low / sample_rate);
-    let w_high = libm::tan(PI * high / sample_rate);
+    let w_low = float::tan(float::PI * low / sample_rate);
+    let w_high = float::tan(float::PI * high / sample_rate);
     let bw = w_high - w_low;
     let w0_sq = w_low * w_high;
     let alpha = bw;
@@ -698,8 +703,8 @@ fn bandpass_heap(
 /// * `n_channels` - Number of channels.
 pub fn sort_heap(
     config: &SortConfig,
-    positions: &[[f64; 2]],
-    data: &mut [f64],
+    positions: &[[Float; 2]],
+    data: &mut [Float],
     n_samples: usize,
     n_channels: usize,
 ) -> Result<DynSortResult, SortError> {
@@ -735,11 +740,11 @@ pub fn sort_heap(
 
     // 1. Noise estimation
     let pre_noise = estimate_noise_heap(data, n_samples, n_channels);
-    let mut noise_mean = 0.0;
+    let mut noise_mean: Float = 0.0;
     for v in &pre_noise {
         noise_mean += v;
     }
-    noise_mean /= n_channels as f64;
+    noise_mean /= n_channels as Float;
     if noise_mean <= 0.0 {
         noise_mean = 1.0;
     }
@@ -811,8 +816,8 @@ pub fn sort_heap(
         config.align_half_window,
     );
 
-    // 7. Extraction (peak-channel waveforms -> [f64; W])
-    let mut waveform_buf = vec![[0.0f64; W]; n_dedup.max(1)];
+    // 7. Extraction (peak-channel waveforms -> [Float; W])
+    let mut waveform_buf = vec![[0.0 as Float; W]; n_dedup.max(1)];
     let n_extracted = extract_peak_channel_heap(
         data,
         n_samples,
@@ -851,7 +856,7 @@ pub fn sort_heap(
     }
 
     // 8. PCA (uses const-generic W, K, WM -- no channel dependency)
-    let mut feature_buf = vec![[0.0f64; K]; n_extracted];
+    let mut feature_buf = vec![[0.0 as Float; K]; n_extracted];
     let mut pca = WaveformPca::<W, K, WM>::new();
     if pca.fit(&waveform_buf[..n_extracted]).is_ok() {
         for i in 0..n_extracted {
@@ -868,9 +873,9 @@ pub fn sort_heap(
 
     // 8b. Encode channel index as last feature dimension
     if n_channels > 1 {
-        let ch_scale = 1.0 / (n_channels as f64);
+        let ch_scale = 1.0 / (n_channels as Float);
         for i in 0..n_extracted {
-            feature_buf[i][K - 1] = event_buf[i].channel as f64 * ch_scale;
+            feature_buf[i][K - 1] = event_buf[i].channel as Float * ch_scale;
         }
     }
 
@@ -897,7 +902,7 @@ pub fn sort_heap(
     let mut n_clusters = kmeans.n_active();
 
     // 9b. Merge clusters (d-prime based)
-    let mut merge_scratch = vec![0.0f64; n_extracted];
+    let mut merge_scratch = vec![0.0 as Float; n_extracted];
     n_clusters = merge_clusters::<K>(
         n_extracted,
         &mut labels,
@@ -940,18 +945,18 @@ pub fn sort_heap(
     let mut new_id = 0usize;
     for cl in 0..n_clusters {
         let mut count = 0usize;
-        let mut amp_sum = 0.0f64;
+        let mut amp_sum: Float = 0.0;
         for i in 0..n_extracted {
             if labels[i] == cl {
                 count += 1;
-                let a = libm::fabs(event_buf[i].amplitude);
+                let a = float::abs(event_buf[i].amplitude);
                 amp_sum += a;
             }
         }
         if count == 0 {
             continue;
         }
-        let mean_amp = amp_sum / count as f64;
+        let mean_amp = amp_sum / count as Float;
         let snr = mean_amp / noise_mean;
 
         if snr < config.min_cluster_snr {
@@ -973,7 +978,7 @@ pub fn sort_heap(
             }
         }
         let isi_rate = if spike_times_cl.len() > 1 {
-            isi_violations as f64 / (spike_times_cl.len() - 1) as f64
+            isi_violations as Float / (spike_times_cl.len() - 1) as Float
         } else {
             0.0
         };
@@ -1022,11 +1027,11 @@ mod tests {
     fn test_sort_heap_256ch_noise() {
         let n_ch = 256;
         let n_samples = 3000;
-        let mut data = vec![0.0f64; n_samples * n_ch];
+        let mut data = vec![0.0 as Float; n_samples * n_ch];
         for (i, d) in data.iter_mut().enumerate() {
-            *d = ((i * 17 + 3) % 100) as f64 * 0.001 - 0.05;
+            *d = ((i * 17 + 3) % 100) as Float * 0.001 - 0.05;
         }
-        let positions: Vec<[f64; 2]> = (0..n_ch).map(|i| [0.0, i as f64 * 25.0]).collect();
+        let positions: Vec<[Float; 2]> = (0..n_ch).map(|i| [0.0, i as Float * 25.0]).collect();
         let config = SortConfig::default();
         let result = sort_heap(&config, &positions, &mut data, n_samples, n_ch).unwrap();
         assert_eq!(result.n_spikes, 0);
@@ -1036,11 +1041,11 @@ mod tests {
     fn test_sort_heap_384ch_noise() {
         let n_ch = 384;
         let n_samples = 3000;
-        let mut data = vec![0.0f64; n_samples * n_ch];
+        let mut data = vec![0.0 as Float; n_samples * n_ch];
         for (i, d) in data.iter_mut().enumerate() {
-            *d = ((i * 13 + 7) % 100) as f64 * 0.001 - 0.05;
+            *d = ((i * 13 + 7) % 100) as Float * 0.001 - 0.05;
         }
-        let positions: Vec<[f64; 2]> = (0..n_ch).map(|i| [0.0, i as f64 * 25.0]).collect();
+        let positions: Vec<[Float; 2]> = (0..n_ch).map(|i| [0.0, i as Float * 25.0]).collect();
         let config = SortConfig::default();
         let result = sort_heap(&config, &positions, &mut data, n_samples, n_ch).unwrap();
         assert_eq!(result.n_spikes, 0);
@@ -1050,10 +1055,10 @@ mod tests {
     fn test_sort_heap_256ch_with_spikes() {
         let n_ch = 256;
         let n_samples = 5000;
-        let mut data = vec![0.0f64; n_samples * n_ch];
+        let mut data = vec![0.0 as Float; n_samples * n_ch];
         // Small noise
         for (i, d) in data.iter_mut().enumerate() {
-            *d = ((i * 7 + 11) % 50) as f64 * 0.001 - 0.025;
+            *d = ((i * 7 + 11) % 50) as Float * 0.001 - 0.025;
         }
         // Inject spikes on channel 10 at sample 500, 1500, 2500, 3500
         for &spike_t in &[500usize, 1500, 2500, 3500] {
@@ -1061,15 +1066,15 @@ mod tests {
                 let t = spike_t + offset;
                 if t < n_samples {
                     let amp = if offset < 10 {
-                        -(offset as f64) * 2.0
+                        -(offset as Float) * 2.0
                     } else {
-                        -((20 - offset) as f64) * 2.0
+                        -((20 - offset) as Float) * 2.0
                     };
                     data[t * n_ch + 10] = amp;
                 }
             }
         }
-        let positions: Vec<[f64; 2]> = (0..n_ch).map(|i| [0.0, i as f64 * 25.0]).collect();
+        let positions: Vec<[Float; 2]> = (0..n_ch).map(|i| [0.0, i as Float * 25.0]).collect();
         let config = SortConfig {
             threshold_multiplier: 4.0,
             ..SortConfig::default()
@@ -1081,8 +1086,8 @@ mod tests {
 
     #[test]
     fn test_sort_heap_invalid_input() {
-        let mut data = vec![0.0f64; 100];
-        let positions: Vec<[f64; 2]> = (0..4).map(|i| [0.0, i as f64 * 25.0]).collect();
+        let mut data = vec![0.0 as Float; 100];
+        let positions: Vec<[Float; 2]> = (0..4).map(|i| [0.0, i as Float * 25.0]).collect();
         let config = SortConfig::default();
         // data length doesn't match
         assert!(sort_heap(&config, &positions, &mut data, 50, 4).is_err());
@@ -1101,7 +1106,7 @@ mod tests {
     fn test_heap_whitening_identity_cov() {
         // Identity covariance -> whitening matrix should be ~identity
         let n_ch = 4;
-        let mut cov = vec![0.0f64; n_ch * n_ch];
+        let mut cov = vec![0.0 as Float; n_ch * n_ch];
         for i in 0..n_ch {
             cov[i * n_ch + i] = 1.0;
         }

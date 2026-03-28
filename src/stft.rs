@@ -14,16 +14,17 @@
 //!
 //! ```
 //! use zerostone::{Stft, Complex, WindowType};
+//! use zerostone::float::Float;
 //!
 //! // Create STFT with 256-point window, 64-sample hop, Hann window
 //! let stft = Stft::<256>::new(64, WindowType::Hann);
 //!
 //! // Process a 1024-sample signal (produces 13 frames)
-//! let signal = [0.5f32; 1024];
+//! let signal = [0.5 as Float; 1024];
 //! let num_frames = stft.num_frames(signal.len());
 //!
 //! // Compute power spectrum
-//! let mut power = [[0.0f32; 256]; 13];
+//! let mut power = [[0.0 as Float; 256]; 13];
 //! stft.power(&signal, &mut power);
 //! ```
 //!
@@ -33,6 +34,7 @@
 //! - Number of frames = `(L - N) / H + 1`
 //! - Each frame covers samples `[i*H, i*H + N)` for frame index `i`
 
+use crate::float::{self, Float};
 use crate::{window_coefficient, Complex, Fft, WindowType};
 
 /// Short-Time Fourier Transform processor.
@@ -48,11 +50,12 @@ use crate::{window_coefficient, Complex, Fft, WindowType};
 ///
 /// ```
 /// use zerostone::{Stft, WindowType};
+/// use zerostone::float::Float;
 ///
 /// // 256-point window, 50% overlap (hop = 128)
 /// let stft = Stft::<256>::new(128, WindowType::Hann);
 ///
-/// let signal = [0.0f32; 512];
+/// let signal = [0.0 as Float; 512];
 /// assert_eq!(stft.num_frames(512), 3); // frames at 0, 128, 256
 /// ```
 pub struct Stft<const N: usize> {
@@ -163,9 +166,10 @@ impl<const N: usize> Stft<N> {
     ///
     /// ```
     /// use zerostone::{Stft, Complex, WindowType};
+    /// use zerostone::float::Float;
     ///
     /// let stft = Stft::<64>::new(32, WindowType::Hann);
-    /// let signal = [1.0f32; 128];
+    /// let signal = [1.0 as Float; 128];
     ///
     /// let mut output = [[Complex::new(0.0, 0.0); 64]; 3];
     /// let frames = stft.transform(&signal, &mut output);
@@ -173,7 +177,7 @@ impl<const N: usize> Stft<N> {
     /// ```
     pub fn transform<const F: usize>(
         &self,
-        signal: &[f32],
+        signal: &[Float],
         output: &mut [[Complex; N]; F],
     ) -> usize {
         let num_frames = self.num_frames(signal.len()).min(F);
@@ -205,15 +209,16 @@ impl<const N: usize> Stft<N> {
     ///
     /// ```
     /// use zerostone::{Stft, WindowType};
+    /// use zerostone::float::Float;
     ///
     /// let stft = Stft::<64>::new(32, WindowType::Hann);
-    /// let signal = [1.0f32; 128];
+    /// let signal = [1.0 as Float; 128];
     ///
-    /// let mut power = [[0.0f32; 64]; 3];
+    /// let mut power = [[0.0 as Float; 64]; 3];
     /// let frames = stft.power(&signal, &mut power);
     /// assert_eq!(frames, 3);
     /// ```
-    pub fn power<const F: usize>(&self, signal: &[f32], output: &mut [[f32; N]; F]) -> usize {
+    pub fn power<const F: usize>(&self, signal: &[Float], output: &mut [[Float; N]; F]) -> usize {
         let num_frames = self.num_frames(signal.len()).min(F);
 
         for (frame_idx, frame_output) in output.iter_mut().enumerate().take(num_frames) {
@@ -239,15 +244,20 @@ impl<const N: usize> Stft<N> {
     ///
     /// ```
     /// use zerostone::{Stft, WindowType};
+    /// use zerostone::float::Float;
     ///
     /// let stft = Stft::<64>::new(32, WindowType::Hann);
-    /// let signal = [1.0f32; 128];
+    /// let signal = [1.0 as Float; 128];
     ///
-    /// let mut magnitude = [[0.0f32; 64]; 3];
+    /// let mut magnitude = [[0.0 as Float; 64]; 3];
     /// let frames = stft.magnitude(&signal, &mut magnitude);
     /// assert_eq!(frames, 3);
     /// ```
-    pub fn magnitude<const F: usize>(&self, signal: &[f32], output: &mut [[f32; N]; F]) -> usize {
+    pub fn magnitude<const F: usize>(
+        &self,
+        signal: &[Float],
+        output: &mut [[Float; N]; F],
+    ) -> usize {
         let num_frames = self.num_frames(signal.len()).min(F);
 
         for (frame_idx, frame_output) in output.iter_mut().enumerate().take(num_frames) {
@@ -276,14 +286,15 @@ impl<const N: usize> Stft<N> {
     ///
     /// ```
     /// use zerostone::{Stft, Complex, WindowType};
+    /// use zerostone::float::Float;
     ///
     /// let stft = Stft::<64>::new(32, WindowType::Hann);
-    /// let signal = [1.0f32; 128];
+    /// let signal = [1.0 as Float; 128];
     ///
     /// let mut frame = [Complex::new(0.0, 0.0); 64];
     /// stft.transform_frame(&signal, 32, &mut frame);
     /// ```
-    pub fn transform_frame(&self, signal: &[f32], offset: usize, output: &mut [Complex; N]) {
+    pub fn transform_frame(&self, signal: &[Float], offset: usize, output: &mut [Complex; N]) {
         assert!(
             offset + N <= signal.len(),
             "frame extends beyond signal length"
@@ -347,8 +358,8 @@ impl<const N: usize> Stft<N> {
     /// assert!((freq - 0.9765625).abs() < 0.001);
     /// ```
     #[inline]
-    pub fn bin_to_frequency(&self, bin: usize, sample_rate: f32) -> f32 {
-        bin as f32 * sample_rate / N as f32
+    pub fn bin_to_frequency(&self, bin: usize, sample_rate: Float) -> Float {
+        bin as Float * sample_rate / N as Float
     }
 
     /// Converts a frequency in Hz to the nearest bin index.
@@ -374,13 +385,13 @@ impl<const N: usize> Stft<N> {
     /// assert_eq!(bin, 10);
     /// ```
     #[inline]
-    pub fn frequency_to_bin(&self, frequency: f32, sample_rate: f32) -> usize {
-        let bin = libm::roundf(frequency * N as f32 / sample_rate) as usize;
+    pub fn frequency_to_bin(&self, frequency: Float, sample_rate: Float) -> usize {
+        let bin = float::round(frequency * N as Float / sample_rate) as usize;
         bin.min(N - 1)
     }
 
     /// Computes a single frame with complex output.
-    fn compute_frame(&self, segment: &[f32], output: &mut [Complex; N]) {
+    fn compute_frame(&self, segment: &[Float], output: &mut [Complex; N]) {
         // Apply window and convert to complex
         for (i, out) in output.iter_mut().enumerate() {
             let window_coeff = window_coefficient(self.window_type, i, N);
@@ -392,7 +403,7 @@ impl<const N: usize> Stft<N> {
     }
 
     /// Computes a single frame with power output.
-    fn compute_frame_power(&self, segment: &[f32], output: &mut [f32; N]) {
+    fn compute_frame_power(&self, segment: &[Float], output: &mut [Float; N]) {
         // Temporary buffer for FFT
         let mut buffer = [Complex::new(0.0, 0.0); N];
 
@@ -412,7 +423,7 @@ impl<const N: usize> Stft<N> {
     }
 
     /// Computes a single frame with magnitude output.
-    fn compute_frame_magnitude(&self, segment: &[f32], output: &mut [f32; N]) {
+    fn compute_frame_magnitude(&self, segment: &[Float], output: &mut [Float; N]) {
         // Temporary buffer for FFT
         let mut buffer = [Complex::new(0.0, 0.0); N];
 
@@ -435,7 +446,6 @@ impl<const N: usize> Stft<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::f32::consts::PI;
 
     #[test]
     fn test_stft_new() {
@@ -486,7 +496,7 @@ mod tests {
     #[test]
     fn test_transform_dc_signal() {
         let stft = Stft::<64>::new(32, WindowType::Rectangular);
-        let signal = [1.0f32; 128];
+        let signal = [1.0 as Float; 128];
 
         let mut output = [[Complex::new(0.0, 0.0); 64]; 3];
         let frames = stft.transform(&signal, &mut output);
@@ -505,16 +515,16 @@ mod tests {
     #[test]
     fn test_transform_sine_wave() {
         let stft = Stft::<64>::new(32, WindowType::Hann);
-        let sample_rate = 256.0;
-        let freq = 32.0; // Should appear at bin 8
+        let sample_rate: Float = 256.0;
+        let freq: Float = 32.0; // Should appear at bin 8
 
         // Generate sine wave
-        let mut signal = [0.0f32; 128];
+        let mut signal = [0.0 as Float; 128];
         for (i, s) in signal.iter_mut().enumerate() {
-            *s = libm::sinf(2.0 * PI * freq * i as f32 / sample_rate);
+            *s = float::sin(2.0 * float::PI * freq * i as Float / sample_rate);
         }
 
-        let mut power = [[0.0f32; 64]; 3];
+        let mut power = [[0.0 as Float; 64]; 3];
         let frames = stft.power(&signal, &mut power);
 
         assert_eq!(frames, 3);
@@ -540,10 +550,10 @@ mod tests {
     #[test]
     fn test_power_vs_transform() {
         let stft = Stft::<64>::new(32, WindowType::Hann);
-        let signal = [0.5f32; 128];
+        let signal = [0.5 as Float; 128];
 
         let mut complex_output = [[Complex::new(0.0, 0.0); 64]; 3];
-        let mut power_output = [[0.0f32; 64]; 3];
+        let mut power_output = [[0.0 as Float; 64]; 3];
 
         stft.transform(&signal, &mut complex_output);
         stft.power(&signal, &mut power_output);
@@ -565,10 +575,10 @@ mod tests {
     #[test]
     fn test_magnitude_vs_transform() {
         let stft = Stft::<64>::new(32, WindowType::Hann);
-        let signal = [0.5f32; 128];
+        let signal = [0.5 as Float; 128];
 
         let mut complex_output = [[Complex::new(0.0, 0.0); 64]; 3];
-        let mut magnitude_output = [[0.0f32; 64]; 3];
+        let mut magnitude_output = [[0.0 as Float; 64]; 3];
 
         stft.transform(&signal, &mut complex_output);
         stft.magnitude(&signal, &mut magnitude_output);
@@ -590,7 +600,7 @@ mod tests {
     #[test]
     fn test_transform_frame() {
         let stft = Stft::<64>::new(32, WindowType::Hann);
-        let signal = [0.5f32; 128];
+        let signal = [0.5 as Float; 128];
 
         // Compute using transform
         let mut full_output = [[Complex::new(0.0, 0.0); 64]; 3];
@@ -618,7 +628,7 @@ mod tests {
     #[test]
     fn test_bin_frequency_conversion() {
         let stft = Stft::<256>::new(128, WindowType::Hann);
-        let sample_rate = 250.0;
+        let sample_rate: Float = 250.0;
 
         // Bin 0 = 0 Hz (DC)
         assert!((stft.bin_to_frequency(0, sample_rate) - 0.0).abs() < 0.001);
@@ -628,7 +638,7 @@ mod tests {
         assert!((nyquist - 125.0).abs() < 0.001);
 
         // Round-trip
-        let freq = 10.0;
+        let freq: Float = 10.0;
         let bin = stft.frequency_to_bin(freq, sample_rate);
         let freq_back = stft.bin_to_frequency(bin, sample_rate);
         assert!((freq - freq_back).abs() < 1.0);
@@ -648,10 +658,10 @@ mod tests {
     #[test]
     fn test_output_buffer_larger_than_needed() {
         let stft = Stft::<64>::new(32, WindowType::Hann);
-        let signal = [0.5f32; 128]; // 3 frames
+        let signal = [0.5 as Float; 128]; // 3 frames
 
         // Buffer has room for 10 frames
-        let mut output = [[0.0f32; 64]; 10];
+        let mut output = [[0.0 as Float; 64]; 10];
         let frames = stft.power(&signal, &mut output);
 
         // Should only compute 3 frames
@@ -661,10 +671,10 @@ mod tests {
     #[test]
     fn test_output_buffer_smaller_than_needed() {
         let stft = Stft::<64>::new(32, WindowType::Hann);
-        let signal = [0.5f32; 256]; // Would produce 7 frames
+        let signal = [0.5 as Float; 256]; // Would produce 7 frames
 
         // Buffer only has room for 3 frames
-        let mut output = [[0.0f32; 64]; 3];
+        let mut output = [[0.0 as Float; 64]; 3];
         let frames = stft.power(&signal, &mut output);
 
         // Should only compute 3 frames (limited by buffer)
@@ -673,7 +683,7 @@ mod tests {
 
     #[test]
     fn test_different_window_types() {
-        let signal = [1.0f32; 128];
+        let signal = [1.0 as Float; 128];
 
         for window_type in [
             WindowType::Rectangular,
@@ -683,13 +693,13 @@ mod tests {
             WindowType::BlackmanHarris,
         ] {
             let stft = Stft::<64>::new(32, window_type);
-            let mut output = [[0.0f32; 64]; 3];
+            let mut output = [[0.0 as Float; 64]; 3];
             let frames = stft.power(&signal, &mut output);
             assert_eq!(frames, 3);
 
             // All frames should have non-zero energy
             for frame_power in &output[..frames] {
-                let total: f32 = frame_power.iter().sum();
+                let total: Float = frame_power.iter().sum();
                 assert!(total > 0.0, "Window {:?} produced zero energy", window_type);
             }
         }

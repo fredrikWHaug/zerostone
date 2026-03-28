@@ -35,12 +35,13 @@
 //!
 //! ```
 //! use zerostone::NlmsFilter;
+//! use zerostone::Float;
 //!
 //! // NLMS can use larger step size (0.5) than LMS
 //! let mut nlms = NlmsFilter::<64>::new(0.5, 0.01);
 //!
-//! # let eog_data = [0.0f32; 100];
-//! # let eeg_data = [0.0f32; 100];
+//! # let eog_data = [0.0 as Float; 100];
+//! # let eeg_data = [0.0 as Float; 100];
 //! for i in 0..eeg_data.len() {
 //!     let result = nlms.process_sample(eog_data[i], eeg_data[i]);
 //!     let clean_eeg = result.output;
@@ -48,6 +49,7 @@
 //! ```
 
 use crate::filter::lms::AdaptiveOutput;
+use crate::float::Float;
 
 /// NLMS (Normalized Least Mean Squares) adaptive filter.
 ///
@@ -75,15 +77,15 @@ use crate::filter::lms::AdaptiveOutput;
 #[derive(Debug, Clone)]
 pub struct NlmsFilter<const N: usize> {
     /// Adaptive filter coefficients (weights)
-    weights: [f32; N],
+    weights: [Float; N],
     /// Circular buffer storing past N input samples
-    delay_line: [f32; N],
+    delay_line: [Float; N],
     /// Current write position in circular buffer
     index: usize,
     /// Normalized step size (typically 0.1 - 1.0)
-    mu: f32,
+    mu: Float,
     /// Regularization constant to prevent division by zero
-    epsilon: f32,
+    epsilon: Float,
 }
 
 impl<const N: usize> NlmsFilter<N> {
@@ -105,7 +107,7 @@ impl<const N: usize> NlmsFilter<N> {
     ///
     /// let nlms = NlmsFilter::<64>::new(0.5, 0.01);
     /// ```
-    pub fn new(mu: f32, epsilon: f32) -> Self {
+    pub fn new(mu: Float, epsilon: Float) -> Self {
         assert!(mu > 0.0, "step size mu must be positive");
         assert!(epsilon > 0.0, "regularization epsilon must be positive");
         Self {
@@ -137,7 +139,7 @@ impl<const N: usize> NlmsFilter<N> {
     /// let weights = [0.5, 1.0, 0.5];
     /// let nlms = NlmsFilter::<3>::with_weights(0.5, 0.01, weights);
     /// ```
-    pub fn with_weights(mu: f32, epsilon: f32, weights: [f32; N]) -> Self {
+    pub fn with_weights(mu: Float, epsilon: Float, weights: [Float; N]) -> Self {
         assert!(mu > 0.0, "step size mu must be positive");
         assert!(epsilon > 0.0, "regularization epsilon must be positive");
         Self {
@@ -170,7 +172,7 @@ impl<const N: usize> NlmsFilter<N> {
     /// let mut nlms = NlmsFilter::<32>::new(0.5, 0.01);
     /// let result = nlms.process_sample(0.5, 1.0);
     /// ```
-    pub fn process_sample(&mut self, input: f32, desired: f32) -> AdaptiveOutput {
+    pub fn process_sample(&mut self, input: Float, desired: Float) -> AdaptiveOutput {
         // 1. Store input in circular buffer
         self.delay_line[self.index] = input;
 
@@ -228,8 +230,8 @@ impl<const N: usize> NlmsFilter<N> {
     /// ```
     pub fn process_block(
         &mut self,
-        inputs: &[f32],
-        desired: &[f32],
+        inputs: &[Float],
+        desired: &[Float],
         outputs: &mut [AdaptiveOutput],
     ) {
         let len = inputs.len().min(desired.len()).min(outputs.len());
@@ -263,7 +265,7 @@ impl<const N: usize> NlmsFilter<N> {
     /// // Predict only
     /// let prediction = nlms.predict(0.5);
     /// ```
-    pub fn predict(&mut self, input: f32) -> f32 {
+    pub fn predict(&mut self, input: Float) -> Float {
         self.delay_line[self.index] = input;
 
         let mut output = 0.0;
@@ -321,17 +323,17 @@ impl<const N: usize> NlmsFilter<N> {
     }
 
     /// Returns a reference to the current filter weights.
-    pub fn weights(&self) -> &[f32; N] {
+    pub fn weights(&self) -> &[Float; N] {
         &self.weights
     }
 
     /// Sets the filter weights.
-    pub fn set_weights(&mut self, weights: [f32; N]) {
+    pub fn set_weights(&mut self, weights: [Float; N]) {
         self.weights = weights;
     }
 
     /// Returns the current step size.
-    pub fn mu(&self) -> f32 {
+    pub fn mu(&self) -> Float {
         self.mu
     }
 
@@ -340,13 +342,13 @@ impl<const N: usize> NlmsFilter<N> {
     /// # Panics
     ///
     /// Panics if `mu <= 0`.
-    pub fn set_mu(&mut self, mu: f32) {
+    pub fn set_mu(&mut self, mu: Float) {
         assert!(mu > 0.0, "step size mu must be positive");
         self.mu = mu;
     }
 
     /// Returns the regularization constant epsilon.
-    pub fn epsilon(&self) -> f32 {
+    pub fn epsilon(&self) -> Float {
         self.epsilon
     }
 
@@ -368,7 +370,7 @@ impl<const N: usize> NlmsFilter<N> {
     /// let mut nlms = NlmsFilter::<32>::new(0.5, 0.01);
     /// nlms.set_epsilon(0.001); // Lower for better precision
     /// ```
-    pub fn set_epsilon(&mut self, epsilon: f32) {
+    pub fn set_epsilon(&mut self, epsilon: Float) {
         assert!(epsilon > 0.0, "regularization epsilon must be positive");
         self.epsilon = epsilon;
     }
@@ -383,8 +385,8 @@ impl<const N: usize> Default for NlmsFilter<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::float;
     use crate::FirFilter;
-    use core::f32::consts::PI;
 
     #[test]
     fn test_nlms_new() {
@@ -410,7 +412,7 @@ mod tests {
         let mut nlms = NlmsFilter::<3>::new(0.8, 0.01);
 
         for i in 0..1000 {
-            let input = (i % 17) as f32 / 17.0 - 0.5;
+            let input = (i % 17) as Float / 17.0 - 0.5;
             let desired = system.process_sample(input);
             nlms.process_sample(input, desired);
         }
@@ -449,8 +451,8 @@ mod tests {
 
         // Use varying amplitude input (more challenging for LMS)
         for i in 0..300 {
-            let amplitude = 1.0 + 0.5 * libm::sinf(i as f32 * 0.05);
-            let input = amplitude * ((i % 11) as f32 / 11.0 - 0.5);
+            let amplitude = 1.0 + 0.5 * float::sin(i as Float * 0.05);
+            let input = amplitude * ((i % 11) as Float / 11.0 - 0.5);
 
             let desired = system.process_sample(input);
 
@@ -511,7 +513,7 @@ mod tests {
         let mut nlms = NlmsFilter::<16>::new(0.5, 0.01);
 
         for i in 0..10 {
-            let input = i as f32 * 0.1;
+            let input = i as Float * 0.1;
             nlms.process_sample(input, input * 2.0);
         }
 
@@ -526,7 +528,7 @@ mod tests {
         let mut nlms = NlmsFilter::<16>::new(0.5, 0.01);
 
         for i in 0..100 {
-            let input = (i % 7) as f32 / 7.0;
+            let input = (i % 7) as Float / 7.0;
             nlms.process_sample(input, input * 2.0);
         }
 
@@ -600,7 +602,7 @@ mod tests {
         let mut final_error_sum = 0.0;
 
         for i in 0..500 {
-            let input = libm::sinf(2.0 * PI * 0.1 * i as f32);
+            let input = float::sin(2.0 * float::PI * 0.1 * i as Float);
             let desired = 2.0 * input;
 
             let result = nlms.process_sample(input, desired);

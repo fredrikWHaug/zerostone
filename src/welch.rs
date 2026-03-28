@@ -17,19 +17,21 @@
 //!
 //! ```
 //! use zerostone::{WelchPsd, WindowType};
+//! use zerostone::float::Float;
 //!
 //! // 256-point segments, Hann window, 50% overlap
 //! let welch = WelchPsd::<256>::new(WindowType::Hann, 0.5);
 //!
 //! // Estimate PSD from a long signal
-//! let signal = [0.0f32; 1024];
-//! let mut psd = [0.0f32; 129]; // N/2 + 1 bins
+//! let signal = [0.0 as Float; 1024];
+//! let mut psd = [0.0 as Float; 129]; // N/2 + 1 bins
 //! let num_segments = welch.estimate(&signal, 250.0, &mut psd);
 //!
 //! assert_eq!(num_segments, 7); // (1024 - 256) / 128 + 1
 //! ```
 
 use crate::fft::{Complex, Fft};
+use crate::float::Float;
 use crate::window::{window_coefficient, WindowType};
 
 /// Welch's method PSD estimator.
@@ -45,17 +47,18 @@ use crate::window::{window_coefficient, WindowType};
 ///
 /// ```
 /// use zerostone::{WelchPsd, WindowType};
+/// use zerostone::float::{self, Float};
 ///
 /// let welch = WelchPsd::<256>::new(WindowType::Hann, 0.5);
 ///
 /// // Generate a 10 Hz sine wave at 250 Hz sample rate
-/// let mut signal = [0.0f32; 1024];
+/// let mut signal = [0.0 as Float; 1024];
 /// for (i, s) in signal.iter_mut().enumerate() {
-///     let t = i as f32 / 250.0;
-///     *s = libm::sinf(2.0 * core::f32::consts::PI * 10.0 * t);
+///     let t = i as Float / 250.0;
+///     *s = float::sin(2.0 * float::PI * 10.0 * t);
 /// }
 ///
-/// let mut psd = [0.0f32; 129];
+/// let mut psd = [0.0 as Float; 129];
 /// let segments = welch.estimate(&signal, 250.0, &mut psd);
 /// assert!(segments > 1);
 /// ```
@@ -63,7 +66,7 @@ pub struct WelchPsd<const N: usize> {
     fft: Fft<N>,
     window: WindowType,
     overlap: usize,
-    window_s2: f32,
+    window_s2: Float,
 }
 
 impl<const N: usize> WelchPsd<N> {
@@ -85,15 +88,15 @@ impl<const N: usize> WelchPsd<N> {
     ///
     /// let welch = WelchPsd::<256>::new(WindowType::Hann, 0.5);
     /// ```
-    pub fn new(window: WindowType, overlap_frac: f32) -> Self {
+    pub fn new(window: WindowType, overlap_frac: Float) -> Self {
         assert!(
             (0.0..1.0).contains(&overlap_frac),
             "overlap_frac must be in [0.0, 1.0)"
         );
 
-        let overlap = (N as f32 * overlap_frac) as usize;
+        let overlap = (N as Float * overlap_frac) as usize;
 
-        let window_s2: f32 = (0..N)
+        let window_s2: Float = (0..N)
             .map(|i| {
                 let w = window_coefficient(window, i, N);
                 w * w
@@ -131,14 +134,15 @@ impl<const N: usize> WelchPsd<N> {
     ///
     /// ```
     /// use zerostone::{WelchPsd, WindowType};
+    /// use zerostone::float::Float;
     ///
     /// let welch = WelchPsd::<64>::new(WindowType::Hann, 0.5);
-    /// let signal = [1.0f32; 256];
-    /// let mut psd = [0.0f32; 33];
+    /// let signal = [1.0 as Float; 256];
+    /// let mut psd = [0.0 as Float; 33];
     /// let segments = welch.estimate(&signal, 100.0, &mut psd);
     /// assert_eq!(segments, 7); // (256 - 64) / 32 + 1
     /// ```
-    pub fn estimate(&self, signal: &[f32], sample_rate: f32, output: &mut [f32]) -> usize {
+    pub fn estimate(&self, signal: &[Float], sample_rate: Float, output: &mut [Float]) -> usize {
         assert!(
             signal.len() >= N,
             "Signal length {} must be >= segment size {}",
@@ -183,7 +187,7 @@ impl<const N: usize> WelchPsd<N> {
         }
 
         // Average and normalize to V²/Hz
-        let k = num_segments as f32;
+        let k = num_segments as Float;
         let norm = 2.0 / (sample_rate * self.window_s2);
         let dc_nyquist_norm = 1.0 / (sample_rate * self.window_s2);
 
@@ -239,14 +243,15 @@ impl<const N: usize> WelchPsd<N> {
     ///
     /// ```
     /// use zerostone::{WelchPsd, WindowType};
+    /// use zerostone::float::Float;
     ///
     /// let welch = WelchPsd::<256>::new(WindowType::Hann, 0.5);
-    /// let mut freqs = [0.0f32; 129];
+    /// let mut freqs = [0.0 as Float; 129];
     /// welch.frequencies(250.0, &mut freqs);
     /// assert!((freqs[0] - 0.0).abs() < 1e-6);
     /// assert!((freqs[128] - 125.0).abs() < 1e-6);
     /// ```
-    pub fn frequencies(&self, sample_rate: f32, output: &mut [f32]) {
+    pub fn frequencies(&self, sample_rate: Float, output: &mut [Float]) {
         assert!(
             output.len() > N / 2,
             "Output buffer length {} must be >= {}",
@@ -254,9 +259,9 @@ impl<const N: usize> WelchPsd<N> {
             N / 2 + 1
         );
 
-        let freq_resolution = sample_rate / N as f32;
+        let freq_resolution = sample_rate / N as Float;
         for (k, val) in output[..N / 2 + 1].iter_mut().enumerate() {
-            *val = k as f32 * freq_resolution;
+            *val = k as Float * freq_resolution;
         }
     }
 
@@ -279,21 +284,21 @@ impl<const N: usize> WelchPsd<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::f32::consts::PI;
+    use crate::float;
 
     #[test]
     fn test_sinusoid_peak_at_correct_frequency() {
         // 10 Hz sine at 256 Hz sample rate, 256-point segments
         let welch = WelchPsd::<256>::new(WindowType::Hann, 0.5);
-        let sample_rate = 256.0;
+        let sample_rate: Float = 256.0;
 
-        let mut signal = [0.0f32; 1024];
+        let mut signal = [0.0 as Float; 1024];
         for (i, s) in signal.iter_mut().enumerate() {
-            let t = i as f32 / sample_rate;
-            *s = libm::sinf(2.0 * PI * 10.0 * t);
+            let t = i as Float / sample_rate;
+            *s = float::sin(2.0 * float::PI * 10.0 * t);
         }
 
-        let mut psd = [0.0f32; 129];
+        let mut psd = [0.0 as Float; 129];
         let segments = welch.estimate(&signal, sample_rate, &mut psd);
         assert!(segments > 1);
 
@@ -313,21 +318,21 @@ mod tests {
     fn test_sinusoid_power_level() {
         // A pure sinusoid with amplitude A has power A²/2
         let welch = WelchPsd::<256>::new(WindowType::Hann, 0.5);
-        let sample_rate = 256.0;
-        let amplitude = 2.0;
+        let sample_rate: Float = 256.0;
+        let amplitude: Float = 2.0;
 
-        let mut signal = [0.0f32; 2048];
+        let mut signal = [0.0 as Float; 2048];
         for (i, s) in signal.iter_mut().enumerate() {
-            let t = i as f32 / sample_rate;
-            *s = amplitude * libm::sinf(2.0 * PI * 10.0 * t);
+            let t = i as Float / sample_rate;
+            *s = amplitude * float::sin(2.0 * float::PI * 10.0 * t);
         }
 
-        let mut psd = [0.0f32; 129];
+        let mut psd = [0.0 as Float; 129];
         welch.estimate(&signal, sample_rate, &mut psd);
 
         // Integrate PSD to get total power
         let freq_res = sample_rate / 256.0;
-        let total_power: f32 = psd.iter().map(|&v| v * freq_res).sum();
+        let total_power: Float = psd.iter().map(|&v| v * freq_res).sum();
 
         // Expected: A²/2 = 4/2 = 2.0
         let expected = amplitude * amplitude / 2.0;
@@ -342,25 +347,28 @@ mod tests {
     #[test]
     fn test_white_noise_approximately_flat() {
         let welch = WelchPsd::<256>::new(WindowType::Hann, 0.5);
-        let sample_rate = 256.0;
+        let sample_rate: Float = 256.0;
 
         // Deterministic pseudo-white noise
-        let mut signal = [0.0f32; 4096];
+        let mut signal = [0.0 as Float; 4096];
         let mut state: u32 = 12345;
         for s in signal.iter_mut() {
             // Simple LCG for deterministic "noise"
             state = state.wrapping_mul(1103515245).wrapping_add(12345);
-            *s = (state as f32 / u32::MAX as f32) * 2.0 - 1.0;
+            *s = (state as Float / u32::MAX as Float) * 2.0 - 1.0;
         }
 
-        let mut psd = [0.0f32; 129];
+        let mut psd = [0.0 as Float; 129];
         welch.estimate(&signal, sample_rate, &mut psd);
 
         // Check flatness: ratio of max to min in bins 5..120 (avoid DC/edge)
         let mid_psd = &psd[5..120];
-        let mean: f32 = mid_psd.iter().sum::<f32>() / mid_psd.len() as f32;
-        let max = mid_psd.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let min = mid_psd.iter().cloned().fold(f32::INFINITY, f32::min);
+        let mean: Float = mid_psd.iter().sum::<Float>() / mid_psd.len() as Float;
+        let max = mid_psd
+            .iter()
+            .cloned()
+            .fold(Float::NEG_INFINITY, Float::max);
+        let min = mid_psd.iter().cloned().fold(Float::INFINITY, Float::min);
 
         // For averaged white noise PSD, max/min should be reasonable
         let flatness = max / min;
@@ -376,21 +384,22 @@ mod tests {
     fn test_parseval_theorem() {
         // Total PSD power should match time-domain variance (rectangular window)
         let welch = WelchPsd::<256>::new(WindowType::Rectangular, 0.5);
-        let sample_rate = 256.0;
+        let sample_rate: Float = 256.0;
 
-        let mut signal = [0.0f32; 1024];
+        let mut signal = [0.0 as Float; 1024];
         for (i, s) in signal.iter_mut().enumerate() {
-            let t = i as f32 / sample_rate;
-            *s = libm::sinf(2.0 * PI * 20.0 * t) + 0.5 * libm::cosf(2.0 * PI * 50.0 * t);
+            let t = i as Float / sample_rate;
+            *s = float::sin(2.0 * float::PI * 20.0 * t)
+                + 0.5 * float::cos(2.0 * float::PI * 50.0 * t);
         }
 
-        let time_power: f32 = signal.iter().map(|x| x * x).sum::<f32>() / signal.len() as f32;
+        let time_power: Float = signal.iter().map(|x| x * x).sum::<Float>() / signal.len() as Float;
 
-        let mut psd = [0.0f32; 129];
+        let mut psd = [0.0 as Float; 129];
         welch.estimate(&signal, sample_rate, &mut psd);
 
         let freq_res = sample_rate / 256.0;
-        let freq_power: f32 = psd.iter().map(|&v| v * freq_res).sum();
+        let freq_power: Float = psd.iter().map(|&v| v * freq_res).sum();
 
         let ratio = freq_power / time_power;
         assert!(
@@ -403,21 +412,21 @@ mod tests {
     #[test]
     fn test_single_segment_equivalent_to_windowed_periodogram() {
         let welch = WelchPsd::<256>::new(WindowType::Hann, 0.5);
-        let sample_rate = 256.0;
+        let sample_rate: Float = 256.0;
 
         // Signal exactly N samples -> 1 segment
-        let mut signal = [0.0f32; 256];
+        let mut signal = [0.0 as Float; 256];
         for (i, s) in signal.iter_mut().enumerate() {
-            let t = i as f32 / sample_rate;
-            *s = libm::sinf(2.0 * PI * 15.0 * t);
+            let t = i as Float / sample_rate;
+            *s = float::sin(2.0 * float::PI * 15.0 * t);
         }
 
-        let mut psd = [0.0f32; 129];
+        let mut psd = [0.0 as Float; 129];
         let segments = welch.estimate(&signal, sample_rate, &mut psd);
         assert_eq!(segments, 1);
 
         // Compute the same thing manually
-        let window_s2: f32 = (0..256)
+        let window_s2: Float = (0..256)
             .map(|i| {
                 let w = window_coefficient(WindowType::Hann, i, 256);
                 w * w
@@ -461,25 +470,25 @@ mod tests {
 
     #[test]
     fn test_more_segments_lower_variance() {
-        let sample_rate = 256.0;
+        let sample_rate: Float = 256.0;
 
         // Generate noisy sinusoid
-        let mut signal_long = [0.0f32; 4096];
+        let mut signal_long = [0.0 as Float; 4096];
         let mut state: u32 = 42;
         for (i, s) in signal_long.iter_mut().enumerate() {
-            let t = i as f32 / sample_rate;
+            let t = i as Float / sample_rate;
             state = state.wrapping_mul(1103515245).wrapping_add(12345);
-            let noise = (state as f32 / u32::MAX as f32) * 2.0 - 1.0;
-            *s = libm::sinf(2.0 * PI * 10.0 * t) + noise * 0.5;
+            let noise = (state as Float / u32::MAX as Float) * 2.0 - 1.0;
+            *s = float::sin(2.0 * float::PI * 10.0 * t) + noise * 0.5;
         }
 
         // Short signal -> few segments
         let welch = WelchPsd::<256>::new(WindowType::Hann, 0.5);
-        let mut psd_short = [0.0f32; 129];
+        let mut psd_short = [0.0 as Float; 129];
         let seg_short = welch.estimate(&signal_long[..512], sample_rate, &mut psd_short);
 
         // Long signal -> many segments
-        let mut psd_long = [0.0f32; 129];
+        let mut psd_long = [0.0 as Float; 129];
         let seg_long = welch.estimate(&signal_long, sample_rate, &mut psd_long);
 
         assert!(seg_long > seg_short);
@@ -504,11 +513,11 @@ mod tests {
 
     #[test]
     fn test_different_window_types() {
-        let sample_rate = 256.0;
-        let mut signal = [0.0f32; 1024];
+        let sample_rate: Float = 256.0;
+        let mut signal = [0.0 as Float; 1024];
         for (i, s) in signal.iter_mut().enumerate() {
-            let t = i as f32 / sample_rate;
-            *s = libm::sinf(2.0 * PI * 10.0 * t);
+            let t = i as Float / sample_rate;
+            *s = float::sin(2.0 * float::PI * 10.0 * t);
         }
 
         for window in [
@@ -519,7 +528,7 @@ mod tests {
             WindowType::BlackmanHarris,
         ] {
             let welch = WelchPsd::<256>::new(window, 0.5);
-            let mut psd = [0.0f32; 129];
+            let mut psd = [0.0 as Float; 129];
             let segments = welch.estimate(&signal, sample_rate, &mut psd);
             assert!(segments > 0, "Window {:?} should produce segments", window);
 
@@ -550,15 +559,15 @@ mod tests {
     #[should_panic(expected = "Signal length")]
     fn test_signal_too_short() {
         let welch = WelchPsd::<256>::new(WindowType::Hann, 0.5);
-        let signal = [0.0f32; 100];
-        let mut psd = [0.0f32; 129];
+        let signal = [0.0 as Float; 100];
+        let mut psd = [0.0 as Float; 129];
         welch.estimate(&signal, 256.0, &mut psd);
     }
 
     #[test]
     fn test_frequency_bins() {
         let welch = WelchPsd::<256>::new(WindowType::Hann, 0.5);
-        let mut freqs = [0.0f32; 129];
+        let mut freqs = [0.0 as Float; 129];
         welch.frequencies(256.0, &mut freqs);
 
         assert!((freqs[0] - 0.0).abs() < 1e-6);
@@ -583,15 +592,15 @@ mod tests {
     #[test]
     fn test_zero_overlap() {
         let welch = WelchPsd::<256>::new(WindowType::Hann, 0.0);
-        let sample_rate = 256.0;
+        let sample_rate: Float = 256.0;
 
-        let mut signal = [0.0f32; 1024];
+        let mut signal = [0.0 as Float; 1024];
         for (i, s) in signal.iter_mut().enumerate() {
-            let t = i as f32 / sample_rate;
-            *s = libm::sinf(2.0 * PI * 10.0 * t);
+            let t = i as Float / sample_rate;
+            *s = float::sin(2.0 * float::PI * 10.0 * t);
         }
 
-        let mut psd = [0.0f32; 129];
+        let mut psd = [0.0 as Float; 129];
         let segments = welch.estimate(&signal, sample_rate, &mut psd);
         assert_eq!(segments, 4);
 

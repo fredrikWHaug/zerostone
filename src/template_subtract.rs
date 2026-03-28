@@ -30,7 +30,7 @@
 //! sub.add_template(&template, 0.5, 2.0).unwrap();
 //!
 //! // Inject a scaled spike into data
-//! let mut data = [0.0f64; 20];
+//! let mut data = [0.0; 20];
 //! for i in 0..8 {
 //!     data[4 + i] = 1.5 * template[i]; // amplitude 1.5
 //! }
@@ -42,6 +42,7 @@
 //! assert!((results[0].amplitude - 1.5).abs() < 0.1);
 //! ```
 
+use crate::float::Float;
 use crate::spike_sort::SortError;
 
 /// Result of a single template subtraction (one resolved spike).
@@ -61,7 +62,7 @@ pub struct PeelResult {
     /// Index of the matched template.
     pub template_id: usize,
     /// Amplitude scaling factor applied to the template.
-    pub amplitude: f64,
+    pub amplitude: Float,
 }
 
 /// Greedy matching pursuit for resolving overlapping spikes.
@@ -83,10 +84,10 @@ pub struct PeelResult {
 /// assert_eq!(sub.n_templates(), 0);
 /// ```
 pub struct TemplateSubtractor<const W: usize, const N: usize> {
-    templates: [[f64; W]; N],
-    norms_sq: [f64; N],
-    amp_min: [f64; N],
-    amp_max: [f64; N],
+    templates: [[Float; W]; N],
+    norms_sq: [Float; N],
+    amp_min: [Float; N],
+    amp_max: [Float; N],
     n_templates: usize,
     max_iter: usize,
     max_failures: usize,
@@ -146,9 +147,9 @@ impl<const W: usize, const N: usize> TemplateSubtractor<W, N> {
     /// ```
     pub fn add_template(
         &mut self,
-        template: &[f64; W],
-        amp_min: f64,
-        amp_max: f64,
+        template: &[Float; W],
+        amp_min: Float,
+        amp_max: Float,
     ) -> Result<usize, SortError> {
         if self.n_templates >= N {
             return Err(SortError::TemplateFull);
@@ -179,7 +180,7 @@ impl<const W: usize, const N: usize> TemplateSubtractor<W, N> {
     /// sub.add_template(&[-1.0, -3.0, -2.0, 0.0], 0.5, 2.0).unwrap();
     /// sub.set_amplitude_bounds(0, 0.3, 3.0);
     /// ```
-    pub fn set_amplitude_bounds(&mut self, idx: usize, amp_min: f64, amp_max: f64) {
+    pub fn set_amplitude_bounds(&mut self, idx: usize, amp_min: Float, amp_max: Float) {
         if idx < self.n_templates {
             self.amp_min[idx] = amp_min;
             self.amp_max[idx] = amp_max;
@@ -230,7 +231,7 @@ impl<const W: usize, const N: usize> TemplateSubtractor<W, N> {
     /// ```
     pub fn peel(
         &self,
-        data: &mut [f64],
+        data: &mut [Float],
         spike_times: &[usize],
         n_times: usize,
         pre_samples: usize,
@@ -278,8 +279,8 @@ impl<const W: usize, const N: usize> TemplateSubtractor<W, N> {
 
                 // Find best template match
                 let mut best_template = 0;
-                let mut best_dot = 0.0f64;
-                let mut best_norm_sq = 1.0f64;
+                let mut best_dot: Float = 0.0;
+                let mut best_norm_sq: Float = 1.0;
 
                 for ti in 0..self.n_templates {
                     let mut dot = 0.0;
@@ -347,10 +348,10 @@ mod kani_proofs {
     fn peel_no_panic() {
         let mut sub = TemplateSubtractor::<4, 2>::new(3);
 
-        let t0: f64 = kani::any();
-        let t1: f64 = kani::any();
-        let t2: f64 = kani::any();
-        let t3: f64 = kani::any();
+        let t0: Float = kani::any();
+        let t1: Float = kani::any();
+        let t2: Float = kani::any();
+        let t3: Float = kani::any();
 
         kani::assume(t0.is_finite() && t0 >= -10.0 && t0 <= 10.0);
         kani::assume(t1.is_finite() && t1 >= -10.0 && t1 <= 10.0);
@@ -360,14 +361,14 @@ mod kani_proofs {
         let template = [t0, t1, t2, t3];
         let _ = sub.add_template(&template, 0.5, 2.0);
 
-        let d0: f64 = kani::any();
-        let d1: f64 = kani::any();
-        let d2: f64 = kani::any();
-        let d3: f64 = kani::any();
-        let d4: f64 = kani::any();
-        let d5: f64 = kani::any();
-        let d6: f64 = kani::any();
-        let d7: f64 = kani::any();
+        let d0: Float = kani::any();
+        let d1: Float = kani::any();
+        let d2: Float = kani::any();
+        let d3: Float = kani::any();
+        let d4: Float = kani::any();
+        let d5: Float = kani::any();
+        let d6: Float = kani::any();
+        let d7: Float = kani::any();
 
         kani::assume(d0.is_finite() && d0 >= -100.0 && d0 <= 100.0);
         kani::assume(d1.is_finite() && d1 >= -100.0 && d1 <= 100.0);
@@ -400,12 +401,12 @@ mod kani_proofs {
     fn add_template_no_panic() {
         let mut sub = TemplateSubtractor::<4, 2>::new(10);
 
-        let t0: f64 = kani::any();
-        let t1: f64 = kani::any();
-        let t2: f64 = kani::any();
-        let t3: f64 = kani::any();
-        let amp_min: f64 = kani::any();
-        let amp_max: f64 = kani::any();
+        let t0: Float = kani::any();
+        let t1: Float = kani::any();
+        let t2: Float = kani::any();
+        let t3: Float = kani::any();
+        let amp_min: Float = kani::any();
+        let amp_max: Float = kani::any();
 
         kani::assume(t0.is_finite() && t0 >= -10.0 && t0 <= 10.0);
         kani::assume(t1.is_finite() && t1 >= -10.0 && t1 <= 10.0);
@@ -428,12 +429,12 @@ mod kani_proofs {
         let mut sub = TemplateSubtractor::<4, 2>::new(3);
         let _ = sub.add_template(&[-1.0, -3.0, -2.0, 0.0], 0.1, 5.0);
 
-        let d0: f64 = kani::any();
-        let d1: f64 = kani::any();
-        let d2: f64 = kani::any();
-        let d3: f64 = kani::any();
-        let d4: f64 = kani::any();
-        let d5: f64 = kani::any();
+        let d0: Float = kani::any();
+        let d1: Float = kani::any();
+        let d2: Float = kani::any();
+        let d3: Float = kani::any();
+        let d4: Float = kani::any();
+        let d5: Float = kani::any();
 
         kani::assume(d0.is_finite() && d0 >= -100.0 && d0 <= 100.0);
         kani::assume(d1.is_finite() && d1 >= -100.0 && d1 <= 100.0);
@@ -462,10 +463,10 @@ mod kani_proofs {
         let mut sub = TemplateSubtractor::<4, 2>::new(max_iter);
         assert_eq!(sub.n_templates(), 0);
 
-        let t0: f64 = kani::any();
-        let t1: f64 = kani::any();
-        let t2: f64 = kani::any();
-        let t3: f64 = kani::any();
+        let t0: Float = kani::any();
+        let t1: Float = kani::any();
+        let t2: Float = kani::any();
+        let t3: Float = kani::any();
         kani::assume(t0.is_finite() && t0 >= -10.0 && t0 <= 10.0);
         kani::assume(t1.is_finite() && t1 >= -10.0 && t1 <= 10.0);
         kani::assume(t2.is_finite() && t2 >= -10.0 && t2 <= 10.0);
@@ -518,7 +519,7 @@ mod tests {
         sub.add_template(&template, 0.5, 2.0).unwrap();
 
         // Inject a spike at amplitude 1.5 starting at sample 4
-        let mut data = [0.0f64; 24];
+        let mut data = [0.0; 24];
         let amp = 1.5;
         for i in 0..8 {
             data[4 + i] = amp * template[i];
@@ -541,7 +542,7 @@ mod tests {
         );
 
         // Data should be near-zero after subtraction
-        let residual: f64 = data.iter().map(|x| x * x).sum();
+        let residual: Float = data.iter().map(|x| x * x).sum();
         assert!(
             residual < 0.01,
             "Residual energy should be near zero, got {}",
@@ -558,7 +559,7 @@ mod tests {
         sub.add_template(&t2, 0.5, 2.0).unwrap();
 
         // Two overlapping spikes: t1 at time 2, t2 at time 3
-        let mut data = [0.0f64; 12];
+        let mut data = [0.0; 12];
         // t1 with amp=1.0 starting at sample 1 (peak at 2, pre=1)
         for i in 0..4 {
             data[1 + i] += 1.0 * t1[i];
@@ -586,7 +587,7 @@ mod tests {
         sub.add_template(&t, 0.8, 1.2).unwrap(); // tight bounds
 
         // Inject spike with amplitude 2.0 (outside [0.8, 1.2])
-        let mut data = [0.0f64; 12];
+        let mut data = [0.0; 12];
         for i in 0..4 {
             data[2 + i] = 2.0 * t[i];
         }
@@ -604,7 +605,7 @@ mod tests {
     #[test]
     fn test_convergence_empty_input() {
         let sub = TemplateSubtractor::<4, 2>::new(10);
-        let mut data = [0.0f64; 8];
+        let mut data = [0.0; 8];
         let mut results = [PeelResult {
             sample: 0,
             template_id: 0,
@@ -626,7 +627,7 @@ mod tests {
     fn test_empty_data() {
         let mut sub = TemplateSubtractor::<4, 2>::new(10);
         sub.add_template(&[1.0; 4], 0.5, 2.0).unwrap();
-        let mut data = [0.0f64; 2]; // too short for W=4
+        let mut data = [0.0; 2]; // too short for W=4
         let mut results = [PeelResult {
             sample: 0,
             template_id: 0,
@@ -643,7 +644,7 @@ mod tests {
         sub.add_template(&t, 0.8, 1.2).unwrap();
 
         // Initially rejects amplitude 1.5
-        let mut data = [0.0f64; 12];
+        let mut data = [0.0; 12];
         for i in 0..4 {
             data[2 + i] = 1.5 * t[i];
         }

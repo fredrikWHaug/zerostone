@@ -32,7 +32,7 @@
 //! # Example
 //!
 //! ```
-//! use zerostone::CommonAverageReference;
+//! use zerostone::{CommonAverageReference, Float};
 //!
 //! let car: CommonAverageReference<4> = CommonAverageReference::new();
 //!
@@ -44,9 +44,11 @@
 //! assert!((filtered[2] - 0.5).abs() < 1e-6);
 //!
 //! // Output sums to zero
-//! let sum: f32 = filtered.iter().sum();
+//! let sum: Float = filtered.iter().sum();
 //! assert!(sum.abs() < 1e-6);
 //! ```
+
+use crate::float::Float;
 
 /// Common Average Reference spatial filter.
 ///
@@ -126,13 +128,13 @@ impl<const C: usize> CommonAverageReference<C> {
     /// assert!((filtered[2] - 1.0).abs() < 1e-6);
     /// ```
     #[inline]
-    pub fn process(&self, samples: &[f32; C]) -> [f32; C] {
+    pub fn process(&self, samples: &[Float; C]) -> [Float; C] {
         // Compute mean
-        let mut sum = 0.0f32;
+        let mut sum: Float = 0.0;
         for &s in samples {
             sum += s;
         }
-        let mean = sum / C as f32;
+        let mean = sum / C as Float;
 
         // Subtract mean from each channel
         let mut output = [0.0; C];
@@ -144,9 +146,9 @@ impl<const C: usize> CommonAverageReference<C> {
 }
 
 impl<const C: usize> crate::pipeline::BlockProcessor<C> for CommonAverageReference<C> {
-    type Sample = f32;
+    type Sample = Float;
 
-    fn process_block_inplace(&mut self, block: &mut [[f32; C]]) {
+    fn process_block_inplace(&mut self, block: &mut [[Float; C]]) {
         for sample in block.iter_mut() {
             *sample = self.process(sample);
         }
@@ -167,7 +169,7 @@ mod tests {
         let samples = [1.0, 2.0, 3.0, 4.0, 5.0];
         let filtered = car.process(&samples);
 
-        let sum: f32 = filtered.iter().sum();
+        let sum: Float = filtered.iter().sum();
         assert!(sum.abs() < 1e-6, "Output should sum to zero, got {}", sum);
     }
 
@@ -239,13 +241,13 @@ mod tests {
     #[test]
     fn test_large_channel_count() {
         let car: CommonAverageReference<128> = CommonAverageReference::new();
-        let mut samples = [0.0f32; 128];
+        let mut samples = [0.0; 128];
         samples[64] = 128.0; // Single peak
 
         let filtered = car.process(&samples);
 
         // Verify zero-sum property
-        let sum: f32 = filtered.iter().sum();
+        let sum: Float = filtered.iter().sum();
         assert!(sum.abs() < 1e-4, "Sum should be zero, got {}", sum);
 
         // Peak channel should be 128 - 1 = 127 (mean is 1.0)
@@ -312,7 +314,7 @@ mod tests {
         let filtered = car.process(&samples);
 
         // Should work the same as new()
-        let sum: f32 = filtered.iter().sum();
+        let sum: Float = filtered.iter().sum();
         assert!(sum.abs() < 1e-6);
     }
 

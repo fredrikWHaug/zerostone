@@ -4,35 +4,35 @@
 //! frequency-domain analysis of neural signals. Essential for band power
 //! computation in motor imagery BCIs and spectral feature extraction.
 
-use core::f32::consts::PI;
+use crate::float::{self, Float};
 
-/// A complex number with 32-bit floating point components.
+/// A complex number with floating point components.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Complex {
     /// Real component
-    pub re: f32,
+    pub re: Float,
     /// Imaginary component
-    pub im: f32,
+    pub im: Float,
 }
 
 impl Complex {
     /// Create a new complex number.
-    pub const fn new(re: f32, im: f32) -> Self {
+    pub const fn new(re: Float, im: Float) -> Self {
         Self { re, im }
     }
 
     /// Create a complex number from a real value (imaginary part = 0).
-    pub const fn from_real(re: f32) -> Self {
+    pub const fn from_real(re: Float) -> Self {
         Self { re, im: 0.0 }
     }
 
     /// Compute the magnitude (absolute value).
-    pub fn magnitude(self) -> f32 {
-        libm::sqrtf(self.re * self.re + self.im * self.im)
+    pub fn magnitude(self) -> Float {
+        float::sqrt(self.re * self.re + self.im * self.im)
     }
 
     /// Compute the squared magnitude (power).
-    pub fn magnitude_squared(self) -> f32 {
+    pub fn magnitude_squared(self) -> Float {
         self.re * self.re + self.im * self.im
     }
 
@@ -84,6 +84,7 @@ impl Complex {
 ///
 /// ```
 /// use zerostone::{Fft, Complex};
+/// use zerostone::float::{self, Float};
 ///
 /// // Create FFT processor for 256-point transforms
 /// let fft = Fft::<256>::new();
@@ -91,7 +92,7 @@ impl Complex {
 /// // Prepare input (e.g., 256 samples of neural signal)
 /// let mut signal: [Complex; 256] = [Complex::new(0.0, 0.0); 256];
 /// for i in 0..256 {
-///     signal[i] = Complex::from_real((i as f32 * 0.1).sin());
+///     signal[i] = Complex::from_real(float::sin(i as Float * 0.1));
 /// }
 ///
 /// // Compute FFT in-place
@@ -133,12 +134,14 @@ impl<const N: usize> Fft<N> {
         let mut size = 2;
         while size <= N {
             let half_size = size / 2;
-            let angle = -2.0 * PI / size as f32;
+            let angle = -2.0 * float::PI / size as Float;
 
             for start in (0..N).step_by(size) {
                 for k in 0..half_size {
-                    let omega =
-                        Complex::new(libm::cosf(angle * k as f32), libm::sinf(angle * k as f32));
+                    let omega = Complex::new(
+                        float::cos(angle * k as Float),
+                        float::sin(angle * k as Float),
+                    );
 
                     let even_idx = start + k;
                     let odd_idx = start + k + half_size;
@@ -169,7 +172,7 @@ impl<const N: usize> Fft<N> {
         self.forward(data);
 
         // Conjugate output and scale
-        let scale = 1.0 / N as f32;
+        let scale = 1.0 / N as Float;
         for x in data.iter_mut() {
             *x = Complex::new(x.re * scale, -x.im * scale);
         }
@@ -184,7 +187,7 @@ impl<const N: usize> Fft<N> {
     ///
     /// * `real_signal` - Real-valued input signal
     /// * `output` - Output power spectrum (length N/2 + 1)
-    pub fn power_spectrum(&self, real_signal: &[f32; N], output: &mut [f32]) {
+    pub fn power_spectrum(&self, real_signal: &[Float; N], output: &mut [Float]) {
         assert!(output.len() > N / 2, "Output buffer too small");
 
         // Convert to complex
@@ -248,16 +251,17 @@ impl<const N: usize> Default for Fft<N> {
 ///
 /// ```
 /// use zerostone::{Fft, BandPower};
+/// use zerostone::float::Float;
 ///
 /// let fft = Fft::<256>::new();
 /// let mut band_power = BandPower::new(250.0); // 250 Hz sample rate
 ///
 /// // Get alpha band power (8-12 Hz)
-/// let signal = [0.0f32; 256]; // Your EEG data here
+/// let signal = [0.0 as Float; 256]; // Your EEG data here
 /// let alpha_power = band_power.compute::<256>(&fft, &signal, 8.0, 12.0);
 /// ```
 pub struct BandPower {
-    sample_rate: f32,
+    sample_rate: Float,
 }
 
 impl BandPower {
@@ -266,7 +270,7 @@ impl BandPower {
     /// # Arguments
     ///
     /// * `sample_rate` - Sample rate in Hz
-    pub fn new(sample_rate: f32) -> Self {
+    pub fn new(sample_rate: Float) -> Self {
         Self { sample_rate }
     }
 
@@ -285,16 +289,16 @@ impl BandPower {
     pub fn compute<const N: usize>(
         &mut self,
         fft: &Fft<N>,
-        signal: &[f32; N],
-        low_freq: f32,
-        high_freq: f32,
-    ) -> f32 {
+        signal: &[Float; N],
+        low_freq: Float,
+        high_freq: Float,
+    ) -> Float {
         // Compute power spectrum (allocate N elements, only N/2+1 will be used)
-        let mut power_spec = [0.0f32; N];
+        let mut power_spec = [0.0 as Float; N];
         fft.power_spectrum(signal, &mut power_spec[..]);
 
         // Convert frequencies to bin indices
-        let freq_resolution = self.sample_rate / N as f32;
+        let freq_resolution = self.sample_rate / N as Float;
         let low_bin = (low_freq / freq_resolution) as usize;
         let high_bin = ((high_freq / freq_resolution) as usize).min(N / 2);
 
@@ -303,7 +307,7 @@ impl BandPower {
     }
 
     /// Get the sample rate.
-    pub fn sample_rate(&self) -> f32 {
+    pub fn sample_rate(&self) -> Float {
         self.sample_rate
     }
 }
@@ -315,10 +319,10 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(4)]
     fn fft_butterfly_finite() {
-        let re0: f32 = kani::any();
-        let im0: f32 = kani::any();
-        let re1: f32 = kani::any();
-        let im1: f32 = kani::any();
+        let re0: Float = kani::any();
+        let im0: Float = kani::any();
+        let re1: Float = kani::any();
+        let im1: Float = kani::any();
 
         kani::assume(re0.is_finite() && re0 >= -1.0 && re0 <= 1.0);
         kani::assume(im0.is_finite() && im0 >= -1.0 && im0 <= 1.0);
@@ -389,8 +393,8 @@ mod tests {
 
         // Create a sine wave at bin 2 (2 cycles over 16 samples)
         for (i, val) in data.iter_mut().enumerate() {
-            let angle = 2.0 * PI * 2.0 * i as f32 / 16.0;
-            *val = Complex::from_real(libm::sinf(angle));
+            let angle = 2.0 * float::PI * 2.0 * i as Float / 16.0;
+            *val = Complex::from_real(float::sin(angle));
         }
 
         fft.forward(&mut data);
@@ -435,8 +439,8 @@ mod tests {
         let fft = Fft::<16>::new();
 
         // DC signal
-        let signal = [1.0f32; 16];
-        let mut power = [0.0f32; 9]; // N/2 + 1
+        let signal = [1.0 as Float; 16];
+        let mut power = [0.0 as Float; 9]; // N/2 + 1
 
         fft.power_spectrum(&signal, &mut power);
 
@@ -453,10 +457,10 @@ mod tests {
         let mut bp = BandPower::new(250.0);
 
         // Create a 10 Hz sine wave (in alpha band)
-        let mut signal = [0.0f32; 256];
+        let mut signal = [0.0 as Float; 256];
         for (i, val) in signal.iter_mut().enumerate() {
-            let t = i as f32 / 250.0;
-            *val = libm::sinf(2.0 * PI * 10.0 * t);
+            let t = i as Float / 250.0;
+            *val = float::sin(2.0 * float::PI * 10.0 * t);
         }
 
         // Alpha band (8-12 Hz) should have significant power

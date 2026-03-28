@@ -8,6 +8,8 @@
 //! All data lives in fixed-size arrays with const generics -- no heap, no alloc,
 //! `#![no_std]` compatible.
 
+use crate::float::{self, Float, INFINITY};
+
 /// 2D probe geometry with `C` channels.
 ///
 /// Each channel has an (x, y) position in micrometers. Factory functions
@@ -29,7 +31,7 @@
 /// ```
 pub struct ProbeLayout<const C: usize> {
     /// (x, y) positions in micrometers for each channel.
-    positions: [[f64; 2]; C],
+    positions: [[Float; 2]; C],
 }
 
 /// Compile-time assertion helper: C must be at least 1.
@@ -49,7 +51,7 @@ impl<const C: usize> ProbeLayout<C> {
     /// let probe = ProbeLayout::new(positions);
     /// assert_eq!(probe.positions()[1], [0.0, 25.0]);
     /// ```
-    pub fn new(positions: [[f64; 2]; C]) -> Self {
+    pub fn new(positions: [[Float; 2]; C]) -> Self {
         let () = Self::_ASSERT_C;
         Self { positions }
     }
@@ -66,12 +68,12 @@ impl<const C: usize> ProbeLayout<C> {
     /// assert_eq!(probe.positions()[0], [0.0, 0.0]);
     /// assert_eq!(probe.positions()[7], [0.0, 140.0]);
     /// ```
-    pub fn linear(pitch: f64) -> Self {
+    pub fn linear(pitch: Float) -> Self {
         let () = Self::_ASSERT_C;
         let mut positions = [[0.0; 2]; C];
         let mut i = 0;
         while i < C {
-            positions[i] = [0.0, i as f64 * pitch];
+            positions[i] = [0.0, i as Float * pitch];
             i += 1;
         }
         Self { positions }
@@ -99,30 +101,30 @@ impl<const C: usize> ProbeLayout<C> {
     /// assert!((probe.positions()[0][0] - (-16.0)).abs() < 1e-9);
     /// assert!((probe.positions()[1][0] - 16.0).abs() < 1e-9);
     /// ```
-    pub fn polytrode(columns: usize, pitch_x: f64, pitch_y: f64) -> Self {
+    pub fn polytrode(columns: usize, pitch_x: Float, pitch_y: Float) -> Self {
         let () = Self::_ASSERT_C;
         assert!(columns >= 1, "columns must be >= 1");
         let mut positions = [[0.0; 2]; C];
         // Center x-positions so the midpoint of the row is at x=0
-        let x_offset = (columns as f64 - 1.0) * pitch_x * 0.5;
+        let x_offset = (columns as Float - 1.0) * pitch_x * 0.5;
         let mut i = 0;
         while i < C {
             let col = i % columns;
             let row = i / columns;
-            positions[i] = [col as f64 * pitch_x - x_offset, row as f64 * pitch_y];
+            positions[i] = [col as Float * pitch_x - x_offset, row as Float * pitch_y];
             i += 1;
         }
         Self { positions }
     }
 
     /// Read the channel positions.
-    pub fn positions(&self) -> &[[f64; 2]; C] {
+    pub fn positions(&self) -> &[[Float; 2]; C] {
         &self.positions
     }
 
     /// Euclidean distance between two channels.
     ///
-    /// Returns 0.0 if both indices are equal. Returns `f64::NAN` if either
+    /// Returns 0.0 if both indices are equal. Returns NAN if either
     /// index is out of range (>= C), so this function never panics.
     ///
     /// # Example
@@ -134,13 +136,13 @@ impl<const C: usize> ProbeLayout<C> {
     /// let d = probe.channel_distance(0, 2);
     /// assert!((d - 20.0).abs() < 1e-9);
     /// ```
-    pub fn channel_distance(&self, ch_a: usize, ch_b: usize) -> f64 {
+    pub fn channel_distance(&self, ch_a: usize, ch_b: usize) -> Float {
         if ch_a >= C || ch_b >= C {
-            return f64::NAN;
+            return Float::NAN;
         }
         let dx = self.positions[ch_a][0] - self.positions[ch_b][0];
         let dy = self.positions[ch_a][1] - self.positions[ch_b][1];
-        libm::sqrt(dx * dx + dy * dy)
+        float::sqrt(dx * dx + dy * dy)
     }
 
     /// Find all channels within `radius` micrometers of `channel`.
@@ -159,7 +161,7 @@ impl<const C: usize> ProbeLayout<C> {
     /// // Channels 2 and 4 are within 15 um of channel 3 (distance 10 each)
     /// assert_eq!(n, 2);
     /// ```
-    pub fn neighbor_channels(&self, channel: usize, radius: f64, output: &mut [usize]) -> usize {
+    pub fn neighbor_channels(&self, channel: usize, radius: Float, output: &mut [usize]) -> usize {
         if channel >= C {
             return 0;
         }
@@ -216,7 +218,7 @@ impl<const C: usize> ProbeLayout<C> {
         // Collect (distance_sq, index) for all other channels.
         // We store up to C-1 candidates. Since C is const-generic and small
         // enough to be on the stack, this is fine.
-        let mut dists = [0.0f64; C];
+        let mut dists = [0.0 as Float; C];
         let mut indices = [0usize; C];
         let mut n_candidates = 0;
 
@@ -272,7 +274,7 @@ impl<const C: usize> ProbeLayout<C> {
     /// assert!((xr - 0.0).abs() < 1e-9);
     /// assert!((yr - 140.0).abs() < 1e-9);
     /// ```
-    pub fn spatial_extent(&self) -> (f64, f64) {
+    pub fn spatial_extent(&self) -> (Float, Float) {
         let mut x_min = self.positions[0][0];
         let mut x_max = x_min;
         let mut y_min = self.positions[0][1];
@@ -301,7 +303,7 @@ impl<const C: usize> ProbeLayout<C> {
     /// Estimate channel density: `C / bounding_area` in channels per um^2.
     ///
     /// If the bounding area is zero (e.g., all channels collinear or a single
-    /// channel), returns `f64::INFINITY`.
+    /// channel), returns infinity.
     ///
     /// # Example
     ///
@@ -313,13 +315,13 @@ impl<const C: usize> ProbeLayout<C> {
     /// assert!(density > 0.0);
     /// assert!(density.is_finite());
     /// ```
-    pub fn channel_density(&self) -> f64 {
+    pub fn channel_density(&self) -> Float {
         let (xr, yr) = self.spatial_extent();
         let area = xr * yr;
         if area <= 0.0 {
-            return f64::INFINITY;
+            return INFINITY;
         }
-        C as f64 / area
+        C as Float / area
     }
 
     /// Number of channels.
@@ -342,7 +344,7 @@ impl<const C: usize> ProbeLayout<C> {
 /// let d01 = probe.channel_distance(0, 1);
 /// assert!((d01 - 25.0).abs() < 1e-9);
 /// ```
-pub fn tetrode(pitch: f64) -> ProbeLayout<4> {
+pub fn tetrode(pitch: Float) -> ProbeLayout<4> {
     let half = pitch * 0.5;
     ProbeLayout::new([[-half, -half], [half, -half], [-half, half], [half, half]])
 }
@@ -373,12 +375,12 @@ pub fn tetrode(pitch: f64) -> ProbeLayout<4> {
 /// assert!((probe.positions()[2][1] - 20.0).abs() < 1e-9);
 /// ```
 pub fn neuropixels_1() -> ProbeLayout<384> {
-    let mut positions = [[0.0f64; 2]; 384];
+    let mut positions = [[0.0 as Float; 2]; 384];
     let mut i = 0;
     while i < 384 {
         let col = i % 2; // 0 or 1
         let row = i / 2;
-        positions[i] = [col as f64 * 32.0, row as f64 * 20.0];
+        positions[i] = [col as Float * 32.0, row as Float * 20.0];
         i += 1;
     }
     ProbeLayout::new(positions)
@@ -398,14 +400,14 @@ pub fn neuropixels_1() -> ProbeLayout<384> {
 /// assert_eq!(probe.n_channels(), 384);
 /// ```
 pub fn neuropixels_2() -> ProbeLayout<384> {
-    let mut positions = [[0.0f64; 2]; 384];
+    let mut positions = [[0.0 as Float; 2]; 384];
     let mut i = 0;
     while i < 384 {
         let col = i % 2;
         let row = i / 2;
         // Stagger: odd rows shift by 16um
-        let x_offset = if row % 2 == 1 { 16.0 } else { 0.0 };
-        positions[i] = [col as f64 * 32.0 + x_offset, row as f64 * 15.0];
+        let x_offset: Float = if row % 2 == 1 { 16.0 } else { 0.0 };
+        positions[i] = [col as Float * 32.0 + x_offset, row as Float * 15.0];
         i += 1;
     }
     ProbeLayout::new(positions)
@@ -425,8 +427,8 @@ pub fn neuropixels_2() -> ProbeLayout<384> {
 /// assert_eq!(probe.n_channels(), 96);
 /// ```
 pub fn utah_array() -> ProbeLayout<96> {
-    let mut positions = [[0.0f64; 2]; 96];
-    let pitch = 400.0;
+    let mut positions = [[0.0 as Float; 2]; 96];
+    let pitch: Float = 400.0;
     let mut ch = 0;
     let mut row = 0;
     while row < 10 {
@@ -435,7 +437,7 @@ pub fn utah_array() -> ProbeLayout<96> {
             // Skip 4 corners
             let is_corner = (row == 0 || row == 9) && (col == 0 || col == 9);
             if !is_corner && ch < 96 {
-                positions[ch] = [col as f64 * pitch, row as f64 * pitch];
+                positions[ch] = [col as Float * pitch, row as Float * pitch];
                 ch += 1;
             }
             col += 1;
@@ -478,7 +480,7 @@ mod kani_proofs {
         kani::assume(radius.is_finite() && radius >= 0.0 && radius <= 1000.0);
 
         let mut output = [0usize; 4];
-        let n = probe.neighbor_channels(ch, radius, &mut output);
+        let n = probe.neighbor_channels(ch, radius as Float, &mut output);
         assert!(n <= 4);
         let mut i = 0;
         while i < n {
@@ -534,7 +536,7 @@ mod kani_proofs {
         kani::assume(x1.is_finite() && x1 >= -1e6 && x1 <= 1e6);
         kani::assume(y1.is_finite() && y1 >= -1e6 && y1 <= 1e6);
 
-        let probe = ProbeLayout::<2>::new([[x0, y0], [x1, y1]]);
+        let probe = ProbeLayout::<2>::new([[x0 as Float, y0 as Float], [x1 as Float, y1 as Float]]);
         let (xr, yr) = probe.spatial_extent();
         assert!(xr >= 0.0, "x range must be non-negative");
         assert!(yr >= 0.0, "y range must be non-negative");
@@ -606,7 +608,7 @@ mod tests {
 
         // Diagonal should be pitch * sqrt(2)
         let diag = probe.channel_distance(0, 3);
-        assert!((diag - 20.0 * libm::sqrt(2.0)).abs() < 1e-9);
+        assert!((diag - 20.0 * float::sqrt(2.0)).abs() < 1e-9);
     }
 
     #[test]
@@ -762,7 +764,7 @@ mod tests {
 
     #[test]
     fn test_all_channels_same_position() {
-        let positions = [[0.0, 0.0]; 4];
+        let positions = [[0.0 as Float, 0.0 as Float]; 4];
         let probe = ProbeLayout::new(positions);
 
         // All distances should be 0

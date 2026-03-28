@@ -51,6 +51,7 @@
 //! assert!(whitened[1].is_finite());
 //! ```
 
+use crate::float::{self, Float};
 use crate::linalg::{LinalgError, Matrix};
 
 /// Whitening mode selection.
@@ -120,7 +121,7 @@ impl<const C: usize, const M: usize> WhiteningMatrix<C, M> {
     /// # Arguments
     ///
     /// * `cov` - Symmetric positive semi-definite covariance matrix, stored
-    ///   as `[[f64; C]; C]` in row-major order.
+    ///   as `[[Float; C]; C]` in row-major order.
     /// * `mode` - [`WhiteningMode::Zca`] or [`WhiteningMode::Pca`].
     /// * `epsilon` - Regularization added to each eigenvalue before inversion.
     ///   Prevents division by zero for rank-deficient matrices. Typical values:
@@ -150,15 +151,15 @@ impl<const C: usize, const M: usize> WhiteningMatrix<C, M> {
     /// assert!(out[0].is_finite());
     /// ```
     pub fn from_covariance(
-        cov: &[[f64; C]; C],
+        cov: &[[Float; C]; C],
         mode: WhiteningMode,
-        epsilon: f64,
+        epsilon: Float,
     ) -> Result<Self, LinalgError> {
         // Trigger compile-time assertion
         #[allow(clippy::let_unit_value)]
         let () = Self::_ASSERT_M;
 
-        // Convert [[f64; C]; C] to Matrix<C, M>
+        // Convert [[Float; C]; C] to Matrix<C, M>
         let mut mat = Matrix::<C, M>::zeros();
         #[allow(clippy::needless_range_loop)]
         for i in 0..C {
@@ -171,14 +172,14 @@ impl<const C: usize, const M: usize> WhiteningMatrix<C, M> {
         let eigen = mat.eigen_symmetric(50, 1e-12)?;
 
         // Build regularized inverse-square-root eigenvalues
-        let mut inv_sqrt_eig = [0.0f64; C];
+        let mut inv_sqrt_eig = [0.0 as Float; C];
         #[allow(clippy::needless_range_loop)]
         for k in 0..C {
             let lambda = eigen.eigenvalues[k] + epsilon;
             // After regularization, lambda should be > 0 since epsilon > 0
             // but guard against pathological negative eigenvalues from numerical noise
             let clamped = if lambda > epsilon { lambda } else { epsilon };
-            inv_sqrt_eig[k] = 1.0 / libm::sqrt(clamped);
+            inv_sqrt_eig[k] = 1.0 / float::sqrt(clamped);
         }
 
         let w = match mode {
@@ -205,7 +206,7 @@ impl<const C: usize, const M: usize> WhiteningMatrix<C, M> {
     ///
     /// # Returns
     ///
-    /// Whitened sample as `[f64; C]`.
+    /// Whitened sample as `[Float; C]`.
     ///
     /// # Examples
     ///
@@ -218,8 +219,8 @@ impl<const C: usize, const M: usize> WhiteningMatrix<C, M> {
     /// assert!(y[0].is_finite());
     /// ```
     #[inline]
-    pub fn apply(&self, sample: &[f64; C]) -> [f64; C] {
-        let mut out = [0.0f64; C];
+    pub fn apply(&self, sample: &[Float; C]) -> [Float; C] {
+        let mut out = [0.0 as Float; C];
         #[allow(clippy::needless_range_loop)]
         for i in 0..C {
             let mut sum = 0.0;
@@ -249,7 +250,7 @@ impl<const C: usize, const M: usize> WhiteningMatrix<C, M> {
     }
 
     /// Reconstruct a symmetric matrix: `E * diag(d) * E^T`.
-    fn reconstruct_symmetric(eigvecs: &Matrix<C, M>, d: &[f64; C]) -> Matrix<C, M> {
+    fn reconstruct_symmetric(eigvecs: &Matrix<C, M>, d: &[Float; C]) -> Matrix<C, M> {
         let mut result = Matrix::zeros();
         #[allow(clippy::needless_range_loop)]
         for i in 0..C {
@@ -265,7 +266,7 @@ impl<const C: usize, const M: usize> WhiteningMatrix<C, M> {
     }
 
     /// Build PCA whitening matrix: `diag(d) * E^T`.
-    fn build_pca_matrix(eigvecs: &Matrix<C, M>, d: &[f64; C]) -> Matrix<C, M> {
+    fn build_pca_matrix(eigvecs: &Matrix<C, M>, d: &[Float; C]) -> Matrix<C, M> {
         let mut result = Matrix::zeros();
         #[allow(clippy::needless_range_loop)]
         for i in 0..C {
@@ -298,8 +299,8 @@ impl<const C: usize, const M: usize> WhiteningMatrix<C, M> {
 /// ```
 pub fn apply_whitening<const C: usize, const M: usize>(
     wm: &WhiteningMatrix<C, M>,
-    sample: &[f64; C],
-) -> [f64; C] {
+    sample: &[Float; C],
+) -> [Float; C] {
     wm.apply(sample)
 }
 
@@ -316,13 +317,13 @@ pub fn apply_whitening<const C: usize, const M: usize>(
 /// * `C` - Number of channels
 ///
 /// # Arguments
-/// * `data` - Multi-channel recording data, one `[f64; C]` per time sample
+/// * `data` - Multi-channel recording data, one `[Float; C]` per time sample
 /// * `noise_std` - Per-channel noise standard deviation (e.g., from MAD estimation)
 /// * `threshold` - Amplitude threshold in noise units (typically 2.0-3.0)
 /// * `min_samples` - Minimum quiet samples required (fallback to full data if fewer)
 ///
 /// # Returns
-/// Covariance matrix `[[f64; C]; C]`
+/// Covariance matrix `[[Float; C]; C]`
 ///
 /// # Examples
 ///
@@ -345,11 +346,11 @@ pub fn apply_whitening<const C: usize, const M: usize>(
 /// ```
 #[allow(clippy::needless_range_loop)]
 pub fn estimate_noise_covariance<const C: usize>(
-    data: &[[f64; C]],
-    noise_std: &[f64; C],
-    threshold: f64,
+    data: &[[Float; C]],
+    noise_std: &[Float; C],
+    threshold: Float,
     min_samples: usize,
-) -> [[f64; C]; C] {
+) -> [[Float; C]; C] {
     let n = data.len();
     if n <= 1 {
         return [[0.0; C]; C];
@@ -360,7 +361,7 @@ pub fn estimate_noise_covariance<const C: usize>(
     for sample in data.iter() {
         let mut all_quiet = true;
         for ch in 0..C {
-            if libm::fabs(sample[ch]) >= threshold * noise_std[ch] {
+            if float::abs(sample[ch]) >= threshold * noise_std[ch] {
                 all_quiet = false;
                 break;
             }
@@ -374,13 +375,13 @@ pub fn estimate_noise_covariance<const C: usize>(
     let use_quiet = quiet_count >= min_samples && min_samples > 0;
 
     // First pass: compute means
-    let mut mean = [0.0f64; C];
+    let mut mean = [0.0 as Float; C];
     let mut count: usize = 0;
     for sample in data.iter() {
         if use_quiet {
             let mut all_quiet = true;
             for ch in 0..C {
-                if libm::fabs(sample[ch]) >= threshold * noise_std[ch] {
+                if float::abs(sample[ch]) >= threshold * noise_std[ch] {
                     all_quiet = false;
                     break;
                 }
@@ -400,16 +401,16 @@ pub fn estimate_noise_covariance<const C: usize>(
     }
 
     for ch in 0..C {
-        mean[ch] /= count as f64;
+        mean[ch] /= count as Float;
     }
 
     // Second pass: compute covariance (centered outer products)
-    let mut cov = [[0.0f64; C]; C];
+    let mut cov = [[0.0 as Float; C]; C];
     for sample in data.iter() {
         if use_quiet {
             let mut all_quiet = true;
             for ch in 0..C {
-                if libm::fabs(sample[ch]) >= threshold * noise_std[ch] {
+                if float::abs(sample[ch]) >= threshold * noise_std[ch] {
                     all_quiet = false;
                     break;
                 }
@@ -425,7 +426,7 @@ pub fn estimate_noise_covariance<const C: usize>(
         }
     }
 
-    let denom = (count - 1) as f64;
+    let denom = (count - 1) as Float;
     for i in 0..C {
         for j in 0..C {
             cov[i][j] /= denom;
@@ -458,9 +459,9 @@ mod kani_proofs {
         kani::assume(x0.is_finite() && x0 >= -1e6 && x0 <= 1e6);
         kani::assume(x1.is_finite() && x1 >= -1e6 && x1 <= 1e6);
 
-        let mat = Matrix::<2, 4>::new([w00, w01, w10, w11]);
+        let mat = Matrix::<2, 4>::new([w00 as Float, w01 as Float, w10 as Float, w11 as Float]);
         let wm = WhiteningMatrix { matrix: mat };
-        let sample = [x0, x1];
+        let sample = [x0 as Float, x1 as Float];
 
         let result = wm.apply(&sample);
         assert!(result[0].is_finite(), "output channel 0 must be finite");
@@ -486,8 +487,8 @@ mod kani_proofs {
         kani::assume(d0.is_finite() && d0 >= -10.0 && d0 <= 10.0);
         kani::assume(d1.is_finite() && d1 >= -10.0 && d1 <= 10.0);
 
-        let eigvecs = Matrix::<2, 4>::new([e00, e01, e10, e11]);
-        let d = [d0, d1];
+        let eigvecs = Matrix::<2, 4>::new([e00 as Float, e01 as Float, e10 as Float, e11 as Float]);
+        let d = [d0 as Float, d1 as Float];
         let result = WhiteningMatrix::<2, 4>::reconstruct_symmetric(&eigvecs, &d);
 
         // W[0,1] must equal W[1,0] (symmetry)
@@ -517,9 +518,9 @@ mod kani_proofs {
         kani::assume(x0.is_finite() && x0 >= -1e3 && x0 <= 1e3);
         kani::assume(x1.is_finite() && x1 >= -1e3 && x1 <= 1e3);
 
-        let mat = Matrix::<2, 4>::new([w00, w01, w10, w11]);
+        let mat = Matrix::<2, 4>::new([w00 as Float, w01 as Float, w10 as Float, w11 as Float]);
         let wm = WhiteningMatrix { matrix: mat };
-        let sample = [x0, x1];
+        let sample = [x0 as Float, x1 as Float];
 
         let r1 = wm.apply(&sample);
         let r2 = apply_whitening(&wm, &sample);
@@ -532,24 +533,33 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(6)]
     fn estimate_noise_covariance_no_panic() {
-        let s0: [f64; 2] = [kani::any(), kani::any()];
-        let s1: [f64; 2] = [kani::any(), kani::any()];
-        let s2: [f64; 2] = [kani::any(), kani::any()];
-        let noise_std: [f64; 2] = [kani::any(), kani::any()];
+        let s0_0: f64 = kani::any();
+        let s0_1: f64 = kani::any();
+        let s1_0: f64 = kani::any();
+        let s1_1: f64 = kani::any();
+        let s2_0: f64 = kani::any();
+        let s2_1: f64 = kani::any();
+        let ns0: f64 = kani::any();
+        let ns1: f64 = kani::any();
         let threshold: f64 = kani::any();
 
-        kani::assume(s0[0].is_finite() && s0[0] >= -100.0 && s0[0] <= 100.0);
-        kani::assume(s0[1].is_finite() && s0[1] >= -100.0 && s0[1] <= 100.0);
-        kani::assume(s1[0].is_finite() && s1[0] >= -100.0 && s1[0] <= 100.0);
-        kani::assume(s1[1].is_finite() && s1[1] >= -100.0 && s1[1] <= 100.0);
-        kani::assume(s2[0].is_finite() && s2[0] >= -100.0 && s2[0] <= 100.0);
-        kani::assume(s2[1].is_finite() && s2[1] >= -100.0 && s2[1] <= 100.0);
-        kani::assume(noise_std[0].is_finite() && noise_std[0] >= 0.01 && noise_std[0] <= 100.0);
-        kani::assume(noise_std[1].is_finite() && noise_std[1] >= 0.01 && noise_std[1] <= 100.0);
+        kani::assume(s0_0.is_finite() && s0_0 >= -100.0 && s0_0 <= 100.0);
+        kani::assume(s0_1.is_finite() && s0_1 >= -100.0 && s0_1 <= 100.0);
+        kani::assume(s1_0.is_finite() && s1_0 >= -100.0 && s1_0 <= 100.0);
+        kani::assume(s1_1.is_finite() && s1_1 >= -100.0 && s1_1 <= 100.0);
+        kani::assume(s2_0.is_finite() && s2_0 >= -100.0 && s2_0 <= 100.0);
+        kani::assume(s2_1.is_finite() && s2_1 >= -100.0 && s2_1 <= 100.0);
+        kani::assume(ns0.is_finite() && ns0 >= 0.01 && ns0 <= 100.0);
+        kani::assume(ns1.is_finite() && ns1 >= 0.01 && ns1 <= 100.0);
         kani::assume(threshold.is_finite() && threshold >= 0.0 && threshold <= 100.0);
 
+        let s0: [Float; 2] = [s0_0 as Float, s0_1 as Float];
+        let s1: [Float; 2] = [s1_0 as Float, s1_1 as Float];
+        let s2: [Float; 2] = [s2_0 as Float, s2_1 as Float];
+        let noise_std: [Float; 2] = [ns0 as Float, ns1 as Float];
+
         let data = [s0, s1, s2];
-        let result = estimate_noise_covariance(&data, &noise_std, threshold, 2);
+        let result = estimate_noise_covariance(&data, &noise_std, threshold as Float, 2);
 
         // Result should contain finite values
         for i in 0..2 {
@@ -566,23 +576,23 @@ mod tests {
     use super::*;
 
     /// Helper: compute sample covariance from a set of multi-channel samples.
-    fn sample_covariance<const C: usize>(data: &[[f64; C]]) -> [[f64; C]; C] {
+    fn sample_covariance<const C: usize>(data: &[[Float; C]]) -> [[Float; C]; C] {
         let n = data.len();
         assert!(n > 1);
 
         // Compute means
-        let mut mean = [0.0f64; C];
+        let mut mean = [0.0 as Float; C];
         for sample in data.iter() {
             for c in 0..C {
                 mean[c] += sample[c];
             }
         }
         for m in mean.iter_mut() {
-            *m /= n as f64;
+            *m /= n as Float;
         }
 
         // Compute covariance
-        let mut cov = [[0.0f64; C]; C];
+        let mut cov = [[0.0 as Float; C]; C];
         for sample in data.iter() {
             for (i, row) in cov.iter_mut().enumerate() {
                 for (j, val) in row.iter_mut().enumerate() {
@@ -592,7 +602,7 @@ mod tests {
         }
         for row in cov.iter_mut() {
             for val in row.iter_mut() {
-                *val /= (n - 1) as f64;
+                *val /= (n - 1) as Float;
             }
         }
         cov
@@ -610,10 +620,10 @@ mod tests {
             self.0 ^= self.0 << 17;
             self.0
         }
-        fn gaussian(&mut self, mean: f64, std: f64) -> f64 {
-            let u1 = (self.next_u64() % 1_000_000 + 1) as f64 / 1_000_001.0;
-            let u2 = (self.next_u64() % 1_000_000) as f64 / 1_000_000.0;
-            let z = libm::sqrt(-2.0 * libm::log(u1)) * libm::cos(2.0 * core::f64::consts::PI * u2);
+        fn gaussian(&mut self, mean: Float, std: Float) -> Float {
+            let u1 = (self.next_u64() % 1_000_000 + 1) as Float / 1_000_001.0;
+            let u2 = (self.next_u64() % 1_000_000) as Float / 1_000_000.0;
+            let z = float::sqrt(-2.0 * float::log(u1)) * float::cos(2.0 * float::PI * u2);
             mean + z * std
         }
     }
@@ -643,7 +653,7 @@ mod tests {
         // The output may be permuted/sign-flipped since eigenvectors of I
         // are arbitrary, but each output component should have magnitude
         // matching one input component.
-        let mut mags: [f64; 2] = [libm::fabs(out[0]), libm::fabs(out[1])];
+        let mut mags: [Float; 2] = [float::abs(out[0]), float::abs(out[1])];
         mags.sort_by(|a, b| a.partial_cmp(b).unwrap());
         assert!((mags[0] - 3.0).abs() < 0.1);
         assert!((mags[1] - 7.0).abs() < 0.1);
@@ -672,9 +682,9 @@ mod tests {
         // L = chol([[4,2],[2,3]]) => L[0,0]=2, L[1,0]=1, L[1,1]=sqrt(2)
         let l00 = 2.0;
         let l10 = 1.0;
-        let l11 = libm::sqrt(2.0);
+        let l11 = float::sqrt(2.0);
 
-        let mut data = [[0.0f64; 2]; 2000];
+        let mut data = [[0.0 as Float; 2]; 2000];
         for i in 0..n {
             let z0 = rng.gaussian(0.0, 1.0);
             let z1 = rng.gaussian(0.0, 1.0);
@@ -687,7 +697,7 @@ mod tests {
             WhiteningMatrix::<2, 4>::from_covariance(&emp_cov, WhiteningMode::Zca, 1e-10).unwrap();
 
         // Whiten all samples
-        let mut whitened = [[0.0f64; 2]; 2000];
+        let mut whitened = [[0.0 as Float; 2]; 2000];
         for i in 0..n {
             whitened[i] = wm.apply(&data[i]);
         }
@@ -719,7 +729,7 @@ mod tests {
         let mut rng = Rng::new(77);
         let n = 2000;
 
-        let mut data = [[0.0f64; 2]; 2000];
+        let mut data = [[0.0 as Float; 2]; 2000];
         for i in 0..n {
             let z0 = rng.gaussian(0.0, 1.0);
             let z1 = rng.gaussian(0.0, 1.0);
@@ -730,7 +740,7 @@ mod tests {
         let wm =
             WhiteningMatrix::<2, 4>::from_covariance(&emp_cov, WhiteningMode::Pca, 1e-10).unwrap();
 
-        let mut whitened = [[0.0f64; 2]; 2000];
+        let mut whitened = [[0.0 as Float; 2]; 2000];
         for i in 0..n {
             whitened[i] = wm.apply(&data[i]);
         }
@@ -816,7 +826,7 @@ mod tests {
         let n = 3000;
 
         // Generate correlated 4-channel data
-        let mut data = [[0.0f64; 4]; 3000];
+        let mut data = [[0.0 as Float; 4]; 3000];
         for i in 0..n {
             let z0 = rng.gaussian(0.0, 1.0);
             let z1 = rng.gaussian(0.0, 1.0);
@@ -834,7 +844,7 @@ mod tests {
         let wm =
             WhiteningMatrix::<4, 16>::from_covariance(&emp_cov, WhiteningMode::Zca, 1e-10).unwrap();
 
-        let mut whitened = [[0.0f64; 4]; 3000];
+        let mut whitened = [[0.0 as Float; 4]; 3000];
         for i in 0..n {
             whitened[i] = wm.apply(&data[i]);
         }
@@ -869,7 +879,7 @@ mod tests {
         let mut rng = Rng::new(999);
         let n = 5000;
 
-        let mut data = [[0.0f64; 3]; 5000];
+        let mut data = [[0.0 as Float; 3]; 5000];
         for i in 0..n {
             let z0 = rng.gaussian(0.0, 1.0);
             let z1 = rng.gaussian(0.0, 1.0);
@@ -881,7 +891,7 @@ mod tests {
         let wm =
             WhiteningMatrix::<3, 9>::from_covariance(&emp_cov, WhiteningMode::Zca, 1e-10).unwrap();
 
-        let mut whitened = [[0.0f64; 3]; 5000];
+        let mut whitened = [[0.0 as Float; 3]; 5000];
         for i in 0..n {
             whitened[i] = wm.apply(&data[i]);
         }
@@ -958,7 +968,7 @@ mod tests {
     #[test]
     fn test_noise_cov_with_spikes() {
         // Inject large spikes: noise cov should differ from full cov
-        let mut data = [[0.0f64; 2]; 100];
+        let mut data = [[0.0 as Float; 2]; 100];
         let mut rng = Rng::new(123);
         for i in 0..100 {
             data[i] = [rng.gaussian(0.0, 1.0), rng.gaussian(0.0, 1.0)];
@@ -1014,7 +1024,7 @@ mod tests {
 
     #[test]
     fn test_noise_cov_empty_data() {
-        let data: &[[f64; 2]] = &[];
+        let data: &[[Float; 2]] = &[];
         let noise_std = [1.0, 1.0];
         let cov = estimate_noise_covariance(data, &noise_std, 3.0, 2);
         for i in 0..2 {
@@ -1027,7 +1037,7 @@ mod tests {
     #[test]
     fn test_noise_cov_symmetry() {
         let mut rng = Rng::new(555);
-        let mut data = [[0.0f64; 3]; 200];
+        let mut data = [[0.0 as Float; 3]; 200];
         for i in 0..200 {
             data[i] = [
                 rng.gaussian(0.0, 1.0),
@@ -1078,7 +1088,7 @@ mod tests {
         let wm = WhiteningMatrix::<2, 4>::from_covariance(&cov, WhiteningMode::Zca, eps).unwrap();
 
         let m = wm.matrix();
-        let expected = 1.0 / libm::sqrt(eps);
+        let expected = 1.0 / float::sqrt(eps);
         assert!(
             (m.get(0, 0) - expected).abs() / expected < 0.1,
             "Diagonal should be ~1/sqrt(eps)"

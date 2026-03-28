@@ -28,13 +28,15 @@
 //! assert!(dist < 1.0);
 //! ```
 
+use crate::float::{self, Float};
+
 /// Result of assigning a point to a cluster.
 #[derive(Debug, Clone, Copy)]
 pub struct KMeansResult {
     /// Index of the assigned cluster.
     pub cluster: usize,
     /// Euclidean distance to the assigned centroid.
-    pub distance: f64,
+    pub distance: Float,
     /// Whether a new cluster was created for this point.
     pub created: bool,
 }
@@ -55,14 +57,14 @@ pub enum KMeansError {
 /// * `D` - Dimensionality of feature vectors
 /// * `K` - Maximum number of clusters
 pub struct OnlineKMeans<const D: usize, const K: usize> {
-    centroids: [[f64; D]; K],
+    centroids: [[Float; D]; K],
     counts: [u32; K],
-    variance_accum: [[f64; D]; K], // Welford M2 accumulator
+    variance_accum: [[Float; D]; K], // Welford M2 accumulator
     n_active: usize,
     total_assigned: u64,
     max_count: u32,
-    create_threshold: f64,
-    merge_threshold: f64,
+    create_threshold: Float,
+    merge_threshold: Float,
 }
 
 impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
@@ -78,7 +80,7 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
             n_active: 0,
             total_assigned: 0,
             max_count: max_count.max(1),
-            create_threshold: f64::MAX,
+            create_threshold: float::MAX,
             merge_threshold: 0.0,
         }
     }
@@ -87,7 +89,7 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
     ///
     /// When a point is farther than this from all existing centroids and
     /// there is a free slot, a new cluster is created.
-    pub fn set_create_threshold(&mut self, t: f64) {
+    pub fn set_create_threshold(&mut self, t: Float) {
         self.create_threshold = t;
     }
 
@@ -95,7 +97,7 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
     ///
     /// When `merge_closest()` is called, two clusters merge only if
     /// their centroid distance is below this threshold.
-    pub fn set_merge_threshold(&mut self, t: f64) {
+    pub fn set_merge_threshold(&mut self, t: Float) {
         self.merge_threshold = t;
     }
 
@@ -103,7 +105,7 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
     ///
     /// If no clusters exist or the point is farther than `create_threshold`
     /// from all centroids (and a free slot exists), a new cluster is created.
-    pub fn update(&mut self, point: &[f64; D]) -> KMeansResult {
+    pub fn update(&mut self, point: &[Float; D]) -> KMeansResult {
         if self.n_active == 0 {
             // First point: create cluster 0
             self.centroids[0] = *point;
@@ -143,7 +145,7 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
             self.max_count
         };
         self.counts[best] = new_count;
-        let eta = 1.0 / new_count as f64;
+        let eta = 1.0 / new_count as Float;
 
         for (d, &val) in point.iter().enumerate() {
             let old_mean = self.centroids[best][d];
@@ -166,7 +168,7 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
     ///
     /// Returns `(cluster_index, distance)`. If no clusters are active,
     /// returns `(0, 0.0)`.
-    pub fn predict(&self, point: &[f64; D]) -> (usize, f64) {
+    pub fn predict(&self, point: &[Float; D]) -> (usize, Float) {
         if self.n_active == 0 {
             return (0, 0.0);
         }
@@ -185,7 +187,7 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
         // Find the closest pair
         let mut best_i = 0;
         let mut best_j = 1;
-        let mut best_dist = f64::MAX;
+        let mut best_dist = float::MAX;
         for i in 0..self.n_active {
             for j in (i + 1)..self.n_active {
                 let dist = self.centroid_distance(i, j);
@@ -202,8 +204,8 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
         }
 
         // Merge j into i via weighted average
-        let ci = self.counts[best_i] as f64;
-        let cj = self.counts[best_j] as f64;
+        let ci = self.counts[best_i] as Float;
+        let cj = self.counts[best_j] as Float;
         let total = ci + cj;
         if total > 0.0 {
             for d in 0..D {
@@ -232,7 +234,7 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
     }
 
     /// Get a reference to a centroid by index.
-    pub fn centroid(&self, idx: usize) -> Option<&[f64; D]> {
+    pub fn centroid(&self, idx: usize) -> Option<&[Float; D]> {
         if idx < self.n_active {
             Some(&self.centroids[idx])
         } else {
@@ -243,11 +245,11 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
     /// Per-dimension variance for a cluster (M2 / (count - 1)).
     ///
     /// Returns `None` if the cluster index is invalid or count < 2.
-    pub fn cluster_variance(&self, idx: usize) -> Option<[f64; D]> {
+    pub fn cluster_variance(&self, idx: usize) -> Option<[Float; D]> {
         if idx >= self.n_active || self.counts[idx] < 2 {
             return None;
         }
-        let n = self.counts[idx] as f64;
+        let n = self.counts[idx] as Float;
         let mut var = [0.0; D];
         for (v, &m2) in var.iter_mut().zip(self.variance_accum[idx].iter()) {
             *v = m2 / (n - 1.0);
@@ -286,7 +288,7 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
     /// Manually seed a centroid. Returns the new cluster index.
     ///
     /// Fails with `KMeansError::ClustersFull` if all K slots are occupied.
-    pub fn seed_centroid(&mut self, centroid: &[f64; D]) -> Result<usize, KMeansError> {
+    pub fn seed_centroid(&mut self, centroid: &[Float; D]) -> Result<usize, KMeansError> {
         if self.n_active >= K {
             return Err(KMeansError::ClustersFull);
         }
@@ -310,7 +312,7 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
     /// appended.
     ///
     /// Returns the number of seeds added.
-    pub fn init_farthest_point(&mut self, data: &[[f64; D]], max_seeds: usize) -> usize {
+    pub fn init_farthest_point(&mut self, data: &[[Float; D]], max_seeds: usize) -> usize {
         let n = data.len();
         if n == 0 || max_seeds == 0 {
             return 0;
@@ -323,9 +325,9 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
 
         // Pick first seed: point with largest L2 norm
         let mut best_idx = 0;
-        let mut best_norm = 0.0f64;
+        let mut best_norm: Float = 0.0;
         for (i, pt) in data.iter().enumerate() {
-            let mut norm = 0.0;
+            let mut norm: Float = 0.0;
             for &v in pt.iter() {
                 norm += v * v;
             }
@@ -345,7 +347,7 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
         // (O(target * n * D), acceptable for typical spike counts < 10K).
         while added < target {
             let mut farthest_idx = 0;
-            let mut farthest_dist = 0.0f64;
+            let mut farthest_dist: Float = 0.0;
             for (i, pt) in data.iter().enumerate() {
                 // Distance to nearest existing seed
                 let (_, dist) = self.find_nearest(pt);
@@ -365,12 +367,12 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
     }
 
     /// The current create threshold.
-    pub fn create_threshold(&self) -> f64 {
+    pub fn create_threshold(&self) -> Float {
         self.create_threshold
     }
 
     /// The current merge threshold.
-    pub fn merge_threshold(&self) -> f64 {
+    pub fn merge_threshold(&self) -> Float {
         self.merge_threshold
     }
 
@@ -381,9 +383,9 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
 
     // --- internal helpers ---
 
-    fn find_nearest(&self, point: &[f64; D]) -> (usize, f64) {
+    fn find_nearest(&self, point: &[Float; D]) -> (usize, Float) {
         let mut best = 0;
-        let mut best_dist_sq = f64::MAX;
+        let mut best_dist_sq = float::MAX;
         for i in 0..self.n_active {
             let dist_sq = euclidean_dist_sq_early(&self.centroids[i], point, best_dist_sq);
             if dist_sq < best_dist_sq {
@@ -392,10 +394,10 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
             }
         }
         // Return actual distance (sqrt) for threshold comparisons
-        (best, libm::sqrt(best_dist_sq))
+        (best, float::sqrt(best_dist_sq))
     }
 
-    fn centroid_distance(&self, i: usize, j: usize) -> f64 {
+    fn centroid_distance(&self, i: usize, j: usize) -> Float {
         euclidean_dist(&self.centroids[i], &self.centroids[j])
     }
 
@@ -415,13 +417,13 @@ impl<const D: usize, const K: usize> OnlineKMeans<D, K> {
 }
 
 /// Euclidean distance between two D-dimensional points.
-fn euclidean_dist<const D: usize>(a: &[f64; D], b: &[f64; D]) -> f64 {
-    let mut sum = 0.0;
+fn euclidean_dist<const D: usize>(a: &[Float; D], b: &[Float; D]) -> Float {
+    let mut sum: Float = 0.0;
     for d in 0..D {
         let diff = a[d] - b[d];
         sum += diff * diff;
     }
-    libm::sqrt(sum)
+    float::sqrt(sum)
 }
 
 /// Squared Euclidean distance with early exit.
@@ -430,8 +432,12 @@ fn euclidean_dist<const D: usize>(a: &[f64; D], b: &[f64; D]) -> f64 {
 /// if the partial sum exceeds `best_sq`. This avoids computing all D
 /// dimensions when the point is clearly farther than the current best.
 #[inline]
-fn euclidean_dist_sq_early<const D: usize>(a: &[f64; D], b: &[f64; D], best_sq: f64) -> f64 {
-    let mut sum = 0.0;
+fn euclidean_dist_sq_early<const D: usize>(
+    a: &[Float; D],
+    b: &[Float; D],
+    best_sq: Float,
+) -> Float {
+    let mut sum: Float = 0.0;
     for d in 0..D {
         let diff = a[d] - b[d];
         sum += diff * diff;
@@ -461,10 +467,10 @@ mod tests {
             self.0 ^= self.0 << 17;
             self.0
         }
-        fn gaussian(&mut self, mean: f64, std: f64) -> f64 {
-            let u1 = (self.next_u64() % 1_000_000 + 1) as f64 / 1_000_001.0;
-            let u2 = (self.next_u64() % 1_000_000) as f64 / 1_000_000.0;
-            let z = libm::sqrt(-2.0 * libm::log(u1)) * libm::cos(2.0 * core::f64::consts::PI * u2);
+        fn gaussian(&mut self, mean: Float, std: Float) -> Float {
+            let u1 = (self.next_u64() % 1_000_000 + 1) as Float / 1_000_001.0;
+            let u2 = (self.next_u64() % 1_000_000) as Float / 1_000_000.0;
+            let z = float::sqrt(-2.0 * float::log(u1)) * float::cos(2.0 * float::PI * u2);
             mean + z * std
         }
     }
@@ -545,13 +551,13 @@ mod tests {
         assert_eq!(km.n_active(), 1);
         let centroid = km.centroid(0).unwrap();
         assert!(
-            libm::fabs(centroid[0] - true_mean[0]) < 0.2,
+            float::abs(centroid[0] - true_mean[0]) < 0.2,
             "centroid[0]={} should be near {}",
             centroid[0],
             true_mean[0]
         );
         assert!(
-            libm::fabs(centroid[1] - true_mean[1]) < 0.2,
+            float::abs(centroid[1] - true_mean[1]) < 0.2,
             "centroid[1]={} should be near {}",
             centroid[1],
             true_mean[1]
@@ -600,7 +606,7 @@ mod tests {
 
         // Distant cluster should still be at index 1 (shifted from 2)
         let c_far = km.centroid(1).unwrap();
-        assert!(libm::fabs(c_far[0] - 10.0) < 0.01);
+        assert!(float::abs(c_far[0] - 10.0) < 0.01);
     }
 
     #[test]
@@ -616,18 +622,18 @@ mod tests {
 
         // Cluster at index 1 should now be what was at index 2
         let c = km.centroid(1).unwrap();
-        assert!(libm::fabs(c[0] - 10.0) < 0.01);
+        assert!(float::abs(c[0] - 10.0) < 0.01);
     }
 
     #[test]
     fn test_count_capping() {
         let max_count = 100;
         let mut km = OnlineKMeans::<2, 4>::new(max_count);
-        km.set_create_threshold(f64::MAX);
+        km.set_create_threshold(float::MAX);
 
         // Feed many points to the single cluster
         for i in 0..500 {
-            km.update(&[i as f64 * 0.001, 0.0]);
+            km.update(&[i as Float * 0.001, 0.0]);
         }
 
         assert_eq!(km.count(0), max_count);
@@ -647,11 +653,11 @@ mod tests {
     #[test]
     fn test_variance_tracking() {
         let mut km = OnlineKMeans::<2, 4>::new(100000);
-        km.set_create_threshold(f64::MAX);
+        km.set_create_threshold(float::MAX);
 
         let mut rng = Rng::new(77);
-        let true_var_x = 4.0; // std = 2.0
-        let true_var_y = 1.0; // std = 1.0
+        let true_var_x: Float = 4.0; // std = 2.0
+        let true_var_y: Float = 1.0; // std = 1.0
 
         for _ in 0..10000 {
             let point = [rng.gaussian(0.0, 2.0), rng.gaussian(0.0, 1.0)];
@@ -660,13 +666,13 @@ mod tests {
 
         let var = km.cluster_variance(0).unwrap();
         assert!(
-            libm::fabs(var[0] - true_var_x) < 0.5,
+            float::abs(var[0] - true_var_x) < 0.5,
             "variance[0]={} should be near {}",
             var[0],
             true_var_x
         );
         assert!(
-            libm::fabs(var[1] - true_var_y) < 0.3,
+            float::abs(var[1] - true_var_y) < 0.3,
             "variance[1]={} should be near {}",
             var[1],
             true_var_y
@@ -731,7 +737,7 @@ mod tests {
         let mut rng = Rng::new(123);
 
         // Create 4 clusters in 8D space
-        let centers: [[f64; 8]; 4] = [
+        let centers: [[Float; 8]; 4] = [
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             [10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             [0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -772,11 +778,11 @@ mod tests {
         }
 
         // Spike waveform shapes
-        let make_spike = |amplitude: f64, width: f64| -> [f64; 8] {
+        let make_spike = |amplitude: Float, width: Float| -> [Float; 8] {
             let mut wf = [0.0; 8];
             for (i, v) in wf.iter_mut().enumerate() {
-                let x = (i as f64 - 2.0) / width;
-                *v = -amplitude * libm::exp(-0.5 * x * x);
+                let x = (i as Float - 2.0) / width;
+                *v = -amplitude * float::exp(-0.5 * x * x);
             }
             wf
         };
@@ -803,7 +809,7 @@ mod tests {
         }
 
         // 1. Noise estimation
-        let mut scratch = vec![0.0; n_samples];
+        let mut scratch = vec![0.0 as Float; n_samples];
         let noise = estimate_noise_mad(&data, &mut scratch);
         assert!(noise > 0.5 && noise < 2.0);
 
@@ -815,7 +821,7 @@ mod tests {
 
         // 3. Extraction
         let ext = WaveformExtractor::<1, 8>::new();
-        let mut waveforms = vec![[0.0f64; 8]; n_detected];
+        let mut waveforms = vec![[0.0 as Float; 8]; n_detected];
         let n_extracted = ext.extract(&data, &spike_times[..n_detected], &mut waveforms);
         assert!(n_extracted >= 15);
 
@@ -891,7 +897,7 @@ mod tests {
 
     #[test]
     fn test_init_farthest_point_empty() {
-        let data: &[[f64; 2]] = &[];
+        let data: &[[Float; 2]] = &[];
         let mut km = OnlineKMeans::<2, 4>::new(1000);
         let added = km.init_farthest_point(data, 3);
         assert_eq!(added, 0);

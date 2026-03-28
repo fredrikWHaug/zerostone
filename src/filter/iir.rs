@@ -1,3 +1,5 @@
+use crate::float::{self, Float};
+
 /// Minimal complex number for filter design (f64 precision, no_std compatible).
 #[derive(Clone, Copy, Debug)]
 struct Complex64 {
@@ -73,11 +75,11 @@ impl Complex64 {
 /// Note: a0 is assumed to be 1.0 (normalized form)
 #[derive(Clone, Copy, Debug)]
 pub struct BiquadCoeffs {
-    pub b0: f32,
-    pub b1: f32,
-    pub b2: f32,
-    pub a1: f32,
-    pub a2: f32,
+    pub b0: Float,
+    pub b1: Float,
+    pub b2: Float,
+    pub a1: Float,
+    pub a2: Float,
 }
 
 impl BiquadCoeffs {
@@ -103,13 +105,11 @@ impl BiquadCoeffs {
     /// # use zerostone::BiquadCoeffs;
     /// let coeffs = BiquadCoeffs::butterworth_lowpass(1000.0, 40.0);
     /// ```
-    pub fn butterworth_lowpass(sample_rate: f32, cutoff: f32) -> Self {
-        use core::f32::consts::PI;
-
-        let omega = 2.0 * PI * cutoff / sample_rate;
-        let cos_omega = libm::cosf(omega);
-        let sin_omega = libm::sinf(omega);
-        let alpha = sin_omega / (2.0 * core::f32::consts::SQRT_2);
+    pub fn butterworth_lowpass(sample_rate: Float, cutoff: Float) -> Self {
+        let omega = 2.0 * float::PI * cutoff / sample_rate;
+        let cos_omega = float::cos(omega);
+        let sin_omega = float::sin(omega);
+        let alpha = sin_omega / (2.0 * float::sqrt(2.0));
 
         let a0 = 1.0 + alpha;
         let a1 = -2.0 * cos_omega;
@@ -132,13 +132,11 @@ impl BiquadCoeffs {
     /// # Arguments
     /// * `sample_rate` - Sampling frequency in Hz
     /// * `cutoff` - Cutoff frequency in Hz
-    pub fn butterworth_highpass(sample_rate: f32, cutoff: f32) -> Self {
-        use core::f32::consts::PI;
-
-        let omega = 2.0 * PI * cutoff / sample_rate;
-        let cos_omega = libm::cosf(omega);
-        let sin_omega = libm::sinf(omega);
-        let alpha = sin_omega / (2.0 * core::f32::consts::SQRT_2);
+    pub fn butterworth_highpass(sample_rate: Float, cutoff: Float) -> Self {
+        let omega = 2.0 * float::PI * cutoff / sample_rate;
+        let cos_omega = float::cos(omega);
+        let sin_omega = float::sin(omega);
+        let alpha = sin_omega / (2.0 * float::sqrt(2.0));
 
         let a0 = 1.0 + alpha;
         let a1 = -2.0 * cos_omega;
@@ -162,17 +160,15 @@ impl BiquadCoeffs {
     /// * `sample_rate` - Sampling frequency in Hz
     /// * `low_cutoff` - Lower cutoff frequency in Hz
     /// * `high_cutoff` - Upper cutoff frequency in Hz
-    pub fn butterworth_bandpass(sample_rate: f32, low_cutoff: f32, high_cutoff: f32) -> Self {
-        use core::f32::consts::PI;
-
-        let center = libm::sqrtf(low_cutoff * high_cutoff);
+    pub fn butterworth_bandpass(sample_rate: Float, low_cutoff: Float, high_cutoff: Float) -> Self {
+        let center = float::sqrt(low_cutoff * high_cutoff);
         let bandwidth = high_cutoff - low_cutoff;
 
-        let omega = 2.0 * PI * center / sample_rate;
-        let cos_omega = libm::cosf(omega);
-        let sin_omega = libm::sinf(omega);
-        let bw = 2.0 * PI * bandwidth / sample_rate;
-        let alpha = sin_omega * libm::sinhf(bw / 2.0);
+        let omega = 2.0 * float::PI * center / sample_rate;
+        let cos_omega = float::cos(omega);
+        let sin_omega = float::sin(omega);
+        let bw = 2.0 * float::PI * bandwidth / sample_rate;
+        let alpha = sin_omega * float::sinh(bw / 2.0);
 
         let a0 = 1.0 + alpha;
         let a1 = -2.0 * cos_omega;
@@ -215,12 +211,10 @@ impl BiquadCoeffs {
     /// // Remove 50 Hz powerline noise (EU) with narrow notch
     /// let coeffs = BiquadCoeffs::notch(1000.0, 50.0, 30.0);
     /// ```
-    pub fn notch(sample_rate: f32, center_freq: f32, q: f32) -> Self {
-        use core::f32::consts::PI;
-
-        let omega = 2.0 * PI * center_freq / sample_rate;
-        let cos_omega = libm::cosf(omega);
-        let sin_omega = libm::sinf(omega);
+    pub fn notch(sample_rate: Float, center_freq: Float, q: Float) -> Self {
+        let omega = 2.0 * float::PI * center_freq / sample_rate;
+        let cos_omega = float::cos(omega);
+        let sin_omega = float::sin(omega);
         let alpha = sin_omega / (2.0 * q);
 
         let a0 = 1.0 + alpha;
@@ -254,9 +248,10 @@ impl BiquadCoeffs {
     /// // 4th-order Butterworth lowpass (2 sections)
     /// let sections = BiquadCoeffs::butterworth_lowpass_sections::<2>(1000.0, 100.0);
     /// ```
+    #[allow(clippy::unnecessary_cast)]
     pub fn butterworth_lowpass_sections<const N: usize>(
-        sample_rate: f32,
-        cutoff: f32,
+        sample_rate: Float,
+        cutoff: Float,
     ) -> [BiquadCoeffs; N] {
         use core::f64::consts::PI;
 
@@ -280,11 +275,11 @@ impl BiquadCoeffs {
             let a2 = 1.0 - alpha_k;
 
             *section = BiquadCoeffs {
-                b0: (b0 / a0) as f32,
-                b1: (b1 / a0) as f32,
-                b2: (b2 / a0) as f32,
-                a1: (a1 / a0) as f32,
-                a2: (a2 / a0) as f32,
+                b0: (b0 / a0) as Float,
+                b1: (b1 / a0) as Float,
+                b2: (b2 / a0) as Float,
+                a1: (a1 / a0) as Float,
+                a2: (a2 / a0) as Float,
             };
         }
 
@@ -298,9 +293,10 @@ impl BiquadCoeffs {
     /// # Arguments
     /// * `sample_rate` - Sampling frequency in Hz
     /// * `cutoff` - Cutoff frequency in Hz
+    #[allow(clippy::unnecessary_cast)]
     pub fn butterworth_highpass_sections<const N: usize>(
-        sample_rate: f32,
-        cutoff: f32,
+        sample_rate: Float,
+        cutoff: Float,
     ) -> [BiquadCoeffs; N] {
         use core::f64::consts::PI;
 
@@ -324,11 +320,11 @@ impl BiquadCoeffs {
             let a2 = 1.0 - alpha_k;
 
             *section = BiquadCoeffs {
-                b0: (b0 / a0) as f32,
-                b1: (b1 / a0) as f32,
-                b2: (b2 / a0) as f32,
-                a1: (a1 / a0) as f32,
-                a2: (a2 / a0) as f32,
+                b0: (b0 / a0) as Float,
+                b1: (b1 / a0) as Float,
+                b2: (b2 / a0) as Float,
+                a1: (a1 / a0) as Float,
+                a2: (a2 / a0) as Float,
             };
         }
 
@@ -344,10 +340,11 @@ impl BiquadCoeffs {
     /// * `sample_rate` - Sampling frequency in Hz
     /// * `low_cutoff` - Lower cutoff frequency in Hz
     /// * `high_cutoff` - Upper cutoff frequency in Hz
+    #[allow(clippy::unnecessary_cast)]
     pub fn butterworth_bandpass_sections<const N: usize>(
-        sample_rate: f32,
-        low_cutoff: f32,
-        high_cutoff: f32,
+        sample_rate: Float,
+        low_cutoff: Float,
+        high_cutoff: Float,
     ) -> [BiquadCoeffs; N] {
         use core::f64::consts::PI;
 
@@ -419,11 +416,11 @@ impl BiquadCoeffs {
             b2 *= gain;
 
             sections[k] = BiquadCoeffs {
-                b0: b0 as f32,
-                b1: b1 as f32,
-                b2: b2 as f32,
-                a1: a1 as f32,
-                a2: a2 as f32,
+                b0: b0 as Float,
+                b1: b1 as Float,
+                b2: b2 as Float,
+                a1: a1 as Float,
+                a2: a2 as Float,
             };
         }
 
@@ -462,7 +459,7 @@ fn bilinear_transform(s: Complex64, fs: f64) -> Complex64 {
 pub struct IirFilter<const SECTIONS: usize> {
     coeffs: [BiquadCoeffs; SECTIONS],
     // State: [x1, x2, y1, y2] for each section
-    state: [[f32; 4]; SECTIONS],
+    state: [[Float; 4]; SECTIONS],
 }
 
 impl<const SECTIONS: usize> IirFilter<SECTIONS> {
@@ -479,7 +476,7 @@ impl<const SECTIONS: usize> IirFilter<SECTIONS> {
     /// # Performance
     /// Optimized for cache locality with sequential state access.
     #[inline]
-    pub fn process_sample(&mut self, input: f32) -> f32 {
+    pub fn process_sample(&mut self, input: Float) -> Float {
         let mut x = input;
 
         for i in 0..SECTIONS {
@@ -502,7 +499,7 @@ impl<const SECTIONS: usize> IirFilter<SECTIONS> {
     }
 
     /// Processes multiple samples in place.
-    pub fn process_block(&mut self, samples: &mut [f32]) {
+    pub fn process_block(&mut self, samples: &mut [Float]) {
         for sample in samples.iter_mut() {
             *sample = self.process_sample(*sample);
         }
@@ -525,9 +522,9 @@ impl<const SECTIONS: usize> IirFilter<SECTIONS> {
 }
 
 impl<const SECTIONS: usize> crate::pipeline::BlockProcessor<1> for IirFilter<SECTIONS> {
-    type Sample = f32;
+    type Sample = Float;
 
-    fn process_block_inplace(&mut self, block: &mut [[f32; 1]]) {
+    fn process_block_inplace(&mut self, block: &mut [[Float; 1]]) {
         for sample in block.iter_mut() {
             sample[0] = self.process_sample(sample[0]);
         }
@@ -549,12 +546,12 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(2)]
     fn iir_single_step_finite() {
-        let b0: f32 = kani::any();
-        let b1: f32 = kani::any();
-        let b2: f32 = kani::any();
-        let a1: f32 = kani::any();
-        let a2: f32 = kani::any();
-        let input: f32 = kani::any();
+        let b0: Float = kani::any();
+        let b1: Float = kani::any();
+        let b2: Float = kani::any();
+        let a1: Float = kani::any();
+        let a2: Float = kani::any();
+        let input: Float = kani::any();
 
         kani::assume(b0.is_finite() && b0 >= -2.0 && b0 <= 2.0);
         kani::assume(b1.is_finite() && b1 >= -2.0 && b1 <= 2.0);
@@ -646,7 +643,7 @@ mod tests {
 
         // Process some samples to build up state
         for i in 0..10 {
-            filter.process_sample(i as f32);
+            filter.process_sample(i as Float);
         }
 
         // Reset should clear state
@@ -672,7 +669,7 @@ mod tests {
 
         // Just test that it runs without panicking
         for i in 0..100 {
-            let sample = libm::sinf(2.0 * core::f32::consts::PI * 10.0 * i as f32 / 1000.0);
+            let sample = float::sin(2.0 * float::PI * 10.0 * i as Float / 1000.0);
             let _ = filter.process_sample(sample);
         }
     }
@@ -727,18 +724,21 @@ mod tests {
 
         // Let filter settle
         for i in 0..500 {
-            let t = i as f32 / sample_rate;
-            let sample = libm::sinf(2.0 * core::f32::consts::PI * freq * t);
+            let t = i as Float / sample_rate;
+            let sample = float::sin(2.0 * float::PI * freq * t);
             filter.process_sample(sample);
         }
 
         // Measure output amplitude over one cycle
-        let mut max_output = 0.0_f32;
+        let mut max_output = 0.0;
         for i in 500..600 {
-            let t = i as f32 / sample_rate;
-            let sample = libm::sinf(2.0 * core::f32::consts::PI * freq * t);
+            let t = i as Float / sample_rate;
+            let sample = float::sin(2.0 * float::PI * freq * t);
             let output = filter.process_sample(sample);
-            max_output = max_output.max(output.abs());
+            let a = float::abs(output);
+            if a > max_output {
+                max_output = a;
+            }
         }
 
         // 60 Hz should be heavily attenuated (at least -20 dB, so < 0.1)
@@ -759,18 +759,21 @@ mod tests {
 
         // Let filter settle
         for i in 0..500 {
-            let t = i as f32 / sample_rate;
-            let sample = libm::sinf(2.0 * core::f32::consts::PI * freq * t);
+            let t = i as Float / sample_rate;
+            let sample = float::sin(2.0 * float::PI * freq * t);
             filter.process_sample(sample);
         }
 
         // Measure output amplitude over one cycle
-        let mut max_output = 0.0_f32;
+        let mut max_output = 0.0;
         for i in 500..600 {
-            let t = i as f32 / sample_rate;
-            let sample = libm::sinf(2.0 * core::f32::consts::PI * freq * t);
+            let t = i as Float / sample_rate;
+            let sample = float::sin(2.0 * float::PI * freq * t);
             let output = filter.process_sample(sample);
-            max_output = max_output.max(output.abs());
+            let a = float::abs(output);
+            if a > max_output {
+                max_output = a;
+            }
         }
 
         // 30 Hz should pass with minimal attenuation (> 0.9)
@@ -789,13 +792,16 @@ mod tests {
         let sample_rate = 1000.0;
 
         // 50 Hz should be rejected
-        let mut max_50hz = 0.0_f32;
+        let mut max_50hz = 0.0;
         for i in 0..1000 {
-            let t = i as f32 / sample_rate;
-            let sample = libm::sinf(2.0 * core::f32::consts::PI * 50.0 * t);
+            let t = i as Float / sample_rate;
+            let sample = float::sin(2.0 * float::PI * 50.0 * t);
             let output = filter.process_sample(sample);
             if i > 500 {
-                max_50hz = max_50hz.max(output.abs());
+                let a = float::abs(output);
+                if a > max_50hz {
+                    max_50hz = a;
+                }
             }
         }
 
@@ -946,24 +952,27 @@ mod tests {
 
         // Let filter settle
         for i in 0..2000 {
-            let t = i as f32 / sample_rate;
-            let sample = libm::sinf(2.0 * core::f32::consts::PI * freq * t);
+            let t = i as Float / sample_rate;
+            let sample = float::sin(2.0 * float::PI * freq * t);
             filter.process_sample(sample);
         }
 
         // Measure output amplitude
-        let mut max_output = 0.0_f32;
+        let mut max_output = 0.0;
         for i in 2000..2500 {
-            let t = i as f32 / sample_rate;
-            let sample = libm::sinf(2.0 * core::f32::consts::PI * freq * t);
+            let t = i as Float / sample_rate;
+            let sample = float::sin(2.0 * float::PI * freq * t);
             let output = filter.process_sample(sample);
-            max_output = max_output.max(output.abs());
+            let a = float::abs(output);
+            if a > max_output {
+                max_output = a;
+            }
         }
 
         // Should be approximately 1/sqrt(2) = 0.707, NOT the old resonance of ~2.0
-        let expected = 1.0 / libm::sqrtf(2.0);
+        let expected = 1.0 / float::sqrt(2.0);
         assert!(
-            (max_output - expected).abs() < 0.05,
+            float::abs(max_output - expected) < 0.05,
             "Gain at cutoff should be ~{:.3}, got {:.3}",
             expected,
             max_output
@@ -976,22 +985,25 @@ mod tests {
         let mut filter: IirFilter<2> = IirFilter::new(sections);
 
         let sample_rate = 1000.0;
-        let center = libm::sqrtf(8.0 * 12.0);
+        let center = float::sqrt(8.0 * 12.0);
 
         // Let filter settle
         for i in 0..5000 {
-            let t = i as f32 / sample_rate;
-            let sample = libm::sinf(2.0 * core::f32::consts::PI * center * t);
+            let t = i as Float / sample_rate;
+            let sample = float::sin(2.0 * float::PI * center * t);
             filter.process_sample(sample);
         }
 
         // Measure output amplitude
-        let mut max_output = 0.0_f32;
+        let mut max_output = 0.0;
         for i in 5000..6000 {
-            let t = i as f32 / sample_rate;
-            let sample = libm::sinf(2.0 * core::f32::consts::PI * center * t);
+            let t = i as Float / sample_rate;
+            let sample = float::sin(2.0 * float::PI * center * t);
             let output = filter.process_sample(sample);
-            max_output = max_output.max(output.abs());
+            let a = float::abs(output);
+            if a > max_output {
+                max_output = a;
+            }
         }
 
         // Center frequency should pass with reasonable amplitude (>0.5)
@@ -1013,21 +1025,24 @@ mod tests {
         let freq = 100.0;
 
         for i in 0..2000 {
-            let t = i as f32 / sample_rate;
-            filter.process_sample(libm::sinf(2.0 * core::f32::consts::PI * freq * t));
+            let t = i as Float / sample_rate;
+            filter.process_sample(float::sin(2.0 * float::PI * freq * t));
         }
 
-        let mut max_output = 0.0_f32;
+        let mut max_output = 0.0;
         for i in 2000..2500 {
-            let t = i as f32 / sample_rate;
-            let sample = libm::sinf(2.0 * core::f32::consts::PI * freq * t);
+            let t = i as Float / sample_rate;
+            let sample = float::sin(2.0 * float::PI * freq * t);
             let output = filter.process_sample(sample);
-            max_output = max_output.max(output.abs());
+            let a = float::abs(output);
+            if a > max_output {
+                max_output = a;
+            }
         }
 
-        let expected = 1.0 / libm::sqrtf(2.0);
+        let expected = 1.0 / float::sqrt(2.0);
         assert!(
-            (max_output - expected).abs() < 0.05,
+            float::abs(max_output - expected) < 0.05,
             "2nd-order Butterworth gain at cutoff should be ~{:.3}, got {:.3}",
             expected,
             max_output

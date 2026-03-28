@@ -15,6 +15,7 @@
 //! * `OM` - O*O (observation covariance size)
 //! * `SOM` - S*O (cross-dimension matrix size)
 
+use crate::float::Float;
 use crate::linalg::Matrix;
 
 /// Errors that can occur during Kalman filter operations.
@@ -41,19 +42,19 @@ pub struct KalmanFilter<
     const SOM: usize,
 > {
     /// State estimate
-    x: [f64; S],
+    x: [Float; S],
     /// State covariance (S x S)
     p: Matrix<S, SM>,
     /// State transition matrix (S x S)
     f: Matrix<S, SM>,
     /// Observation matrix (O x S), row-major
-    h: [f64; SOM],
+    h: [Float; SOM],
     /// Process noise covariance (S x S)
     q: Matrix<S, SM>,
     /// Measurement noise covariance (O x O)
     r: Matrix<O, OM>,
     /// Last innovation (for diagnostics)
-    last_innovation: Option<[f64; O]>,
+    last_innovation: Option<[Float; O]>,
 }
 
 impl<const S: usize, const O: usize, const SM: usize, const OM: usize, const SOM: usize>
@@ -71,10 +72,10 @@ impl<const S: usize, const O: usize, const SM: usize, const OM: usize, const SOM
     /// * `p0` - Initial state covariance (S x S)
     pub fn new(
         f: Matrix<S, SM>,
-        h: [f64; SOM],
+        h: [Float; SOM],
         q: Matrix<S, SM>,
         r: Matrix<O, OM>,
-        x0: [f64; S],
+        x0: [Float; S],
         p0: Matrix<S, SM>,
     ) -> Self {
         assert!(SM == S * S, "SM must equal S * S");
@@ -111,10 +112,10 @@ impl<const S: usize, const O: usize, const SM: usize, const OM: usize, const SOM
     /// Update step: incorporate a new measurement using Joseph form.
     ///
     /// Returns the innovation vector (z - H*x_predicted).
-    pub fn update(&mut self, z: &[f64; O]) -> Result<[f64; O], KalmanError> {
+    pub fn update(&mut self, z: &[Float; O]) -> Result<[Float; O], KalmanError> {
         // Innovation: y = z - H * x
         let hx = h_mul_x::<S, O, SOM>(&self.h, &self.x);
-        let mut y = [0.0f64; O];
+        let mut y = [0.0; O];
         for i in 0..O {
             y[i] = z[i] - hx[i];
         }
@@ -132,10 +133,10 @@ impl<const S: usize, const O: usize, const SM: usize, const OM: usize, const SOM
 
         // Compute Kalman gain K (S x O) row-by-row using Cholesky solve
         // For each row i of K: solve S_inn * K[i]^T = PHt[i]^T
-        let mut k = [0.0f64; SOM];
+        let mut k = [0.0; SOM];
         for i in 0..S {
             // Extract row i of PHt (length O)
-            let mut rhs = [0.0f64; O];
+            let mut rhs = [0.0; O];
             for j in 0..O {
                 rhs[j] = pht[i * O + j];
             }
@@ -173,7 +174,7 @@ impl<const S: usize, const O: usize, const SM: usize, const OM: usize, const SOM
     }
 
     /// Get the current state estimate.
-    pub fn state(&self) -> &[f64; S] {
+    pub fn state(&self) -> &[Float; S] {
         &self.x
     }
 
@@ -183,12 +184,12 @@ impl<const S: usize, const O: usize, const SM: usize, const OM: usize, const SOM
     }
 
     /// Get the last innovation vector (z - H*x_predicted).
-    pub fn innovation(&self) -> Option<&[f64; O]> {
+    pub fn innovation(&self) -> Option<&[Float; O]> {
         self.last_innovation.as_ref()
     }
 
     /// Reset the filter to a new initial state and covariance.
-    pub fn reset(&mut self, x0: [f64; S], p0: Matrix<S, SM>) {
+    pub fn reset(&mut self, x0: [Float; S], p0: Matrix<S, SM>) {
         self.x = x0;
         self.p = p0;
         self.last_innovation = None;
@@ -199,8 +200,8 @@ impl<const S: usize, const O: usize, const SM: usize, const OM: usize, const SOM
 
 /// Multiply square matrix (S x S) by vector (S) -> (S)
 #[allow(clippy::needless_range_loop)]
-fn sq_matvec<const S: usize, const SM: usize>(mat: &Matrix<S, SM>, x: &[f64; S]) -> [f64; S] {
-    let mut result = [0.0f64; S];
+fn sq_matvec<const S: usize, const SM: usize>(mat: &Matrix<S, SM>, x: &[Float; S]) -> [Float; S] {
+    let mut result = [0.0; S];
     for i in 0..S {
         let mut sum = 0.0;
         for j in 0..S {
@@ -213,10 +214,10 @@ fn sq_matvec<const S: usize, const SM: usize>(mat: &Matrix<S, SM>, x: &[f64; S])
 
 /// Multiply H (O x S) by vector x (S) -> y (O)
 fn h_mul_x<const S: usize, const O: usize, const SOM: usize>(
-    h: &[f64; SOM],
-    x: &[f64; S],
-) -> [f64; O] {
-    let mut result = [0.0f64; O];
+    h: &[Float; SOM],
+    x: &[Float; S],
+) -> [Float; O] {
+    let mut result = [0.0; O];
     for i in 0..O {
         let mut sum = 0.0;
         for j in 0..S {
@@ -229,11 +230,11 @@ fn h_mul_x<const S: usize, const O: usize, const SOM: usize>(
 
 /// Compute H * P * H^T where H is (O x S), P is (S x S), result is (O x O)
 fn h_p_ht<const S: usize, const O: usize, const SM: usize, const OM: usize, const SOM: usize>(
-    h: &[f64; SOM],
+    h: &[Float; SOM],
     p: &Matrix<S, SM>,
 ) -> Matrix<O, OM> {
     // First compute HP = H * P (O x S)
-    let mut hp = [0.0f64; SOM];
+    let mut hp = [0.0; SOM];
     for i in 0..O {
         for j in 0..S {
             let mut sum = 0.0;
@@ -260,9 +261,9 @@ fn h_p_ht<const S: usize, const O: usize, const SM: usize, const OM: usize, cons
 /// Compute P * H^T where P is (S x S), H is (O x S), result is (S x O)
 fn p_times_ht<const S: usize, const O: usize, const SM: usize, const SOM: usize>(
     p: &Matrix<S, SM>,
-    h: &[f64; SOM],
-) -> [f64; SOM] {
-    let mut result = [0.0f64; SOM];
+    h: &[Float; SOM],
+) -> [Float; SOM] {
+    let mut result = [0.0; SOM];
     for i in 0..S {
         for j in 0..O {
             let mut sum = 0.0;
@@ -277,10 +278,10 @@ fn p_times_ht<const S: usize, const O: usize, const SM: usize, const SOM: usize>
 
 /// Multiply K (S x O) by vector y (O) -> result (S)
 fn k_mul_y<const S: usize, const O: usize, const SOM: usize>(
-    k: &[f64; SOM],
-    y: &[f64; O],
-) -> [f64; S] {
-    let mut result = [0.0f64; S];
+    k: &[Float; SOM],
+    y: &[Float; O],
+) -> [Float; S] {
+    let mut result = [0.0; S];
     for i in 0..S {
         let mut sum = 0.0;
         for j in 0..O {
@@ -293,8 +294,8 @@ fn k_mul_y<const S: usize, const O: usize, const SOM: usize>(
 
 /// Multiply K (S x O) by H (O x S) -> result (S x S)
 fn k_mul_h<const S: usize, const O: usize, const SM: usize, const SOM: usize>(
-    k: &[f64; SOM],
-    h: &[f64; SOM],
+    k: &[Float; SOM],
+    h: &[Float; SOM],
 ) -> Matrix<S, SM> {
     let mut result = Matrix::<S, SM>::zeros();
     for i in 0..S {
@@ -311,11 +312,11 @@ fn k_mul_h<const S: usize, const O: usize, const SM: usize, const SOM: usize>(
 
 /// Compute K * R * K^T where K is (S x O), R is (O x O), result is (S x S)
 fn k_r_kt<const S: usize, const O: usize, const SM: usize, const OM: usize, const SOM: usize>(
-    k: &[f64; SOM],
+    k: &[Float; SOM],
     r: &Matrix<O, OM>,
 ) -> Matrix<S, SM> {
     // First compute KR = K * R (S x O)
-    let mut kr = [0.0f64; SOM];
+    let mut kr = [0.0; SOM];
     for i in 0..S {
         for j in 0..O {
             let mut sum = 0.0;
@@ -358,13 +359,13 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(3)]
     fn kalman_predict_update_finite() {
-        let f_val: f64 = kani::any();
-        let h_val: f64 = kani::any();
-        let q_val: f64 = kani::any();
-        let r_val: f64 = kani::any();
-        let x0: f64 = kani::any();
-        let p0: f64 = kani::any();
-        let z: f64 = kani::any();
+        let f_val: Float = kani::any();
+        let h_val: Float = kani::any();
+        let q_val: Float = kani::any();
+        let r_val: Float = kani::any();
+        let x0: Float = kani::any();
+        let p0: Float = kani::any();
+        let z: Float = kani::any();
 
         kani::assume(f_val.is_finite() && f_val >= -2.0 && f_val <= 2.0);
         kani::assume(h_val.is_finite() && h_val >= -2.0 && h_val <= 2.0);
@@ -404,6 +405,7 @@ mod kani_proofs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::float;
     extern crate alloc;
     use alloc::vec;
     use alloc::vec::Vec;
@@ -421,10 +423,10 @@ mod tests {
             self.0
         }
         // Box-Muller for Gaussian
-        fn gaussian(&mut self, mean: f64, std: f64) -> f64 {
-            let u1 = (self.next_u64() % 1_000_000 + 1) as f64 / 1_000_001.0;
-            let u2 = (self.next_u64() % 1_000_000) as f64 / 1_000_000.0;
-            let z = libm::sqrt(-2.0 * libm::log(u1)) * libm::cos(2.0 * core::f64::consts::PI * u2);
+        fn gaussian(&mut self, mean: Float, std: Float) -> Float {
+            let u1 = (self.next_u64() % 1_000_000 + 1) as Float / 1_000_001.0;
+            let u2 = (self.next_u64() % 1_000_000) as Float / 1_000_000.0;
+            let z = float::sqrt(-2.0 * float::log(u1)) * float::cos(2.0 * float::PI * u2);
             mean + z * std
         }
     }
@@ -449,19 +451,19 @@ mod tests {
 
         for t in 0..50 {
             kf.predict();
-            let true_pos = true_velocity * (t + 1) as f64;
+            let true_pos = true_velocity * (t + 1) as Float;
             let noisy_pos = true_pos + rng.gaussian(0.0, 1.0);
             kf.update(&[noisy_pos]).unwrap();
-            let err = libm::fabs(kf.state()[0] - true_pos);
+            let err = float::abs(kf.state()[0] - true_pos);
             errors.push(err);
         }
 
         // Average error in last 20 steps should be small
-        let late_avg: f64 = errors[30..].iter().sum::<f64>() / 20.0;
+        let late_avg: Float = errors[30..].iter().sum::<Float>() / 20.0;
         assert!(late_avg < 2.0, "Late average error too large: {}", late_avg);
 
         // Velocity estimate should converge near true velocity
-        let vel_err = libm::fabs(kf.state()[1] - true_velocity);
+        let vel_err = float::abs(kf.state()[1] - true_velocity);
         assert!(vel_err < 1.0, "Velocity error too large: {}", vel_err);
     }
 
@@ -482,7 +484,7 @@ mod tests {
             1.0, 0.0, 0.0, 0.0,  // observe px
             0.0, 0.0, 1.0, 0.0,  // observe py
         ];
-        let mut q_data = [0.0f64; 16];
+        let mut q_data = [0.0; 16];
         for i in 0..4 {
             q_data[i * 4 + i] = 0.01;
         }
@@ -499,15 +501,15 @@ mod tests {
 
         for t in 0..100 {
             kf.predict();
-            let true_px = 1.0 * (t + 1) as f64 * dt;
-            let true_py = 0.5 * (t + 1) as f64 * dt;
+            let true_px = 1.0 * (t + 1) as Float * dt;
+            let true_py = 0.5 * (t + 1) as Float * dt;
             let noise_x = rng.gaussian(0.0, 0.7);
             let noise_y = rng.gaussian(0.0, 0.7);
             let z = [true_px + noise_x, true_py + noise_y];
             kf.update(&z).unwrap();
 
-            let raw_err = libm::sqrt(noise_x * noise_x + noise_y * noise_y);
-            let filt_err = libm::sqrt(
+            let raw_err = float::sqrt(noise_x * noise_x + noise_y * noise_y);
+            let filt_err = float::sqrt(
                 (kf.state()[0] - true_px) * (kf.state()[0] - true_px)
                     + (kf.state()[2] - true_py) * (kf.state()[2] - true_py),
             );
@@ -516,9 +518,10 @@ mod tests {
         }
 
         // Filtered RMS should be less than raw RMS in the second half
-        let raw_rms: f64 = libm::sqrt(raw_errors[50..].iter().map(|e| e * e).sum::<f64>() / 50.0);
-        let filt_rms: f64 =
-            libm::sqrt(filtered_errors[50..].iter().map(|e| e * e).sum::<f64>() / 50.0);
+        let raw_rms: Float =
+            float::sqrt(raw_errors[50..].iter().map(|e| e * e).sum::<Float>() / 50.0);
+        let filt_rms: Float =
+            float::sqrt(filtered_errors[50..].iter().map(|e| e * e).sum::<Float>() / 50.0);
         assert!(
             filt_rms < raw_rms,
             "Filter RMS {} not less than raw RMS {}",
@@ -548,10 +551,9 @@ mod tests {
 
             let p = kf.covariance();
             let p_diag = [p.get(0, 0), p.get(1, 1)];
-            let max_change = libm::fmax(
-                libm::fabs(p_diag[0] - prev_p_diag[0]),
-                libm::fabs(p_diag[1] - prev_p_diag[1]),
-            );
+            let change0 = float::abs(p_diag[0] - prev_p_diag[0]);
+            let change1 = float::abs(p_diag[1] - prev_p_diag[1]);
+            let max_change = if change0 > change1 { change0 } else { change1 };
 
             if max_change < 1e-6 && converged_at.is_none() {
                 converged_at = Some(t);
@@ -588,8 +590,8 @@ mod tests {
         let mut filt_var = 0.0;
         let n = 200;
 
-        let mut raw_vals = vec![0.0f64; n];
-        let mut filt_vals = vec![0.0f64; n];
+        let mut raw_vals: Vec<Float> = vec![0.0; n];
+        let mut filt_vals: Vec<Float> = vec![0.0; n];
 
         for i in 0..n {
             kf.predict();
@@ -641,11 +643,11 @@ mod tests {
             ];
             kf.update(&z).unwrap();
 
-            let raw_err = libm::sqrt(
+            let raw_err = float::sqrt(
                 (z[0] - true_state[0]) * (z[0] - true_state[0])
                     + (z[1] - true_state[1]) * (z[1] - true_state[1]),
             );
-            let filt_err = libm::sqrt(
+            let filt_err = float::sqrt(
                 (kf.state()[0] - true_state[0]) * (kf.state()[0] - true_state[0])
                     + (kf.state()[1] - true_state[1]) * (kf.state()[1] - true_state[1]),
             );
@@ -683,12 +685,12 @@ mod tests {
         // State should follow constant velocity model
         // After 10 steps: pos = 0 + 1*10 = 10, vel = 1
         assert!(
-            libm::fabs(kf.state()[0] - 10.0) < 1e-10,
+            float::abs(kf.state()[0] - 10.0) < 1e-10,
             "Position should be 10, got {}",
             kf.state()[0]
         );
         assert!(
-            libm::fabs(kf.state()[1] - 1.0) < 1e-10,
+            float::abs(kf.state()[1] - 1.0) < 1e-10,
             "Velocity should be 1, got {}",
             kf.state()[1]
         );

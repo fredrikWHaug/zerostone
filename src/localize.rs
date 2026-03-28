@@ -24,6 +24,7 @@
 //! - Hurwitz et al. (2021). Scalable spike source localization in extracellular
 //!   recordings using amortized variational inference.
 
+use crate::float::{self, Float};
 use crate::probe::ProbeLayout;
 
 /// Compute the center-of-mass position of a spike from per-channel amplitudes.
@@ -52,16 +53,16 @@ use crate::probe::ProbeLayout;
 /// assert!((loc[1] - 50.0).abs() < 1e-9);
 /// ```
 pub fn center_of_mass<const C: usize>(
-    amplitudes: &[f64; C],
-    positions: &[[f64; 2]; C],
-) -> [f64; 2] {
-    let mut wx = 0.0;
-    let mut wy = 0.0;
-    let mut w_total = 0.0;
+    amplitudes: &[Float; C],
+    positions: &[[Float; 2]; C],
+) -> [Float; 2] {
+    let mut wx: Float = 0.0;
+    let mut wy: Float = 0.0;
+    let mut w_total: Float = 0.0;
 
     let mut i = 0;
     while i < C {
-        let w = libm::fabs(amplitudes[i]);
+        let w = float::abs(amplitudes[i]);
         wx += w * positions[i][0];
         wy += w * positions[i][1];
         w_total += w;
@@ -101,17 +102,17 @@ pub fn center_of_mass<const C: usize>(
 /// assert!((loc[1] - 59.375).abs() < 1e-9);
 /// ```
 pub fn center_of_mass_threshold<const C: usize>(
-    amplitudes: &[f64; C],
-    positions: &[[f64; 2]; C],
-    threshold: f64,
-) -> Option<[f64; 2]> {
-    let mut wx = 0.0;
-    let mut wy = 0.0;
-    let mut w_total = 0.0;
+    amplitudes: &[Float; C],
+    positions: &[[Float; 2]; C],
+    threshold: Float,
+) -> Option<[Float; 2]> {
+    let mut wx: Float = 0.0;
+    let mut wy: Float = 0.0;
+    let mut w_total: Float = 0.0;
 
     let mut i = 0;
     while i < C {
-        let w = libm::fabs(amplitudes[i]);
+        let w = float::abs(amplitudes[i]);
         if w >= threshold {
             wx += w * positions[i][0];
             wy += w * positions[i][1];
@@ -180,15 +181,15 @@ pub fn center_of_mass_threshold<const C: usize>(
 /// ```
 #[allow(clippy::needless_range_loop)]
 pub fn monopole_localize<const C: usize>(
-    amplitudes: &[f64; C],
-    positions: &[[f64; 2]; C],
-    z_offset: f64,
+    amplitudes: &[Float; C],
+    positions: &[[Float; 2]; C],
+    z_offset: Float,
     n_iter: usize,
-) -> Option<[f64; 2]> {
+) -> Option<[Float; 2]> {
     // Start from amplitude-weighted center of mass
-    let mut wx = 0.0;
-    let mut wy = 0.0;
-    let mut w_total = 0.0;
+    let mut wx: Float = 0.0;
+    let mut wy: Float = 0.0;
+    let mut w_total: Float = 0.0;
     for i in 0..C {
         let w = amplitudes[i];
         if w > 0.0 {
@@ -214,15 +215,15 @@ pub fn monopole_localize<const C: usize>(
     for _iter in 0..n_iter {
         // Estimate alpha = sum(a_i / r_i) / sum(1 / r_i^2)
         // via least-squares: minimize sum(a_i - alpha/r_i)^2 over alpha.
-        let mut s1 = 0.0; // sum(a_i / r_i)
-        let mut s2 = 0.0; // sum(1 / r_i^2)
+        let mut s1: Float = 0.0; // sum(a_i / r_i)
+        let mut s2: Float = 0.0; // sum(1 / r_i^2)
         for i in 0..C {
             if amplitudes[i] <= 0.0 {
                 continue;
             }
             let dx = x - positions[i][0];
             let dy = y - positions[i][1];
-            let r = libm::sqrt(dx * dx + dy * dy + z2);
+            let r = float::sqrt(dx * dx + dy * dy + z2);
             s1 += amplitudes[i] / r;
             s2 += 1.0 / (r * r);
         }
@@ -233,9 +234,9 @@ pub fn monopole_localize<const C: usize>(
 
         // Compute gradient of L w.r.t. (x, y)
         // dL/dx = 2 * sum_i (a_i - alpha/r_i) * (alpha / r_i^3) * (x - x_i)
-        let mut grad_x = 0.0;
-        let mut grad_y = 0.0;
-        let mut loss = 0.0;
+        let mut grad_x: Float = 0.0;
+        let mut grad_y: Float = 0.0;
+        let mut loss: Float = 0.0;
         for i in 0..C {
             if amplitudes[i] <= 0.0 {
                 continue;
@@ -243,7 +244,7 @@ pub fn monopole_localize<const C: usize>(
             let dx = x - positions[i][0];
             let dy = y - positions[i][1];
             let r2 = dx * dx + dy * dy + z2;
-            let r = libm::sqrt(r2);
+            let r = float::sqrt(r2);
             let predicted = alpha / r;
             let residual = amplitudes[i] - predicted;
             // derivative of -alpha/r w.r.t. x: alpha * (x-xi) / r^3
@@ -259,14 +260,14 @@ pub fn monopole_localize<const C: usize>(
 
         // Adaptive step size via line search (Barzilai-Borwein inspired):
         // Use 1 / (max curvature estimate) as step size.
-        let grad_norm = libm::sqrt(grad_x * grad_x + grad_y * grad_y);
+        let grad_norm = float::sqrt(grad_x * grad_x + grad_y * grad_y);
         if grad_norm < 1e-15 {
             break;
         }
 
         // Backtracking line search: start with a reasonable step and halve
         // until loss decreases.
-        let mut step = 1.0;
+        let mut step: Float = 1.0;
         let dir_x = grad_x / grad_norm;
         let dir_y = grad_y / grad_norm;
 
@@ -279,27 +280,27 @@ pub fn monopole_localize<const C: usize>(
             let ny = y - step * dir_y;
 
             // Evaluate loss at candidate
-            let mut sa = 0.0;
-            let mut sb = 0.0;
+            let mut sa: Float = 0.0;
+            let mut sb: Float = 0.0;
             for i in 0..C {
                 if amplitudes[i] <= 0.0 {
                     continue;
                 }
                 let dx2 = nx - positions[i][0];
                 let dy2 = ny - positions[i][1];
-                let r = libm::sqrt(dx2 * dx2 + dy2 * dy2 + z2);
+                let r = float::sqrt(dx2 * dx2 + dy2 * dy2 + z2);
                 sa += amplitudes[i] / r;
                 sb += 1.0 / (r * r);
             }
             let a2 = if sb > 0.0 { sa / sb } else { alpha };
-            let mut new_loss = 0.0;
+            let mut new_loss: Float = 0.0;
             for i in 0..C {
                 if amplitudes[i] <= 0.0 {
                     continue;
                 }
                 let dx2 = nx - positions[i][0];
                 let dy2 = ny - positions[i][1];
-                let r = libm::sqrt(dx2 * dx2 + dy2 * dy2 + z2);
+                let r = float::sqrt(dx2 * dx2 + dy2 * dy2 + z2);
                 let res = amplitudes[i] - a2 / r;
                 new_loss += res * res;
             }
@@ -353,17 +354,17 @@ pub fn monopole_localize<const C: usize>(
 /// assert!((loc[1] - 50.0).abs() < 5.0);
 /// ```
 pub fn localize_spike<const C: usize, const W: usize>(
-    waveform: &[[f64; W]; C],
+    waveform: &[[Float; W]; C],
     probe: &ProbeLayout<C>,
-) -> [f64; 2] {
-    let mut peak_amps = [0.0f64; C];
+) -> [Float; 2] {
+    let mut peak_amps = [0.0 as Float; C];
 
     let mut ch = 0;
     while ch < C {
-        let mut max_abs = 0.0;
+        let mut max_abs: Float = 0.0;
         let mut s = 0;
         while s < W {
-            let a = libm::fabs(waveform[ch][s]);
+            let a = float::abs(waveform[ch][s]);
             if a > max_abs {
                 max_abs = a;
             }
@@ -393,7 +394,7 @@ mod kani_proofs {
         kani::assume(a2.is_finite() && a2 >= -1e6 && a2 <= 1e6);
         kani::assume(a3.is_finite() && a3 >= -1e6 && a3 <= 1e6);
 
-        let amps = [a0, a1, a2, a3];
+        let amps = [a0 as Float, a1 as Float, a2 as Float, a3 as Float];
         let pos = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
         let result = center_of_mass(&amps, &pos);
         // Should not panic -- result is either [0,0] (all zero) or a weighted avg
@@ -412,7 +413,7 @@ mod kani_proofs {
         // At least one nonzero
         kani::assume(a0 != 0.0 || a1 != 0.0);
 
-        let amps = [a0, a1];
+        let amps = [a0 as Float, a1 as Float];
         let pos = [[0.0, 0.0], [0.0, 25.0]];
         let result = center_of_mass(&amps, &pos);
         assert!(result[0].is_finite(), "x must be finite");
@@ -435,9 +436,9 @@ mod kani_proofs {
         kani::assume(a3.is_finite() && a3 >= -1e6 && a3 <= 1e6);
         kani::assume(threshold.is_finite() && threshold >= 0.0 && threshold <= 1e6);
 
-        let amps = [a0, a1, a2, a3];
+        let amps = [a0 as Float, a1 as Float, a2 as Float, a3 as Float];
         let pos = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
-        let result = center_of_mass_threshold(&amps, &pos, threshold);
+        let result = center_of_mass_threshold(&amps, &pos, threshold as Float);
         if let Some(loc) = result {
             assert!(loc[0].is_finite(), "x must be finite");
             assert!(loc[1].is_finite(), "y must be finite");
@@ -456,9 +457,9 @@ mod kani_proofs {
         kani::assume(a1.is_finite() && a1 >= 0.0 && a1 <= 1e4);
         kani::assume(z_offset.is_finite() && z_offset >= 1.0 && z_offset <= 100.0);
 
-        let amps = [a0, a1];
+        let amps = [a0 as Float, a1 as Float];
         let pos = [[0.0, 0.0], [0.0, 25.0]];
-        let result = monopole_localize(&amps, &pos, z_offset, 2);
+        let result = monopole_localize(&amps, &pos, z_offset as Float, 2);
         if let Some(loc) = result {
             assert!(loc[0].is_finite(), "x must be finite");
             assert!(loc[1].is_finite(), "y must be finite");
@@ -475,7 +476,7 @@ mod tests {
 
     #[test]
     fn com_single_channel_returns_that_position() {
-        let amps = [-5.0];
+        let amps: [Float; 1] = [-5.0];
         let pos = [[10.0, 20.0]];
         let loc = center_of_mass(&amps, &pos);
         assert!((loc[0] - 10.0).abs() < 1e-12);
@@ -484,7 +485,7 @@ mod tests {
 
     #[test]
     fn com_equal_weights_returns_centroid() {
-        let amps = [1.0, 1.0, 1.0, 1.0];
+        let amps: [Float; 4] = [1.0, 1.0, 1.0, 1.0];
         let pos = [[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]];
         let loc = center_of_mass(&amps, &pos);
         assert!((loc[0] - 5.0).abs() < 1e-12);
@@ -493,7 +494,7 @@ mod tests {
 
     #[test]
     fn com_all_zero_returns_origin() {
-        let amps = [0.0, 0.0, 0.0, 0.0];
+        let amps: [Float; 4] = [0.0, 0.0, 0.0, 0.0];
         let pos = [[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]];
         let loc = center_of_mass(&amps, &pos);
         assert!((loc[0]).abs() < 1e-12);
@@ -502,7 +503,7 @@ mod tests {
 
     #[test]
     fn com_negative_amps_uses_absolute_value() {
-        let amps = [-3.0, -1.0];
+        let amps: [Float; 2] = [-3.0, -1.0];
         let pos = [[0.0, 0.0], [0.0, 100.0]];
         let loc = center_of_mass(&amps, &pos);
         // Weighted: (3*0 + 1*100)/(3+1) = 25
@@ -511,7 +512,7 @@ mod tests {
 
     #[test]
     fn com_dominant_channel_pulls_location() {
-        let amps = [0.0, 0.0, -10.0, 0.0];
+        let amps: [Float; 4] = [0.0, 0.0, -10.0, 0.0];
         let pos = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
         let loc = center_of_mass(&amps, &pos);
         assert!((loc[0] - 0.0).abs() < 1e-12);
@@ -522,7 +523,7 @@ mod tests {
 
     #[test]
     fn com_threshold_filters_low_channels() {
-        let amps = [0.1, 0.2, -5.0, -3.0];
+        let amps: [Float; 4] = [0.1, 0.2, -5.0, -3.0];
         let pos = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
         let loc = center_of_mass_threshold(&amps, &pos, 1.0).unwrap();
         let expected_y = (5.0 * 50.0 + 3.0 * 75.0) / (5.0 + 3.0);
@@ -531,14 +532,14 @@ mod tests {
 
     #[test]
     fn com_threshold_none_when_all_below() {
-        let amps = [0.1, 0.2, 0.05];
+        let amps: [Float; 3] = [0.1, 0.2, 0.05];
         let pos = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0]];
         assert!(center_of_mass_threshold(&amps, &pos, 1.0).is_none());
     }
 
     #[test]
     fn com_threshold_zero_includes_all_nonzero() {
-        let amps = [1.0, 2.0, 3.0];
+        let amps: [Float; 3] = [1.0, 2.0, 3.0];
         let pos = [[0.0, 0.0], [0.0, 10.0], [0.0, 20.0]];
         let with_thresh = center_of_mass_threshold(&amps, &pos, 0.0).unwrap();
         let without_thresh = center_of_mass(&amps, &pos);
@@ -551,7 +552,7 @@ mod tests {
     #[test]
     fn monopole_recovers_known_source() {
         // Source at (16.0, 37.5), z=10
-        let positions = [
+        let positions: [[Float; 2]; 8] = [
             [-16.0, 0.0],
             [16.0, 0.0],
             [-16.0, 25.0],
@@ -561,14 +562,14 @@ mod tests {
             [-16.0, 75.0],
             [16.0, 75.0],
         ];
-        let src = [16.0, 37.5];
-        let z = 10.0;
-        let alpha = 100.0;
-        let mut amps = [0.0f64; 8];
+        let src: [Float; 2] = [16.0, 37.5];
+        let z: Float = 10.0;
+        let alpha: Float = 100.0;
+        let mut amps = [0.0 as Float; 8];
         for i in 0..8 {
             let dx = src[0] - positions[i][0];
             let dy = src[1] - positions[i][1];
-            let r = libm::sqrt(dx * dx + dy * dy + z * z);
+            let r = float::sqrt(dx * dx + dy * dy + z * z);
             amps[i] = alpha / r;
         }
         let est = monopole_localize(&amps, &positions, z, 10).unwrap();
@@ -587,7 +588,7 @@ mod tests {
     #[test]
     fn monopole_more_accurate_than_com() {
         // Source off-center at (10.0, 30.0), z=5
-        let positions = [
+        let positions: [[Float; 2]; 8] = [
             [-16.0, 0.0],
             [16.0, 0.0],
             [-16.0, 25.0],
@@ -597,24 +598,24 @@ mod tests {
             [-16.0, 75.0],
             [16.0, 75.0],
         ];
-        let src = [10.0, 30.0];
-        let z = 5.0;
-        let alpha = 100.0;
-        let mut amps = [0.0f64; 8];
+        let src: [Float; 2] = [10.0, 30.0];
+        let z: Float = 5.0;
+        let alpha: Float = 100.0;
+        let mut amps = [0.0 as Float; 8];
         for i in 0..8 {
             let dx = src[0] - positions[i][0];
             let dy = src[1] - positions[i][1];
-            let r = libm::sqrt(dx * dx + dy * dy + z * z);
+            let r = float::sqrt(dx * dx + dy * dy + z * z);
             amps[i] = alpha / r;
         }
 
         let com = center_of_mass(&amps, &positions);
         let mono = monopole_localize(&amps, &positions, z, 10).unwrap();
 
-        let com_err = libm::sqrt(
+        let com_err = float::sqrt(
             (com[0] - src[0]) * (com[0] - src[0]) + (com[1] - src[1]) * (com[1] - src[1]),
         );
-        let mono_err = libm::sqrt(
+        let mono_err = float::sqrt(
             (mono[0] - src[0]) * (mono[0] - src[0]) + (mono[1] - src[1]) * (mono[1] - src[1]),
         );
 
@@ -628,15 +629,15 @@ mod tests {
 
     #[test]
     fn monopole_all_zero_returns_none() {
-        let amps = [0.0; 4];
-        let pos = [[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]];
+        let amps = [0.0 as Float; 4];
+        let pos: [[Float; 2]; 4] = [[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]];
         assert!(monopole_localize(&amps, &pos, 10.0, 5).is_none());
     }
 
     #[test]
     fn monopole_single_channel() {
-        let amps = [5.0];
-        let pos = [[42.0, 17.0]];
+        let amps: [Float; 1] = [5.0];
+        let pos: [[Float; 2]; 1] = [[42.0, 17.0]];
         let est = monopole_localize(&amps, &pos, 10.0, 5).unwrap();
         assert!((est[0] - 42.0).abs() < 1e-9);
         assert!((est[1] - 17.0).abs() < 1e-9);
@@ -644,8 +645,8 @@ mod tests {
 
     #[test]
     fn monopole_uniform_amplitudes_returns_centroid() {
-        let amps = [1.0, 1.0, 1.0, 1.0];
-        let pos = [[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]];
+        let amps: [Float; 4] = [1.0, 1.0, 1.0, 1.0];
+        let pos: [[Float; 2]; 4] = [[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]];
         let est = monopole_localize(&amps, &pos, 10.0, 10).unwrap();
         // With uniform amplitudes, should converge near centroid
         assert!((est[0] - 5.0).abs() < 1.0);
@@ -657,7 +658,7 @@ mod tests {
     #[test]
     fn localize_spike_dominant_channel() {
         let probe = ProbeLayout::<4>::linear(25.0);
-        let waveform = [
+        let waveform: [[Float; 4]; 4] = [
             [0.0, 0.1, 0.0, -0.1],  // ch 0, peak 0.1
             [0.0, 0.2, -0.1, 0.0],  // ch 1, peak 0.2
             [0.5, -3.0, -8.0, 2.0], // ch 2, peak 8.0
@@ -672,7 +673,7 @@ mod tests {
     fn localize_spike_uniform_waveforms() {
         let probe = ProbeLayout::<4>::linear(25.0);
         // All channels have same peak
-        let waveform = [
+        let waveform: [[Float; 4]; 4] = [
             [0.0, -1.0, 0.0, 0.0],
             [0.0, -1.0, 0.0, 0.0],
             [0.0, -1.0, 0.0, 0.0],
@@ -686,7 +687,7 @@ mod tests {
     #[test]
     fn localize_spike_all_zero() {
         let probe = ProbeLayout::<3>::linear(10.0);
-        let waveform = [[0.0; 4]; 3];
+        let waveform = [[0.0 as Float; 4]; 3];
         let loc = localize_spike(&waveform, &probe);
         assert!((loc[0]).abs() < 1e-12);
         assert!((loc[1]).abs() < 1e-12);

@@ -19,10 +19,12 @@
 //!
 //! // Process one input sample, get 4 output samples
 //! let input = [1.0, 2.0];
-//! let mut output = [[0.0f32; 2]; 4];
+//! let mut output = [[0.0; 2]; 4];
 //! let count = interp.process(&input, &mut output);
 //! assert_eq!(count, 4);
 //! ```
+
+use crate::float::Float;
 
 /// Interpolation method for upsampling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,7 +60,7 @@ pub enum InterpolationMethod {
 /// let mut interp: Interpolator<8> = Interpolator::new(4, InterpolationMethod::Linear);
 ///
 /// // First sample initializes the interpolator
-/// let mut output = [[0.0f32; 8]; 4];
+/// let mut output = [[0.0; 8]; 4];
 /// let count = interp.process(&[1.0; 8], &mut output);
 /// // First call with Linear method outputs factor samples
 /// assert_eq!(count, 4);
@@ -69,7 +71,7 @@ pub struct Interpolator<const C: usize> {
     /// Interpolation method
     method: InterpolationMethod,
     /// Previous sample (for linear interpolation)
-    prev_sample: [f32; C],
+    prev_sample: [Float; C],
     /// Whether we have a previous sample
     initialized: bool,
 }
@@ -145,13 +147,13 @@ impl<const C: usize> Interpolator<C> {
     ///
     /// let mut interp: Interpolator<1> = Interpolator::new(4, InterpolationMethod::Linear);
     ///
-    /// let mut output = [[0.0f32; 1]; 4];
+    /// let mut output = [[0.0; 1]; 4];
     /// interp.process(&[0.0], &mut output); // Initialize
     /// interp.process(&[4.0], &mut output); // Interpolate 0.0 -> 4.0
     ///
     /// // With linear interpolation: [0.0, 1.0, 2.0, 3.0] (approaching 4.0)
     /// ```
-    pub fn process(&mut self, input: &[f32; C], output: &mut [[f32; C]]) -> usize {
+    pub fn process(&mut self, input: &[Float; C], output: &mut [[Float; C]]) -> usize {
         let count = self.factor.min(output.len());
 
         match self.method {
@@ -170,7 +172,7 @@ impl<const C: usize> Interpolator<C> {
                 } else {
                     // Interpolate from prev_sample to input
                     for (i, out) in output.iter_mut().enumerate().take(count) {
-                        let t = i as f32 / self.factor as f32;
+                        let t = i as Float / self.factor as Float;
                         for (c, out_c) in out.iter_mut().enumerate() {
                             *out_c = self.prev_sample[c] + t * (input[c] - self.prev_sample[c]);
                         }
@@ -213,13 +215,13 @@ impl<const C: usize> Interpolator<C> {
     /// let mut interp: Interpolator<1> = Interpolator::new(2, InterpolationMethod::ZeroOrder);
     ///
     /// let input = [[1.0], [2.0], [3.0]];
-    /// let mut output = [[0.0f32; 1]; 6];
+    /// let mut output = [[0.0; 1]; 6];
     /// let count = interp.process_block(&input, &mut output);
     ///
     /// assert_eq!(count, 6);
     /// // Output: [1.0, 1.0, 2.0, 2.0, 3.0, 3.0]
     /// ```
-    pub fn process_block(&mut self, input: &[[f32; C]], output: &mut [[f32; C]]) -> usize {
+    pub fn process_block(&mut self, input: &[[Float; C]], output: &mut [[Float; C]]) -> usize {
         let mut write_idx = 0;
 
         for sample in input {
@@ -290,9 +292,9 @@ impl<const C: usize> Default for Interpolator<C> {
 }
 
 impl<const C: usize> crate::pipeline::BlockProcessor<C> for Interpolator<C> {
-    type Sample = f32;
+    type Sample = Float;
 
-    fn process_block(&mut self, input: &[[f32; C]], output: &mut [[f32; C]]) -> usize {
+    fn process_block(&mut self, input: &[[Float; C]], output: &mut [[Float; C]]) -> usize {
         let mut total_written = 0;
 
         for sample in input {
@@ -332,7 +334,7 @@ mod tests {
         let mut interp: Interpolator<2> = Interpolator::new(1, InterpolationMethod::Linear);
 
         let input = [1.0, 2.0];
-        let mut output = [[0.0f32; 2]; 1];
+        let mut output = [[0.0; 2]; 1];
         let count = interp.process(&input, &mut output);
 
         assert_eq!(count, 1);
@@ -343,7 +345,7 @@ mod tests {
     fn test_interpolator_zero_order() {
         let mut interp: Interpolator<1> = Interpolator::zero_order(4);
 
-        let mut output = [[0.0f32; 1]; 4];
+        let mut output = [[0.0; 1]; 4];
         let count = interp.process(&[5.0], &mut output);
 
         assert_eq!(count, 4);
@@ -357,7 +359,7 @@ mod tests {
         let mut interp: Interpolator<3> = Interpolator::zero_order(2);
 
         let input = [1.0, 2.0, 3.0];
-        let mut output = [[0.0f32; 3]; 2];
+        let mut output = [[0.0; 3]; 2];
         let count = interp.process(&input, &mut output);
 
         assert_eq!(count, 2);
@@ -370,7 +372,7 @@ mod tests {
         let mut interp: Interpolator<1> = Interpolator::linear(4);
 
         // First sample: initializes, outputs all same value
-        let mut output = [[0.0f32; 1]; 4];
+        let mut output = [[0.0; 1]; 4];
         interp.process(&[0.0], &mut output);
 
         // Second sample: interpolates from 0.0 to 4.0
@@ -387,7 +389,7 @@ mod tests {
     fn test_interpolator_linear_multi_channel() {
         let mut interp: Interpolator<2> = Interpolator::linear(2);
 
-        let mut output = [[0.0f32; 2]; 2];
+        let mut output = [[0.0; 2]; 2];
 
         // First sample
         interp.process(&[0.0, 10.0], &mut output);
@@ -406,7 +408,7 @@ mod tests {
     fn test_interpolator_zero_insert() {
         let mut interp: Interpolator<1> = Interpolator::new(4, InterpolationMethod::ZeroInsert);
 
-        let mut output = [[0.0f32; 1]; 4];
+        let mut output = [[0.0; 1]; 4];
         interp.process(&[5.0], &mut output);
 
         assert_eq!(output[0][0], 5.0);
@@ -420,7 +422,7 @@ mod tests {
         let mut interp: Interpolator<1> = Interpolator::zero_order(2);
 
         let input = [[1.0], [2.0], [3.0]];
-        let mut output = [[0.0f32; 1]; 6];
+        let mut output = [[0.0; 1]; 6];
         let count = interp.process_block(&input, &mut output);
 
         assert_eq!(count, 6);
@@ -437,7 +439,7 @@ mod tests {
         let mut interp: Interpolator<1> = Interpolator::linear(2);
 
         let input = [[0.0], [2.0], [4.0]];
-        let mut output = [[0.0f32; 1]; 6];
+        let mut output = [[0.0; 1]; 6];
         let count = interp.process_block(&input, &mut output);
 
         assert_eq!(count, 6);
@@ -457,7 +459,7 @@ mod tests {
         let mut interp: Interpolator<1> = Interpolator::linear(2);
 
         // Initialize
-        let mut output = [[0.0f32; 1]; 2];
+        let mut output = [[0.0; 1]; 2];
         interp.process(&[10.0], &mut output);
         assert!(interp.is_initialized());
 
@@ -510,7 +512,7 @@ mod tests {
         let mut interp: Interpolator<1> = Interpolator::zero_order(4);
 
         // Output buffer smaller than factor
-        let mut output = [[0.0f32; 1]; 2];
+        let mut output = [[0.0; 1]; 2];
         let count = interp.process(&[5.0], &mut output);
 
         // Should only write what fits
@@ -524,13 +526,13 @@ mod tests {
         // Upsample then downsample should approximate identity
         let mut interp: Interpolator<1> = Interpolator::zero_order(4);
 
-        let original = [1.0f32, 2.0, 3.0, 4.0, 5.0];
+        let original = [1.0, 2.0, 3.0, 4.0, 5.0];
 
         // Upsample
-        let mut upsampled = [[0.0f32; 1]; 20];
+        let mut upsampled = [[0.0; 1]; 20];
         let mut idx = 0;
         for &val in &original {
-            let mut out = [[0.0f32; 1]; 4];
+            let mut out = [[0.0; 1]; 4];
             interp.process(&[val], &mut out);
             for o in out {
                 upsampled[idx] = o;

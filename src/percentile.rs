@@ -54,6 +54,8 @@
 //! quantiles and histograms without storing observations. Communications of the ACM,
 //! 28(10), 1076-1085.
 
+use crate::float::Float;
+
 /// Streaming percentile estimator using the P² algorithm.
 ///
 /// Estimates a single percentile over streaming multi-channel data without storing
@@ -81,19 +83,19 @@
 /// ```
 pub struct StreamingPercentile<const C: usize> {
     /// Target percentile (0.0 to 1.0)
-    p: f64,
+    p: Float,
     /// Marker heights (quantile estimates) - 5 markers per channel
-    heights: [[f64; 5]; C],
+    heights: [[Float; 5]; C],
     /// Actual marker positions (sample counts below each marker)
     positions: [[u64; 5]; C],
     /// Desired marker positions
-    desired: [[f64; 5]; C],
+    desired: [[Float; 5]; C],
     /// Position increments (same for all channels)
-    increments: [f64; 5],
+    increments: [Float; 5],
     /// Total samples processed
     count: u64,
     /// Buffer for first 5 samples during initialization
-    init_buffer: [[f64; 5]; C],
+    init_buffer: [[Float; 5]; C],
     /// Number of samples in init_buffer (0-5)
     init_count: usize,
 }
@@ -131,7 +133,7 @@ impl<const C: usize> StreamingPercentile<C> {
     /// // 95th percentile for peak detection
     /// let peaks: StreamingPercentile<8> = StreamingPercentile::new(0.95);
     /// ```
-    pub fn new(p: f64) -> Self {
+    pub fn new(p: Float) -> Self {
         assert!(p > 0.0 && p < 1.0, "Percentile p must be in (0.0, 1.0)");
 
         Self {
@@ -148,7 +150,7 @@ impl<const C: usize> StreamingPercentile<C> {
 
     /// Returns the target percentile value.
     #[inline]
-    pub fn target_percentile(&self) -> f64 {
+    pub fn target_percentile(&self) -> Float {
         self.p
     }
 
@@ -192,7 +194,7 @@ impl<const C: usize> StreamingPercentile<C> {
     ///
     /// assert!(est.is_initialized());
     /// ```
-    pub fn update(&mut self, sample: &[f64; C]) {
+    pub fn update(&mut self, sample: &[Float; C]) {
         self.count += 1;
 
         if self.init_count < 5 {
@@ -236,7 +238,7 @@ impl<const C: usize> StreamingPercentile<C> {
     /// // Now we have an estimate
     /// let median = est.percentile().unwrap();
     /// ```
-    pub fn percentile(&self) -> Option<[f64; C]> {
+    pub fn percentile(&self) -> Option<[Float; C]> {
         if self.init_count < 5 {
             return None;
         }
@@ -251,7 +253,7 @@ impl<const C: usize> StreamingPercentile<C> {
     /// Returns the current minimum value for each channel.
     ///
     /// Returns `None` if fewer than 5 samples have been processed.
-    pub fn min(&self) -> Option<[f64; C]> {
+    pub fn min(&self) -> Option<[Float; C]> {
         if self.init_count < 5 {
             return None;
         }
@@ -266,7 +268,7 @@ impl<const C: usize> StreamingPercentile<C> {
     /// Returns the current maximum value for each channel.
     ///
     /// Returns `None` if fewer than 5 samples have been processed.
-    pub fn max(&self) -> Option<[f64; C]> {
+    pub fn max(&self) -> Option<[Float; C]> {
         if self.init_count < 5 {
             return None;
         }
@@ -312,7 +314,7 @@ impl<const C: usize> StreamingPercentile<C> {
 
     /// Sorts exactly 5 elements in place using an optimal sorting network.
     #[inline]
-    fn sort5(&self, arr: &mut [f64; 5]) {
+    fn sort5(&self, arr: &mut [Float; 5]) {
         // Optimal sorting network for 5 elements (9 comparisons)
         Self::compare_swap(arr, 0, 1);
         Self::compare_swap(arr, 3, 4);
@@ -326,7 +328,7 @@ impl<const C: usize> StreamingPercentile<C> {
     }
 
     #[inline]
-    fn compare_swap(arr: &mut [f64; 5], i: usize, j: usize) {
+    fn compare_swap(arr: &mut [Float; 5], i: usize, j: usize) {
         if arr[i] > arr[j] {
             arr.swap(i, j);
         }
@@ -334,7 +336,7 @@ impl<const C: usize> StreamingPercentile<C> {
 
     /// Updates a single channel with a new observation using the P² algorithm.
     #[inline]
-    fn update_channel(&mut self, c: usize, x: f64) {
+    fn update_channel(&mut self, c: usize, x: Float) {
         let heights = &mut self.heights[c];
         let positions = &mut self.positions[c];
         let desired = &mut self.desired[c];
@@ -363,7 +365,7 @@ impl<const C: usize> StreamingPercentile<C> {
 
         // Step 5: Adjust middle markers (1, 2, 3) if needed
         for i in 1..4 {
-            let d = desired[i] - positions[i] as f64;
+            let d = desired[i] - positions[i] as Float;
 
             if (d >= 1.0 && positions[i + 1] > positions[i] + 1)
                 || (d <= -1.0 && positions[i - 1] + 1 < positions[i])
@@ -391,7 +393,7 @@ impl<const C: usize> StreamingPercentile<C> {
 /// Finds the cell index k where heights[k] <= x < heights[k+1].
 /// Returns the rightmost valid k (0..4).
 #[inline]
-fn find_cell(heights: &[f64; 5], x: f64) -> usize {
+fn find_cell(heights: &[Float; 5], x: Float) -> usize {
     if x < heights[1] {
         0
     } else if x < heights[2] {
@@ -405,11 +407,11 @@ fn find_cell(heights: &[f64; 5], x: f64) -> usize {
 
 /// Computes the parabolic (P²) interpolation for marker adjustment.
 #[inline]
-fn parabolic(heights: &[f64; 5], positions: &[u64; 5], i: usize, d: i64) -> f64 {
-    let d_f = d as f64;
-    let n_i = positions[i] as f64;
-    let n_im1 = positions[i - 1] as f64;
-    let n_ip1 = positions[i + 1] as f64;
+fn parabolic(heights: &[Float; 5], positions: &[u64; 5], i: usize, d: i64) -> Float {
+    let d_f = d as Float;
+    let n_i = positions[i] as Float;
+    let n_im1 = positions[i - 1] as Float;
+    let n_ip1 = positions[i + 1] as Float;
 
     let q_i = heights[i];
     let q_im1 = heights[i - 1];
@@ -423,15 +425,15 @@ fn parabolic(heights: &[f64; 5], positions: &[u64; 5], i: usize, d: i64) -> f64 
 
 /// Computes linear interpolation for marker adjustment (fallback).
 #[inline]
-fn linear(heights: &[f64; 5], positions: &[u64; 5], i: usize, d: i64) -> f64 {
+fn linear(heights: &[Float; 5], positions: &[u64; 5], i: usize, d: i64) -> Float {
     let idx = if d >= 0 { i + 1 } else { i - 1 };
 
-    let n_i = positions[i] as f64;
-    let n_other = positions[idx] as f64;
+    let n_i = positions[i] as Float;
+    let n_other = positions[idx] as Float;
     let q_i = heights[i];
     let q_other = heights[idx];
 
-    q_i + (d as f64) * (q_other - q_i) / (n_other - n_i)
+    q_i + (d as Float) * (q_other - q_i) / (n_other - n_i)
 }
 
 #[cfg(test)]
@@ -469,7 +471,7 @@ mod tests {
         let mut est: StreamingPercentile<1> = StreamingPercentile::new(0.5);
 
         for i in 1..5 {
-            est.update(&[i as f64]);
+            est.update(&[i as Float]);
             assert!(!est.is_initialized());
             assert!(est.percentile().is_none());
         }
@@ -485,7 +487,7 @@ mod tests {
 
         // Feed 1, 2, 3, 4, 5 - median should be 3
         for i in 1..=5 {
-            est.update(&[i as f64]);
+            est.update(&[i as Float]);
         }
 
         let median = est.percentile().unwrap()[0];
@@ -502,7 +504,7 @@ mod tests {
 
         // Feed uniform sequence 0..1000
         for i in 0..1000 {
-            est.update(&[i as f64]);
+            est.update(&[i as Float]);
         }
 
         // True median is 499.5
@@ -523,7 +525,7 @@ mod tests {
 
         // Feed uniform sequence 0..1000
         for i in 0..1000 {
-            est.update(&[i as f64]);
+            est.update(&[i as Float]);
         }
 
         // True 8th percentile is ~80
@@ -544,7 +546,7 @@ mod tests {
 
         // Channel 0: 1-1000, Channel 1: 1001-2000
         for i in 0..1000 {
-            est.update(&[i as f64, (i + 1000) as f64]);
+            est.update(&[i as Float, (i + 1000) as Float]);
         }
 
         let medians = est.percentile().unwrap();
@@ -569,7 +571,7 @@ mod tests {
         let mut est: StreamingPercentile<1> = StreamingPercentile::new(0.5);
 
         for i in 0..100 {
-            est.update(&[i as f64]);
+            est.update(&[i as Float]);
         }
 
         let min = est.min().unwrap()[0];
@@ -585,7 +587,7 @@ mod tests {
 
         // Feed some data
         for i in 0..100 {
-            est.update(&[i as f64]);
+            est.update(&[i as Float]);
         }
         assert!(est.is_initialized());
         assert_eq!(est.count(), 100);
@@ -599,7 +601,7 @@ mod tests {
 
         // Should work again after reset
         for i in 0..5 {
-            est.update(&[i as f64]);
+            est.update(&[i as Float]);
         }
         assert!(est.is_initialized());
     }
@@ -623,7 +625,7 @@ mod tests {
 
         // Feed in reverse order
         for i in (0..1000).rev() {
-            est.update(&[i as f64]);
+            est.update(&[i as Float]);
         }
 
         let median = est.percentile().unwrap()[0];
@@ -642,7 +644,7 @@ mod tests {
 
         // Already sorted
         for i in 0..1000 {
-            est.update(&[i as f64]);
+            est.update(&[i as Float]);
         }
 
         let median = est.percentile().unwrap()[0];
@@ -660,7 +662,7 @@ mod tests {
         // Test 1st percentile
         let mut est_low: StreamingPercentile<1> = StreamingPercentile::new(0.01);
         for i in 0..10000 {
-            est_low.update(&[i as f64]);
+            est_low.update(&[i as Float]);
         }
         let p1 = est_low.percentile().unwrap()[0];
         assert!(p1 < 500.0, "1st percentile {} should be low", p1);
@@ -668,7 +670,7 @@ mod tests {
         // Test 99th percentile
         let mut est_high: StreamingPercentile<1> = StreamingPercentile::new(0.99);
         for i in 0..10000 {
-            est_high.update(&[i as f64]);
+            est_high.update(&[i as Float]);
         }
         let p99 = est_high.percentile().unwrap()[0];
         assert!(p99 > 9500.0, "99th percentile {} should be high", p99);

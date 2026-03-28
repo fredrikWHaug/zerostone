@@ -21,16 +21,17 @@
 //!
 //! ```
 //! use zerostone::pac::{modulation_index, mean_vector_length};
+//! use zerostone::float::{self, Float, PI};
 //!
 //! // Synthetic coupled signal: amplitude modulated by phase
 //! let n = 500;
-//! let mut phase = [0.0f32; 500];
-//! let mut amplitude = [0.0f32; 500];
+//! let mut phase = [0.0 as Float; 500];
+//! let mut amplitude = [0.0 as Float; 500];
 //! for i in 0..n {
-//!     let p = (i as f32 / n as f32) * 2.0 * core::f32::consts::PI - core::f32::consts::PI;
+//!     let p = (i as Float / n as Float) * 2.0 * PI - PI;
 //!     phase[i] = p;
 //!     // Amplitude peaks at phase = 0 (strong coupling)
-//!     amplitude[i] = 1.0 + 0.8 * libm::cosf(p);
+//!     amplitude[i] = 1.0 + 0.8 * float::cos(p);
 //! }
 //!
 //! let mi = modulation_index(&phase, &amplitude, 18);
@@ -39,6 +40,8 @@
 //! let mvl = mean_vector_length(&phase, &amplitude);
 //! assert!(mvl > 0.1); // significant coupling
 //! ```
+
+use crate::float::Float;
 
 /// Compute the Modulation Index (Tort et al. 2010).
 ///
@@ -68,18 +71,19 @@
 ///
 /// ```
 /// use zerostone::pac::modulation_index;
-/// use core::f32::consts::PI;
+/// use zerostone::float::{Float, PI};
 ///
 /// // No coupling: constant amplitude regardless of phase
-/// let mut phase = [0.0f32; 360];
+/// let mut phase = [0.0 as Float; 360];
 /// for i in 0..360 {
-///     phase[i] = (i as f32).to_radians() - PI;
+///     phase[i] = (i as Float) * (PI / 180.0) - PI;
 /// }
-/// let amplitude = [1.0f32; 360];
+/// let amplitude = [1.0 as Float; 360];
 /// let mi = modulation_index(&phase, &amplitude, 18);
 /// assert!(mi < 0.01, "No coupling should give MI near 0, got {}", mi);
 /// ```
-pub fn modulation_index(phase: &[f32], amplitude: &[f32], n_bins: usize) -> f32 {
+#[allow(clippy::unnecessary_cast)]
+pub fn modulation_index(phase: &[Float], amplitude: &[Float], n_bins: usize) -> Float {
     assert_eq!(
         phase.len(),
         amplitude.len(),
@@ -145,7 +149,7 @@ pub fn modulation_index(phase: &[f32], amplitude: &[f32], n_bins: usize) -> f32 
 
     // Normalize: MI = D_KL / log(N), clamp to [0, 1]
     let mi = d_kl / log_n;
-    mi.clamp(0.0, 1.0) as f32
+    mi.clamp(0.0, 1.0) as Float
 }
 
 /// Compute the Mean Vector Length (Canolty et al. 2006).
@@ -173,18 +177,19 @@ pub fn modulation_index(phase: &[f32], amplitude: &[f32], n_bins: usize) -> f32 
 ///
 /// ```
 /// use zerostone::pac::mean_vector_length;
-/// use core::f32::consts::PI;
+/// use zerostone::float::{Float, PI};
 ///
 /// // No coupling: constant amplitude
-/// let mut phase = [0.0f32; 360];
+/// let mut phase = [0.0 as Float; 360];
 /// for i in 0..360 {
-///     phase[i] = (i as f32).to_radians() - PI;
+///     phase[i] = (i as Float) * (PI / 180.0) - PI;
 /// }
-/// let amplitude = [1.0f32; 360];
+/// let amplitude = [1.0 as Float; 360];
 /// let mvl = mean_vector_length(&phase, &amplitude);
 /// assert!(mvl < 0.05, "No coupling should give MVL near 0, got {}", mvl);
 /// ```
-pub fn mean_vector_length(phase: &[f32], amplitude: &[f32]) -> f32 {
+#[allow(clippy::unnecessary_cast)]
+pub fn mean_vector_length(phase: &[Float], amplitude: &[Float]) -> Float {
     assert_eq!(
         phase.len(),
         amplitude.len(),
@@ -216,7 +221,7 @@ pub fn mean_vector_length(phase: &[f32], amplitude: &[f32]) -> f32 {
 
     let mvl = libm::sqrt(mean_re * mean_re + mean_im * mean_im) / mean_amp;
     let mvl_clamped = if mvl > 1.0 { 1.0 } else { mvl };
-    mvl_clamped as f32
+    mvl_clamped as Float
 }
 
 /// Compute the phase-amplitude distribution for visualization.
@@ -249,20 +254,22 @@ pub fn mean_vector_length(phase: &[f32], amplitude: &[f32]) -> f32 {
 ///
 /// ```
 /// use zerostone::pac::phase_amplitude_distribution;
+/// use zerostone::Float;
 ///
-/// let phase = [0.0f32; 100];
-/// let amplitude = [1.0f32; 100];
-/// let mut centers = [0.0f32; 18];
-/// let mut amps = [0.0f32; 18];
+/// let phase = [0.0 as Float; 100];
+/// let amplitude = [1.0 as Float; 100];
+/// let mut centers = [0.0 as Float; 18];
+/// let mut amps = [0.0 as Float; 18];
 /// let n = phase_amplitude_distribution(&phase, &amplitude, 18, &mut centers, &mut amps);
 /// assert_eq!(n, 18);
 /// ```
+#[allow(clippy::unnecessary_cast)]
 pub fn phase_amplitude_distribution(
-    phase: &[f32],
-    amplitude: &[f32],
+    phase: &[Float],
+    amplitude: &[Float],
     n_bins: usize,
-    output_centers: &mut [f32],
-    output_amplitudes: &mut [f32],
+    output_centers: &mut [Float],
+    output_amplitudes: &mut [Float],
 ) -> usize {
     assert_eq!(
         phase.len(),
@@ -294,7 +301,7 @@ pub fn phase_amplitude_distribution(
     // Write bin centers
     for (b, center_out) in output_centers.iter_mut().enumerate().take(n_bins) {
         let center = -core::f64::consts::PI + (b as f64 + 0.5) * bin_width;
-        *center_out = center as f32;
+        *center_out = center as Float;
     }
 
     // Accumulate
@@ -315,7 +322,7 @@ pub fn phase_amplitude_distribution(
     // Write mean amplitudes
     for b in 0..n_bins {
         output_amplitudes[b] = if bin_count[b] > 0 {
-            (bin_sum[b] / bin_count[b] as f64) as f32
+            (bin_sum[b] / bin_count[b] as f64) as Float
         } else {
             0.0
         };
@@ -327,20 +334,20 @@ pub fn phase_amplitude_distribution(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::f32::consts::PI;
+    use crate::float;
 
     // Helper: fill phase array with linear ramp from -PI to PI
-    fn fill_phase_ramp(buf: &mut [f32]) {
+    fn fill_phase_ramp(buf: &mut [Float]) {
         let n = buf.len();
         for (i, val) in buf.iter_mut().enumerate() {
-            *val = (i as f32 / n as f32) * 2.0 * PI - PI;
+            *val = (i as Float / n as Float) * 2.0 * float::PI - float::PI;
         }
     }
 
     // Helper: fill coupled amplitude (peaks at phase=0)
-    fn fill_coupled_amplitude(phase: &[f32], amplitude: &mut [f32], strength: f32) {
+    fn fill_coupled_amplitude(phase: &[Float], amplitude: &mut [Float], strength: Float) {
         for i in 0..phase.len() {
-            amplitude[i] = 1.0 + strength * libm::cosf(phase[i]);
+            amplitude[i] = 1.0 + strength * float::cos(phase[i]);
         }
     }
 
@@ -351,17 +358,17 @@ mod tests {
     #[test]
     fn test_mi_no_coupling() {
         // Constant amplitude = uniform distribution = MI ~ 0
-        let mut phase = [0.0f32; 720];
+        let mut phase = [0.0 as Float; 720];
         fill_phase_ramp(&mut phase);
-        let amplitude = [1.0f32; 720];
+        let amplitude = [1.0 as Float; 720];
         let mi = modulation_index(&phase, &amplitude, 18);
         assert!(mi < 0.01, "No coupling should give MI near 0, got {}", mi);
     }
 
     #[test]
     fn test_mi_strong_coupling() {
-        let mut phase = [0.0f32; 1000];
-        let mut amplitude = [0.0f32; 1000];
+        let mut phase = [0.0 as Float; 1000];
+        let mut amplitude = [0.0 as Float; 1000];
         fill_phase_ramp(&mut phase);
         fill_coupled_amplitude(&phase, &mut amplitude, 0.9);
         let mi = modulation_index(&phase, &amplitude, 18);
@@ -374,8 +381,8 @@ mod tests {
 
     #[test]
     fn test_mi_range() {
-        let mut phase = [0.0f32; 500];
-        let mut amplitude = [0.0f32; 500];
+        let mut phase = [0.0 as Float; 500];
+        let mut amplitude = [0.0 as Float; 500];
         fill_phase_ramp(&mut phase);
         fill_coupled_amplitude(&phase, &mut amplitude, 0.5);
         let mi = modulation_index(&phase, &amplitude, 18);
@@ -385,9 +392,9 @@ mod tests {
 
     #[test]
     fn test_mi_increases_with_coupling() {
-        let mut phase = [0.0f32; 1000];
-        let mut amp_w = [0.0f32; 1000];
-        let mut amp_s = [0.0f32; 1000];
+        let mut phase = [0.0 as Float; 1000];
+        let mut amp_w = [0.0 as Float; 1000];
+        let mut amp_s = [0.0 as Float; 1000];
         fill_phase_ramp(&mut phase);
         fill_coupled_amplitude(&phase, &mut amp_w, 0.3);
         fill_coupled_amplitude(&phase, &mut amp_s, 0.9);
@@ -403,8 +410,8 @@ mod tests {
 
     #[test]
     fn test_mi_custom_bins() {
-        let mut phase = [0.0f32; 500];
-        let mut amplitude = [0.0f32; 500];
+        let mut phase = [0.0 as Float; 500];
+        let mut amplitude = [0.0 as Float; 500];
         fill_phase_ramp(&mut phase);
         fill_coupled_amplitude(&phase, &mut amplitude, 0.8);
         let mi_9 = modulation_index(&phase, &amplitude, 9);
@@ -451,9 +458,9 @@ mod tests {
 
     #[test]
     fn test_mvl_no_coupling() {
-        let mut phase = [0.0f32; 720];
+        let mut phase = [0.0 as Float; 720];
         fill_phase_ramp(&mut phase);
-        let amplitude = [1.0f32; 720];
+        let amplitude = [1.0 as Float; 720];
         let mvl = mean_vector_length(&phase, &amplitude);
         assert!(
             mvl < 0.02,
@@ -464,8 +471,8 @@ mod tests {
 
     #[test]
     fn test_mvl_strong_coupling() {
-        let mut phase = [0.0f32; 1000];
-        let mut amplitude = [0.0f32; 1000];
+        let mut phase = [0.0 as Float; 1000];
+        let mut amplitude = [0.0 as Float; 1000];
         fill_phase_ramp(&mut phase);
         fill_coupled_amplitude(&phase, &mut amplitude, 0.9);
         let mvl = mean_vector_length(&phase, &amplitude);
@@ -478,8 +485,8 @@ mod tests {
 
     #[test]
     fn test_mvl_range() {
-        let mut phase = [0.0f32; 500];
-        let mut amplitude = [0.0f32; 500];
+        let mut phase = [0.0 as Float; 500];
+        let mut amplitude = [0.0 as Float; 500];
         fill_phase_ramp(&mut phase);
         fill_coupled_amplitude(&phase, &mut amplitude, 0.5);
         let mvl = mean_vector_length(&phase, &amplitude);
@@ -490,8 +497,8 @@ mod tests {
     #[test]
     fn test_mvl_perfect_coupling() {
         // All amplitude at a single phase -> MVL = 1
-        let phase = [0.0f32; 100];
-        let amplitude = [1.0f32; 100];
+        let phase = [0.0 as Float; 100];
+        let amplitude = [1.0 as Float; 100];
         let mvl = mean_vector_length(&phase, &amplitude);
         assert!(
             (mvl - 1.0).abs() < 0.01,
@@ -518,26 +525,26 @@ mod tests {
 
     #[test]
     fn test_distribution_shape() {
-        let mut phase = [0.0f32; 360];
+        let mut phase = [0.0 as Float; 360];
         fill_phase_ramp(&mut phase);
-        let amplitude = [1.0f32; 360];
-        let mut centers = [0.0f32; 18];
-        let mut amps = [0.0f32; 18];
+        let amplitude = [1.0 as Float; 360];
+        let mut centers = [0.0 as Float; 18];
+        let mut amps = [0.0 as Float; 18];
         let n = phase_amplitude_distribution(&phase, &amplitude, 18, &mut centers, &mut amps);
         assert_eq!(n, 18);
     }
 
     #[test]
     fn test_distribution_centers_range() {
-        let phase = [0.0f32; 100];
-        let amplitude = [1.0f32; 100];
-        let mut centers = [0.0f32; 18];
-        let mut amps = [0.0f32; 18];
+        let phase = [0.0 as Float; 100];
+        let amplitude = [1.0 as Float; 100];
+        let mut centers = [0.0 as Float; 18];
+        let mut amps = [0.0 as Float; 18];
         phase_amplitude_distribution(&phase, &amplitude, 18, &mut centers, &mut amps);
 
         for &c in &centers {
             assert!(
-                c > -PI - 0.01 && c < PI + 0.01,
+                c > -float::PI - 0.01 && c < float::PI + 0.01,
                 "Bin center {} outside [-pi, pi]",
                 c
             );
@@ -546,11 +553,11 @@ mod tests {
 
     #[test]
     fn test_distribution_uniform_amplitude() {
-        let mut phase = [0.0f32; 720];
+        let mut phase = [0.0 as Float; 720];
         fill_phase_ramp(&mut phase);
-        let amplitude = [5.0f32; 720];
-        let mut centers = [0.0f32; 18];
-        let mut amps = [0.0f32; 18];
+        let amplitude = [5.0 as Float; 720];
+        let mut centers = [0.0 as Float; 18];
+        let mut amps = [0.0 as Float; 18];
         phase_amplitude_distribution(&phase, &amplitude, 18, &mut centers, &mut amps);
 
         for &a in &amps[..18] {
@@ -564,18 +571,18 @@ mod tests {
 
     #[test]
     fn test_mi_zero_amplitude() {
-        let mut phase = [0.0f32; 100];
+        let mut phase = [0.0 as Float; 100];
         fill_phase_ramp(&mut phase);
-        let amplitude = [0.0f32; 100];
+        let amplitude = [0.0 as Float; 100];
         let mi = modulation_index(&phase, &amplitude, 18);
         assert!(mi < 0.001, "Zero amplitude should give MI ~ 0, got {}", mi);
     }
 
     #[test]
     fn test_mvl_zero_amplitude() {
-        let mut phase = [0.0f32; 100];
+        let mut phase = [0.0 as Float; 100];
         fill_phase_ramp(&mut phase);
-        let amplitude = [0.0f32; 100];
+        let amplitude = [0.0 as Float; 100];
         let mvl = mean_vector_length(&phase, &amplitude);
         assert!(
             mvl < 0.001,
