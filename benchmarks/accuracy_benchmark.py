@@ -286,7 +286,7 @@ def compute_accuracy(gt_spike_times, gt_labels, sorted_times, sorted_labels,
 # ---------------------------------------------------------------------------
 def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=True,
                   detection_mode="amplitude", sneo_smooth_window=3,
-                  ccg_merge=False):
+                  ccg_merge=False, refinement_iterations=0):
     """Run a single benchmark at the given difficulty level.
 
     Parameters
@@ -372,6 +372,7 @@ def run_benchmark(preset_name, seed=42, tolerance=DEFAULT_TOLERANCE, verbose=Tru
         sample_rate=params.get("sample_rate", 30000.0),
         common_median_ref=params.get("common_median_ref", False),
         svd_init=params.get("svd_init", False),
+        refinement_iterations=refinement_iterations,
     )
     t_sort = time.perf_counter() - t0
     if verbose:
@@ -526,6 +527,12 @@ def main():
         action="store_true",
         help="Enable CCG-based cluster merging.",
     )
+    parser.add_argument(
+        "--refinement-iterations",
+        type=int,
+        default=0,
+        help="Template refinement iterations (default: 0).",
+    )
     args = parser.parse_args()
 
     if args.all:
@@ -542,6 +549,7 @@ def main():
             detection_mode=args.detection_mode,
             sneo_smooth_window=args.sneo_smooth_window,
             ccg_merge=args.ccg_merge,
+            refinement_iterations=args.refinement_iterations,
         )
         print_results(result)
         results.append(result)
