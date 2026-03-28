@@ -4,6 +4,7 @@ use numpy::ndarray::Array2;
 use numpy::{PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::{
     Decimator as ZsDecimator, InterpolationMethod as ZsInterpolationMethod,
     Interpolator as ZsInterpolator,
@@ -127,13 +128,13 @@ impl Decimator {
         macro_rules! process_decimator {
             ($dec:expr, $C:expr) => {{
                 for row in input_array.rows() {
-                    let mut samples = [0.0f32; $C];
+                    let mut samples = [0.0 as Float; $C];
                     for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
+                        samples[j] = *val as Float;
                     }
                     if let Some(out) = $dec.process(&samples) {
                         for (j, &val) in out.iter().enumerate() {
-                            output[out_idx * n_channels + j] = val;
+                            output[out_idx * n_channels + j] = val as f32;
                         }
                         out_idx += 1;
                     }
@@ -220,7 +221,7 @@ enum InterpolatorInner {
     Dynamic {
         factor: usize,
         method: ZsInterpolationMethod,
-        prev_sample: Vec<f32>,
+        prev_sample: Vec<Float>,
         initialized: bool,
     },
 }
@@ -343,15 +344,15 @@ impl Interpolator {
         macro_rules! process_interpolator {
             ($interp:expr, $C:expr) => {{
                 for row in input_array.rows() {
-                    let mut samples = [0.0f32; $C];
+                    let mut samples = [0.0 as Float; $C];
                     for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
+                        samples[j] = *val as Float;
                     }
-                    let mut out_buf = [[0.0f32; $C]; 64]; // Max factor we support
+                    let mut out_buf = [[0.0 as Float; $C]; 64]; // Max factor we support
                     let count = $interp.process(&samples, &mut out_buf[..self.factor]);
                     for k in 0..count {
                         for (j, &val) in out_buf[k].iter().enumerate() {
-                            output[out_idx * n_channels + j] = val;
+                            output[out_idx * n_channels + j] = val as f32;
                         }
                         out_idx += 1;
                     }
@@ -373,13 +374,13 @@ impl Interpolator {
                 initialized,
             } => {
                 for row in input_array.rows() {
-                    let current: Vec<f32> = row.iter().cloned().collect();
+                    let current: Vec<Float> = row.iter().map(|&v| v as Float).collect();
 
                     match method {
                         ZsInterpolationMethod::ZeroOrder => {
                             for _ in 0..*factor {
                                 for (j, &val) in current.iter().enumerate() {
-                                    output[out_idx * n_channels + j] = val;
+                                    output[out_idx * n_channels + j] = val as f32;
                                 }
                                 out_idx += 1;
                             }
@@ -388,17 +389,17 @@ impl Interpolator {
                             if !*initialized {
                                 for _ in 0..*factor {
                                     for (j, &val) in current.iter().enumerate() {
-                                        output[out_idx * n_channels + j] = val;
+                                        output[out_idx * n_channels + j] = val as f32;
                                     }
                                     out_idx += 1;
                                 }
                             } else {
                                 for k in 0..*factor {
-                                    let t = k as f32 / *factor as f32;
+                                    let t = k as Float / *factor as Float;
                                     for (j, &val) in current.iter().enumerate() {
                                         let interp_val =
                                             prev_sample[j] + t * (val - prev_sample[j]);
-                                        output[out_idx * n_channels + j] = interp_val;
+                                        output[out_idx * n_channels + j] = interp_val as f32;
                                     }
                                     out_idx += 1;
                                 }
@@ -406,7 +407,7 @@ impl Interpolator {
                         }
                         ZsInterpolationMethod::ZeroInsert => {
                             for (j, &val) in current.iter().enumerate() {
-                                output[out_idx * n_channels + j] = val;
+                                output[out_idx * n_channels + j] = val as f32;
                             }
                             out_idx += 1;
                             for _ in 1..*factor {

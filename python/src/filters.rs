@@ -3,6 +3,7 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::{
     AcCoupler as ZsAcCoupler, FirFilter as ZsFirFilter, LmsFilter as ZsLmsFilter,
     MedianFilter as ZsMedianFilter, NlmsFilter as ZsNlmsFilter,
@@ -20,8 +21,8 @@ enum FirFilterInner {
     Taps64(Box<ZsFirFilter<64>>),
     /// Dynamic implementation for non-standard tap counts
     Dynamic {
-        coeffs: Vec<f32>,
-        delay_line: Vec<f32>,
+        coeffs: Vec<Float>,
+        delay_line: Vec<Float>,
         index: usize,
     },
 }
@@ -66,7 +67,7 @@ impl FirFilter {
     ///     >>> fir = FirFilter(taps=[0.2, 0.2, 0.2, 0.2, 0.2])
     #[new]
     #[pyo3(signature = (taps))]
-    fn new(taps: Vec<f32>) -> PyResult<Self> {
+    fn new(taps: Vec<Float>) -> PyResult<Self> {
         let num_taps = taps.len();
         if num_taps == 0 {
             return Err(PyValueError::new_err("taps must have at least 1 element"));
@@ -74,19 +75,19 @@ impl FirFilter {
 
         let inner = match num_taps {
             8 => {
-                let arr: [f32; 8] = taps.try_into().unwrap();
+                let arr: [Float; 8] = taps.try_into().unwrap();
                 FirFilterInner::Taps8(ZsFirFilter::new(arr))
             }
             16 => {
-                let arr: [f32; 16] = taps.try_into().unwrap();
+                let arr: [Float; 16] = taps.try_into().unwrap();
                 FirFilterInner::Taps16(ZsFirFilter::new(arr))
             }
             32 => {
-                let arr: [f32; 32] = taps.try_into().unwrap();
+                let arr: [Float; 32] = taps.try_into().unwrap();
                 FirFilterInner::Taps32(ZsFirFilter::new(arr))
             }
             64 => {
-                let arr: [f32; 64] = taps.try_into().unwrap();
+                let arr: [Float; 64] = taps.try_into().unwrap();
                 FirFilterInner::Taps64(Box::new(ZsFirFilter::new(arr)))
             }
             _ => FirFilterInner::Dynamic {
@@ -117,7 +118,7 @@ impl FirFilter {
             ));
         }
 
-        let weight = 1.0 / size as f32;
+        let weight = 1.0 / size as Float;
         let taps = vec![weight; size];
         Self::new(taps)
     }
@@ -138,8 +139,8 @@ impl FirFilter {
         py: Python<'py>,
         input: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let input_slice = input.as_slice()?;
-        let mut output = vec![0.0f32; input_slice.len()];
+        let input_slice: Vec<Float> = input.as_slice()?.iter().map(|&v| v as Float).collect();
+        let mut output = vec![0.0; input_slice.len()];
 
         match &mut self.inner {
             FirFilterInner::Taps8(filter) => {
@@ -188,7 +189,7 @@ impl FirFilter {
             }
         }
 
-        Ok(PyArray1::from_vec(py, output))
+        Ok(PyArray1::from_vec(py, output.iter().map(|&v| v as f32).collect()))
     }
 
     /// Reset the filter state (clear delay line).
@@ -246,8 +247,8 @@ impl FirFilter {
 #[pyclass]
 pub struct AcCoupler {
     inner: ZsAcCoupler<1>,
-    sample_rate: f32,
-    cutoff: f32,
+    sample_rate: Float,
+    cutoff: Float,
 }
 
 #[pymethods]
@@ -264,7 +265,7 @@ impl AcCoupler {
     /// Example:
     ///     >>> ac = AcCoupler(1000.0, 0.1)
     #[new]
-    fn new(sample_rate: f32, cutoff: f32) -> PyResult<Self> {
+    fn new(sample_rate: Float, cutoff: Float) -> PyResult<Self> {
         if sample_rate <= 0.0 {
             return Err(PyValueError::new_err("sample_rate must be positive"));
         }
@@ -298,15 +299,15 @@ impl AcCoupler {
         py: Python<'py>,
         input: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let input_slice = input.as_slice()?;
-        let mut output = vec![0.0f32; input_slice.len()];
+        let input_slice: Vec<Float> = input.as_slice()?.iter().map(|&v| v as Float).collect();
+        let mut output = vec![0.0; input_slice.len()];
 
         for (i, &sample) in input_slice.iter().enumerate() {
             let out = self.inner.process(&[sample]);
             output[i] = out[0];
         }
 
-        Ok(PyArray1::from_vec(py, output))
+        Ok(PyArray1::from_vec(py, output.iter().map(|&v| v as f32).collect()))
     }
 
     /// Reset the filter state.
@@ -319,13 +320,13 @@ impl AcCoupler {
 
     /// Get the sample rate.
     #[getter]
-    fn sample_rate(&self) -> f32 {
+    fn sample_rate(&self) -> Float {
         self.sample_rate
     }
 
     /// Get the cutoff frequency.
     #[getter]
-    fn cutoff(&self) -> f32 {
+    fn cutoff(&self) -> Float {
         self.cutoff
     }
 
@@ -421,8 +422,8 @@ impl MedianFilter {
         py: Python<'py>,
         input: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let input_slice = input.as_slice()?;
-        let mut output = vec![0.0f32; input_slice.len()];
+        let input_slice: Vec<Float> = input.as_slice()?.iter().map(|&v| v as Float).collect();
+        let mut output = vec![0.0; input_slice.len()];
 
         match &mut self.inner {
             MedianFilterInner::Window3(filter) => {
@@ -445,7 +446,7 @@ impl MedianFilter {
             }
         }
 
-        Ok(PyArray1::from_vec(py, output))
+        Ok(PyArray1::from_vec(py, output.iter().map(|&v| v as f32).collect()))
     }
 
     /// Reset the filter state.
@@ -482,10 +483,10 @@ enum LmsFilterInner {
     Taps64(Box<ZsLmsFilter<64>>),
     /// Dynamic implementation for non-standard tap counts
     Dynamic {
-        weights: Vec<f32>,
-        delay_line: Vec<f32>,
+        weights: Vec<Float>,
+        delay_line: Vec<Float>,
         index: usize,
-        mu: f32,
+        mu: Float,
     },
 }
 
@@ -511,7 +512,7 @@ enum LmsFilterInner {
 pub struct LmsFilter {
     inner: LmsFilterInner,
     num_taps: usize,
-    mu: f32,
+    mu: Float,
 }
 
 #[pymethods]
@@ -528,7 +529,7 @@ impl LmsFilter {
     /// Example:
     ///     >>> lms = LmsFilter(taps=32, mu=0.01)
     #[new]
-    fn new(taps: usize, mu: f32) -> PyResult<Self> {
+    fn new(taps: usize, mu: Float) -> PyResult<Self> {
         if taps == 0 {
             return Err(PyValueError::new_err("taps must be at least 1"));
         }
@@ -576,12 +577,12 @@ impl LmsFilter {
         input: PyReadonlyArray1<f32>,
         desired: PyReadonlyArray1<f32>,
     ) -> PyResult<(Bound<'py, PyArray1<f32>>, Bound<'py, PyArray1<f32>>)> {
-        let input_slice = input.as_slice()?;
-        let desired_slice = desired.as_slice()?;
+        let input_slice: Vec<Float> = input.as_slice()?.iter().map(|&v| v as Float).collect();
+        let desired_slice: Vec<Float> = desired.as_slice()?.iter().map(|&v| v as Float).collect();
 
         let len = input_slice.len().min(desired_slice.len());
-        let mut output = vec![0.0f32; len];
-        let mut error = vec![0.0f32; len];
+        let mut output = vec![0.0; len];
+        let mut error = vec![0.0; len];
 
         match &mut self.inner {
             LmsFilterInner::Taps8(filter) => {
@@ -657,8 +658,8 @@ impl LmsFilter {
         }
 
         Ok((
-            PyArray1::from_vec(py, output),
-            PyArray1::from_vec(py, error),
+            PyArray1::from_vec(py, output.iter().map(|&v| v as f32).collect()),
+            PyArray1::from_vec(py, error.iter().map(|&v| v as f32).collect()),
         ))
     }
 
@@ -697,14 +698,14 @@ impl LmsFilter {
     /// Get the current filter weights.
     #[getter]
     fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
-        let w: Vec<f32> = match &self.inner {
+        let w: Vec<Float> = match &self.inner {
             LmsFilterInner::Taps8(filter) => filter.weights().to_vec(),
             LmsFilterInner::Taps16(filter) => filter.weights().to_vec(),
             LmsFilterInner::Taps32(filter) => filter.weights().to_vec(),
             LmsFilterInner::Taps64(filter) => filter.weights().to_vec(),
             LmsFilterInner::Dynamic { weights, .. } => weights.clone(),
         };
-        PyArray1::from_vec(py, w)
+        PyArray1::from_vec(py, w.iter().map(|&v| v as f32).collect())
     }
 
     /// Get the number of taps.
@@ -715,7 +716,7 @@ impl LmsFilter {
 
     /// Get the step size (mu).
     #[getter]
-    fn mu(&self) -> f32 {
+    fn mu(&self) -> Float {
         self.mu
     }
 
@@ -736,11 +737,11 @@ enum NlmsFilterInner {
     Taps64(Box<ZsNlmsFilter<64>>),
     /// Dynamic implementation for non-standard tap counts
     Dynamic {
-        weights: Vec<f32>,
-        delay_line: Vec<f32>,
+        weights: Vec<Float>,
+        delay_line: Vec<Float>,
         index: usize,
-        mu: f32,
-        epsilon: f32,
+        mu: Float,
+        epsilon: Float,
     },
 }
 
@@ -766,8 +767,8 @@ enum NlmsFilterInner {
 pub struct NlmsFilter {
     inner: NlmsFilterInner,
     num_taps: usize,
-    mu: f32,
-    epsilon: f32,
+    mu: Float,
+    epsilon: Float,
 }
 
 #[pymethods]
@@ -785,7 +786,7 @@ impl NlmsFilter {
     /// Example:
     ///     >>> nlms = NlmsFilter(taps=32, mu=0.5, epsilon=0.01)
     #[new]
-    fn new(taps: usize, mu: f32, epsilon: f32) -> PyResult<Self> {
+    fn new(taps: usize, mu: Float, epsilon: Float) -> PyResult<Self> {
         if taps == 0 {
             return Err(PyValueError::new_err("taps must be at least 1"));
         }
@@ -836,12 +837,12 @@ impl NlmsFilter {
         input: PyReadonlyArray1<f32>,
         desired: PyReadonlyArray1<f32>,
     ) -> PyResult<(Bound<'py, PyArray1<f32>>, Bound<'py, PyArray1<f32>>)> {
-        let input_slice = input.as_slice()?;
-        let desired_slice = desired.as_slice()?;
+        let input_slice: Vec<Float> = input.as_slice()?.iter().map(|&v| v as Float).collect();
+        let desired_slice: Vec<Float> = desired.as_slice()?.iter().map(|&v| v as Float).collect();
 
         let len = input_slice.len().min(desired_slice.len());
-        let mut output = vec![0.0f32; len];
-        let mut error = vec![0.0f32; len];
+        let mut output = vec![0.0; len];
+        let mut error = vec![0.0; len];
 
         match &mut self.inner {
             NlmsFilterInner::Taps8(filter) => {
@@ -924,8 +925,8 @@ impl NlmsFilter {
         }
 
         Ok((
-            PyArray1::from_vec(py, output),
-            PyArray1::from_vec(py, error),
+            PyArray1::from_vec(py, output.iter().map(|&v| v as f32).collect()),
+            PyArray1::from_vec(py, error.iter().map(|&v| v as f32).collect()),
         ))
     }
 
@@ -964,14 +965,14 @@ impl NlmsFilter {
     /// Get the current filter weights.
     #[getter]
     fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
-        let w: Vec<f32> = match &self.inner {
+        let w: Vec<Float> = match &self.inner {
             NlmsFilterInner::Taps8(filter) => filter.weights().to_vec(),
             NlmsFilterInner::Taps16(filter) => filter.weights().to_vec(),
             NlmsFilterInner::Taps32(filter) => filter.weights().to_vec(),
             NlmsFilterInner::Taps64(filter) => filter.weights().to_vec(),
             NlmsFilterInner::Dynamic { weights, .. } => weights.clone(),
         };
-        PyArray1::from_vec(py, w)
+        PyArray1::from_vec(py, w.iter().map(|&v| v as f32).collect())
     }
 
     /// Get the number of taps.
@@ -982,13 +983,13 @@ impl NlmsFilter {
 
     /// Get the step size (mu).
     #[getter]
-    fn mu(&self) -> f32 {
+    fn mu(&self) -> Float {
         self.mu
     }
 
     /// Get the regularization constant (epsilon).
     #[getter]
-    fn epsilon(&self) -> f32 {
+    fn epsilon(&self) -> Float {
         self.epsilon
     }
 

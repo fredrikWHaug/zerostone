@@ -6,6 +6,7 @@
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::hilbert::HilbertTransform;
 use zerostone::pac as zs_pac;
 use zerostone::{BiquadCoeffs, IirFilter};
@@ -36,9 +37,9 @@ fn modulation_index(
     phase: PyReadonlyArray1<f32>,
     amplitude: PyReadonlyArray1<f32>,
     n_bins: usize,
-) -> PyResult<f32> {
-    let p_slice = phase.as_slice()?;
-    let a_slice = amplitude.as_slice()?;
+) -> PyResult<Float> {
+    let p_slice: Vec<Float> = phase.as_slice()?.iter().map(|&v| v as Float).collect();
+    let a_slice: Vec<Float> = amplitude.as_slice()?.iter().map(|&v| v as Float).collect();
 
     if p_slice.len() != a_slice.len() {
         return Err(PyValueError::new_err(format!(
@@ -57,7 +58,7 @@ fn modulation_index(
         )));
     }
 
-    Ok(zs_pac::modulation_index(p_slice, a_slice, n_bins))
+    Ok(zs_pac::modulation_index(&p_slice, &a_slice, n_bins))
 }
 
 /// Compute the Mean Vector Length (Canolty et al. 2006).
@@ -83,9 +84,9 @@ fn modulation_index(
 fn mean_vector_length(
     phase: PyReadonlyArray1<f32>,
     amplitude: PyReadonlyArray1<f32>,
-) -> PyResult<f32> {
-    let p_slice = phase.as_slice()?;
-    let a_slice = amplitude.as_slice()?;
+) -> PyResult<Float> {
+    let p_slice: Vec<Float> = phase.as_slice()?.iter().map(|&v| v as Float).collect();
+    let a_slice: Vec<Float> = amplitude.as_slice()?.iter().map(|&v| v as Float).collect();
 
     if p_slice.len() != a_slice.len() {
         return Err(PyValueError::new_err(format!(
@@ -98,7 +99,7 @@ fn mean_vector_length(
         return Err(PyValueError::new_err("Arrays must not be empty"));
     }
 
-    Ok(zs_pac::mean_vector_length(p_slice, a_slice))
+    Ok(zs_pac::mean_vector_length(&p_slice, &a_slice))
 }
 
 /// Compute the phase-amplitude distribution for visualization.
@@ -132,8 +133,8 @@ fn phase_amplitude_distribution<'py>(
     pyo3::Bound<'py, PyArray1<f32>>,
     pyo3::Bound<'py, PyArray1<f32>>,
 )> {
-    let p_slice = phase.as_slice()?;
-    let a_slice = amplitude.as_slice()?;
+    let p_slice: Vec<Float> = phase.as_slice()?.iter().map(|&v| v as Float).collect();
+    let a_slice: Vec<Float> = amplitude.as_slice()?.iter().map(|&v| v as Float).collect();
 
     if p_slice.len() != a_slice.len() {
         return Err(PyValueError::new_err(format!(
@@ -152,13 +153,13 @@ fn phase_amplitude_distribution<'py>(
         )));
     }
 
-    let mut centers = vec![0.0f32; n_bins];
-    let mut amps = vec![0.0f32; n_bins];
-    zs_pac::phase_amplitude_distribution(p_slice, a_slice, n_bins, &mut centers, &mut amps);
+    let mut centers = vec![0.0; n_bins];
+    let mut amps = vec![0.0; n_bins];
+    zs_pac::phase_amplitude_distribution(&p_slice, &a_slice, n_bins, &mut centers, &mut amps);
 
     Ok((
-        PyArray1::from_vec(py, centers),
-        PyArray1::from_vec(py, amps),
+        PyArray1::from_vec(py, centers.iter().map(|&v| v as f32).collect()),
+        PyArray1::from_vec(py, amps.iter().map(|&v| v as f32).collect()),
     ))
 }
 
@@ -198,15 +199,15 @@ fn phase_amplitude_distribution<'py>(
 fn pac_comodulogram<'py>(
     py: Python<'py>,
     signal: PyReadonlyArray1<f32>,
-    sample_rate: f32,
+    sample_rate: Float,
     phase_freqs: PyReadonlyArray1<f32>,
     amp_freqs: PyReadonlyArray1<f32>,
     n_bins: usize,
     method: &str,
 ) -> PyResult<pyo3::Bound<'py, PyArray2<f32>>> {
-    let sig = signal.as_slice()?;
-    let p_freqs = phase_freqs.as_slice()?;
-    let a_freqs = amp_freqs.as_slice()?;
+    let sig: Vec<Float> = signal.as_slice()?.iter().map(|&v| v as Float).collect();
+    let p_freqs: Vec<Float> = phase_freqs.as_slice()?.iter().map(|&v| v as Float).collect();
+    let a_freqs: Vec<Float> = amp_freqs.as_slice()?.iter().map(|&v| v as Float).collect();
 
     if sig.is_empty() {
         return Err(PyValueError::new_err("Signal must not be empty"));
@@ -253,7 +254,7 @@ fn pac_comodulogram<'py>(
 
     let n_phase = p_freqs.len();
     let n_amp = a_freqs.len();
-    let mut result = vec![0.0f32; n_phase * n_amp];
+    let mut result = vec![0.0; n_phase * n_amp];
 
     for (pi, &pf) in p_freqs.iter().enumerate() {
         // Phase band: [pf - 2, pf + 2] Hz (narrow band for phase)
@@ -270,7 +271,7 @@ fn pac_comodulogram<'py>(
         let mut p_filter = IirFilter::new(p_sections);
 
         // Filter the signal for phase
-        let mut p_filtered = vec![0.0f32; sig_len];
+        let mut p_filtered = vec![0.0; sig_len];
         for i in 0..sig_len {
             p_filtered[i] = p_filter.process_sample(sig[i]);
         }
@@ -293,7 +294,7 @@ fn pac_comodulogram<'py>(
                 BiquadCoeffs::butterworth_bandpass_sections::<2>(sample_rate, a_low, a_high);
             let mut a_filter = IirFilter::new(a_sections);
 
-            let mut a_filtered = vec![0.0f32; sig_len];
+            let mut a_filtered = vec![0.0; sig_len];
             for i in 0..sig_len {
                 a_filtered[i] = a_filter.process_sample(sig[i]);
             }
@@ -312,19 +313,19 @@ fn pac_comodulogram<'py>(
     }
 
     // Build 2D array
-    let rows: Vec<Vec<f32>> = result.chunks(n_amp).map(|c| c.to_vec()).collect();
+    let rows: Vec<Vec<f32>> = result.chunks(n_amp).map(|c| c.iter().map(|&v| v as f32).collect()).collect();
     Ok(PyArray2::from_vec2(py, &rows)?)
 }
 
 /// Extract instantaneous phase from a signal chunk using HilbertTransform.
-fn extract_phase(chunk: &[f32], size: usize) -> PyResult<Vec<f32>> {
+fn extract_phase(chunk: &[Float], size: usize) -> PyResult<Vec<Float>> {
     macro_rules! do_phase {
         ($n:expr) => {{
             let hilbert = HilbertTransform::<$n>::new();
-            let input: [f32; $n] = chunk.try_into().map_err(|_| {
+            let input: [Float; $n] = chunk.try_into().map_err(|_| {
                 PyValueError::new_err(format!("Chunk length {} != {}", chunk.len(), $n))
             })?;
-            let mut output = [0.0f32; $n];
+            let mut output = [0.0; $n];
             hilbert.instantaneous_phase(&input, &mut output);
             Ok(output.to_vec())
         }};
@@ -343,14 +344,14 @@ fn extract_phase(chunk: &[f32], size: usize) -> PyResult<Vec<f32>> {
 }
 
 /// Extract instantaneous amplitude from a signal chunk using HilbertTransform.
-fn extract_amplitude(chunk: &[f32], size: usize) -> PyResult<Vec<f32>> {
+fn extract_amplitude(chunk: &[Float], size: usize) -> PyResult<Vec<Float>> {
     macro_rules! do_amplitude {
         ($n:expr) => {{
             let hilbert = HilbertTransform::<$n>::new();
-            let input: [f32; $n] = chunk.try_into().map_err(|_| {
+            let input: [Float; $n] = chunk.try_into().map_err(|_| {
                 PyValueError::new_err(format!("Chunk length {} != {}", chunk.len(), $n))
             })?;
-            let mut output = [0.0f32; $n];
+            let mut output = [0.0; $n];
             hilbert.instantaneous_amplitude(&input, &mut output);
             Ok(output.to_vec())
         }};

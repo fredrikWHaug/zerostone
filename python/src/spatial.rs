@@ -4,6 +4,7 @@ use numpy::ndarray::Array2;
 use numpy::{PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::{
     ChannelRouter as ZsChannelRouter, CommonAverageReference as ZsCommonAverageReference,
     SurfaceLaplacian as ZsSurfaceLaplacian,
@@ -117,70 +118,33 @@ impl CAR {
         let input_array = input.as_array();
         let mut output = vec![0.0f32; n_samples * n_channels];
 
+        macro_rules! process_car {
+            ($car:expr, $C:expr) => {{
+                for (i, row) in input_array.rows().into_iter().enumerate() {
+                    let mut samples = [0.0 as Float; $C];
+                    for (j, val) in row.iter().enumerate() {
+                        samples[j] = *val as Float;
+                    }
+                    let filtered = $car.process(&samples);
+                    for (j, &val) in filtered.iter().enumerate() {
+                        output[i * n_channels + j] = val as f32;
+                    }
+                }
+            }};
+        }
+
         match &self.inner {
-            CarInner::Ch4(car) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let samples: [f32; 4] = [row[0], row[1], row[2], row[3]];
-                    let filtered = car.process(&samples);
-                    for (j, &val) in filtered.iter().enumerate() {
-                        output[i * n_channels + j] = val;
-                    }
-                }
-            }
-            CarInner::Ch8(car) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 8];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let filtered = car.process(&samples);
-                    for (j, &val) in filtered.iter().enumerate() {
-                        output[i * n_channels + j] = val;
-                    }
-                }
-            }
-            CarInner::Ch16(car) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 16];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let filtered = car.process(&samples);
-                    for (j, &val) in filtered.iter().enumerate() {
-                        output[i * n_channels + j] = val;
-                    }
-                }
-            }
-            CarInner::Ch32(car) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 32];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let filtered = car.process(&samples);
-                    for (j, &val) in filtered.iter().enumerate() {
-                        output[i * n_channels + j] = val;
-                    }
-                }
-            }
-            CarInner::Ch64(car) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 64];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let filtered = car.process(&samples);
-                    for (j, &val) in filtered.iter().enumerate() {
-                        output[i * n_channels + j] = val;
-                    }
-                }
-            }
+            CarInner::Ch4(car) => process_car!(car, 4),
+            CarInner::Ch8(car) => process_car!(car, 8),
+            CarInner::Ch16(car) => process_car!(car, 16),
+            CarInner::Ch32(car) => process_car!(car, 32),
+            CarInner::Ch64(car) => process_car!(car, 64),
             CarInner::Dynamic { channels } => {
                 // Dynamic implementation: compute mean and subtract
                 for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mean: f32 = row.iter().sum::<f32>() / *channels as f32;
+                    let mean: Float = row.iter().map(|&v| v as Float).sum::<Float>() / *channels as Float;
                     for (j, &val) in row.iter().enumerate() {
-                        output[i * n_channels + j] = val - mean;
+                        output[i * n_channels + j] = (val as Float - mean) as f32;
                     }
                 }
             }
@@ -399,77 +363,38 @@ impl SurfaceLaplacian {
         let input_array = input.as_array();
         let mut output = vec![0.0f32; n_samples * n_channels];
 
+        macro_rules! process_lap {
+            ($lap:expr, $C:expr) => {{
+                for (i, row) in input_array.rows().into_iter().enumerate() {
+                    let mut samples = [0.0 as Float; $C];
+                    for (j, val) in row.iter().enumerate() {
+                        samples[j] = *val as Float;
+                    }
+                    let filtered = $lap.process(&samples);
+                    for (j, &val) in filtered.iter().enumerate() {
+                        output[i * n_channels + j] = val as f32;
+                    }
+                }
+            }};
+        }
+
         match &self.inner {
-            LaplacianInner::Ch4N2(lap) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let samples: [f32; 4] = [row[0], row[1], row[2], row[3]];
-                    let filtered = lap.process(&samples);
-                    for (j, &val) in filtered.iter().enumerate() {
-                        output[i * n_channels + j] = val;
-                    }
-                }
-            }
-            LaplacianInner::Ch8N2(lap) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 8];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let filtered = lap.process(&samples);
-                    for (j, &val) in filtered.iter().enumerate() {
-                        output[i * n_channels + j] = val;
-                    }
-                }
-            }
-            LaplacianInner::Ch16N2(lap) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 16];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let filtered = lap.process(&samples);
-                    for (j, &val) in filtered.iter().enumerate() {
-                        output[i * n_channels + j] = val;
-                    }
-                }
-            }
-            LaplacianInner::Ch32N2(lap) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 32];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let filtered = lap.process(&samples);
-                    for (j, &val) in filtered.iter().enumerate() {
-                        output[i * n_channels + j] = val;
-                    }
-                }
-            }
-            LaplacianInner::Ch64N2(lap) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 64];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let filtered = lap.process(&samples);
-                    for (j, &val) in filtered.iter().enumerate() {
-                        output[i * n_channels + j] = val;
-                    }
-                }
-            }
+            LaplacianInner::Ch4N2(lap) => process_lap!(lap, 4),
+            LaplacianInner::Ch8N2(lap) => process_lap!(lap, 8),
+            LaplacianInner::Ch16N2(lap) => process_lap!(lap, 16),
+            LaplacianInner::Ch32N2(lap) => process_lap!(lap, 32),
+            LaplacianInner::Ch64N2(lap) => process_lap!(lap, 64),
             LaplacianInner::Dynamic { neighbors, .. } => {
                 // Dynamic implementation
                 for (i, row) in input_array.rows().into_iter().enumerate() {
                     for (ch, ch_neighbors) in neighbors.iter().enumerate() {
                         if ch_neighbors.is_empty() {
-                            // No neighbors: output = input
                             output[i * n_channels + ch] = row[ch];
                         } else {
-                            // Compute weighted average of neighbors
-                            let neighbor_mean: f32 =
-                                ch_neighbors.iter().map(|&n| row[n]).sum::<f32>()
-                                    / ch_neighbors.len() as f32;
-                            output[i * n_channels + ch] = row[ch] - neighbor_mean;
+                            let neighbor_mean: Float =
+                                ch_neighbors.iter().map(|&n| row[n] as Float).sum::<Float>()
+                                    / ch_neighbors.len() as Float;
+                            output[i * n_channels + ch] = (row[ch] as Float - neighbor_mean) as f32;
                         }
                     }
                 }
@@ -791,88 +716,29 @@ impl ChannelRouter {
         let input_array = input.as_array();
         let mut output = vec![0.0f32; n_samples * self.out_channels];
 
+        macro_rules! process_router {
+            ($router:expr, $C:expr) => {{
+                for (i, row) in input_array.rows().into_iter().enumerate() {
+                    let mut samples = [0.0 as Float; $C];
+                    for (j, val) in row.iter().enumerate() {
+                        samples[j] = *val as Float;
+                    }
+                    let routed = $router.process(&samples);
+                    for (j, &val) in routed.iter().enumerate() {
+                        output[i * self.out_channels + j] = val as f32;
+                    }
+                }
+            }};
+        }
+
         match &self.inner {
-            RouterInner::R4to4(router) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let samples: [f32; 4] = [row[0], row[1], row[2], row[3]];
-                    let routed = router.process(&samples);
-                    for (j, &val) in routed.iter().enumerate() {
-                        output[i * self.out_channels + j] = val;
-                    }
-                }
-            }
-            RouterInner::R8to8(router) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 8];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let routed = router.process(&samples);
-                    for (j, &val) in routed.iter().enumerate() {
-                        output[i * self.out_channels + j] = val;
-                    }
-                }
-            }
-            RouterInner::R8to4(router) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 8];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let routed = router.process(&samples);
-                    for (j, &val) in routed.iter().enumerate() {
-                        output[i * self.out_channels + j] = val;
-                    }
-                }
-            }
-            RouterInner::R16to16(router) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 16];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let routed = router.process(&samples);
-                    for (j, &val) in routed.iter().enumerate() {
-                        output[i * self.out_channels + j] = val;
-                    }
-                }
-            }
-            RouterInner::R16to8(router) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 16];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let routed = router.process(&samples);
-                    for (j, &val) in routed.iter().enumerate() {
-                        output[i * self.out_channels + j] = val;
-                    }
-                }
-            }
-            RouterInner::R32to32(router) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 32];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let routed = router.process(&samples);
-                    for (j, &val) in routed.iter().enumerate() {
-                        output[i * self.out_channels + j] = val;
-                    }
-                }
-            }
-            RouterInner::R64to64(router) => {
-                for (i, row) in input_array.rows().into_iter().enumerate() {
-                    let mut samples = [0.0f32; 64];
-                    for (j, val) in row.iter().enumerate() {
-                        samples[j] = *val;
-                    }
-                    let routed = router.process(&samples);
-                    for (j, &val) in routed.iter().enumerate() {
-                        output[i * self.out_channels + j] = val;
-                    }
-                }
-            }
+            RouterInner::R4to4(router) => process_router!(router, 4),
+            RouterInner::R8to8(router) => process_router!(router, 8),
+            RouterInner::R8to4(router) => process_router!(router, 8),
+            RouterInner::R16to16(router) => process_router!(router, 16),
+            RouterInner::R16to8(router) => process_router!(router, 16),
+            RouterInner::R32to32(router) => process_router!(router, 32),
+            RouterInner::R64to64(router) => process_router!(router, 64),
             RouterInner::Dynamic { indices, .. } => {
                 for (i, row) in input_array.rows().into_iter().enumerate() {
                     for (j, &idx) in indices.iter().enumerate() {

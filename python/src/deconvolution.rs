@@ -3,6 +3,7 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::OasisDeconvolution as ZsOasis;
 
 #[allow(clippy::large_enum_variant)] // PyO3 dispatch enum, lives on heap via #[pyclass]
@@ -46,7 +47,7 @@ impl OasisDeconvolution {
     ///     lambda_ (float): Sparsity penalty parameter (>= 0).
     #[new]
     #[pyo3(signature = (channels, gamma, lambda_))]
-    fn new(channels: usize, gamma: f32, lambda_: f32) -> PyResult<Self> {
+    fn new(channels: usize, gamma: Float, lambda_: Float) -> PyResult<Self> {
         let inner = match channels {
             1 => OasisInner::C1(ZsOasis::new(gamma, lambda_)),
             4 => OasisInner::C4(ZsOasis::new(gamma, lambda_)),
@@ -72,7 +73,7 @@ impl OasisDeconvolution {
     ///     lambda_ (float): Sparsity penalty parameter.
     #[staticmethod]
     #[pyo3(signature = (channels, sample_rate, tau, lambda_))]
-    fn from_tau(channels: usize, sample_rate: f32, tau: f32, lambda_: f32) -> PyResult<Self> {
+    fn from_tau(channels: usize, sample_rate: Float, tau: Float, lambda_: Float) -> PyResult<Self> {
         let inner = match channels {
             1 => OasisInner::C1(ZsOasis::from_tau(sample_rate, tau, lambda_)),
             4 => OasisInner::C4(ZsOasis::from_tau(sample_rate, tau, lambda_)),
@@ -104,8 +105,8 @@ impl OasisDeconvolution {
         fluorescence: PyReadonlyArray1<f32>,
         baseline: PyReadonlyArray1<f32>,
     ) -> PyResult<(Bound<'py, PyArray1<f32>>, Bound<'py, PyArray1<f32>>)> {
-        let fluor_slice = fluorescence.as_slice()?;
-        let base_slice = baseline.as_slice()?;
+        let fluor_slice: Vec<Float> = fluorescence.as_slice()?.iter().map(|&v| v as Float).collect();
+        let base_slice: Vec<Float> = baseline.as_slice()?.iter().map(|&v| v as Float).collect();
 
         if fluor_slice.len() != self.channels || base_slice.len() != self.channels {
             return Err(PyValueError::new_err(format!(
@@ -118,14 +119,16 @@ impl OasisDeconvolution {
 
         macro_rules! do_update {
             ($oasis:expr, $c:expr) => {{
-                let mut fluor = [0.0f32; $c];
-                let mut base = [0.0f32; $c];
-                fluor.copy_from_slice(fluor_slice);
-                base.copy_from_slice(base_slice);
+                let mut fluor = [0.0; $c];
+                let mut base = [0.0; $c];
+                fluor.copy_from_slice(&fluor_slice);
+                base.copy_from_slice(&base_slice);
                 let result = $oasis.update(&fluor, &base);
+                let calcium_f32: Vec<f32> = result.calcium.iter().map(|&v| v as f32).collect();
+                let spike_f32: Vec<f32> = result.spike.iter().map(|&v| v as f32).collect();
                 (
-                    PyArray1::from_slice(py, &result.calcium),
-                    PyArray1::from_slice(py, &result.spike),
+                    PyArray1::from_vec(py, calcium_f32),
+                    PyArray1::from_vec(py, spike_f32),
                 )
             }};
         }
@@ -155,7 +158,7 @@ impl OasisDeconvolution {
 
     /// Decay rate parameter.
     #[getter]
-    fn gamma(&self) -> f32 {
+    fn gamma(&self) -> Float {
         match &self.inner {
             OasisInner::C1(o) => o.gamma(),
             OasisInner::C4(o) => o.gamma(),
@@ -168,7 +171,7 @@ impl OasisDeconvolution {
 
     /// Sparsity penalty parameter.
     #[getter]
-    fn lambda_(&self) -> f32 {
+    fn lambda_(&self) -> Float {
         match &self.inner {
             OasisInner::C1(o) => o.lambda(),
             OasisInner::C4(o) => o.lambda(),
@@ -180,7 +183,7 @@ impl OasisDeconvolution {
     }
 
     /// Set the sparsity penalty parameter.
-    fn set_lambda(&mut self, lambda_: f32) {
+    fn set_lambda(&mut self, lambda_: Float) {
         match &mut self.inner {
             OasisInner::C1(o) => o.set_lambda(lambda_),
             OasisInner::C4(o) => o.set_lambda(lambda_),

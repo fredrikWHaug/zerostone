@@ -3,6 +3,7 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::{
     coherent_gain as zs_coherent_gain, equivalent_noise_bandwidth as zs_enbw,
     window_coefficient as zs_window_coefficient, WindowType,
@@ -44,9 +45,9 @@ fn apply_window<'py>(
     window_type: &str,
 ) -> PyResult<Bound<'py, PyArray1<f32>>> {
     let wt = parse_window_type(window_type)?;
-    let mut output = signal.as_slice()?.to_vec();
+    let mut output: Vec<Float> = signal.as_slice()?.iter().map(|&v| v as Float).collect();
     zerostone::apply_window(&mut output, wt);
-    Ok(PyArray1::from_vec(py, output))
+    Ok(PyArray1::from_vec(py, output.iter().map(|&v| v as f32).collect()))
 }
 
 /// Get a single window coefficient.
@@ -59,7 +60,7 @@ fn apply_window<'py>(
 /// Returns:
 ///     float: The window coefficient at the given index.
 #[pyfunction]
-fn window_coefficient(window_type: &str, index: usize, length: usize) -> PyResult<f32> {
+fn window_coefficient(window_type: &str, index: usize, length: usize) -> PyResult<Float> {
     let wt = parse_window_type(window_type)?;
     Ok(zs_window_coefficient(wt, index, length))
 }

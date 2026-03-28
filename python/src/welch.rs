@@ -3,6 +3,7 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::WelchPsd as ZsWelchPsd;
 
 use crate::spectral::parse_window_type;
@@ -42,7 +43,7 @@ pub struct WelchPsd {
     inner: WelchInner,
     fft_size: usize,
     window_name: String,
-    overlap: f32,
+    overlap: Float,
 }
 
 #[pymethods]
@@ -62,7 +63,7 @@ impl WelchPsd {
     ///     >>> welch = WelchPsd(fft_size=1024, window='hann', overlap=0.5)
     #[new]
     #[pyo3(signature = (fft_size, window = "hann", overlap = 0.5))]
-    fn new(fft_size: usize, window: &str, overlap: f32) -> PyResult<Self> {
+    fn new(fft_size: usize, window: &str, overlap: Float) -> PyResult<Self> {
         if !(0.0..1.0).contains(&overlap) {
             return Err(PyValueError::new_err("overlap must be in [0.0, 1.0)"));
         }
@@ -109,12 +110,12 @@ impl WelchPsd {
         &self,
         py: Python<'py>,
         signal: PyReadonlyArray1<f32>,
-        sample_rate: f32,
+        sample_rate: Float,
     ) -> PyResult<(
         pyo3::Bound<'py, PyArray1<f32>>,
         pyo3::Bound<'py, PyArray1<f32>>,
     )> {
-        let input_slice = signal.as_slice()?;
+        let input_slice: Vec<Float> = signal.as_slice()?.iter().map(|&v| v as Float).collect();
         if input_slice.len() < self.fft_size {
             return Err(PyValueError::new_err(format!(
                 "Signal length {} must be >= fft_size {}",
@@ -127,12 +128,12 @@ impl WelchPsd {
         }
 
         let out_len = self.fft_size / 2 + 1;
-        let mut psd = vec![0.0f32; out_len];
-        let mut freqs = vec![0.0f32; out_len];
+        let mut psd = vec![0.0; out_len];
+        let mut freqs = vec![0.0; out_len];
 
         macro_rules! run_welch {
             ($welch:expr, $N:expr) => {{
-                $welch.estimate(input_slice, sample_rate, &mut psd);
+                $welch.estimate(&input_slice, sample_rate, &mut psd);
                 $welch.frequencies(sample_rate, &mut freqs);
             }};
         }
@@ -145,7 +146,7 @@ impl WelchPsd {
             WelchInner::Size4096(w) => run_welch!(w, 4096),
         }
 
-        Ok((PyArray1::from_vec(py, freqs), PyArray1::from_vec(py, psd)))
+        Ok((PyArray1::from_vec(py, freqs.iter().map(|&v| v as f32).collect()), PyArray1::from_vec(py, psd.iter().map(|&v| v as f32).collect())))
     }
 
     /// Get the FFT/segment size.
@@ -162,7 +163,7 @@ impl WelchPsd {
 
     /// Get the overlap fraction.
     #[getter]
-    fn overlap(&self) -> f32 {
+    fn overlap(&self) -> Float {
         self.overlap
     }
 

@@ -5,6 +5,7 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::{ArtifactDetector as ZsArtifactDetector, ZscoreArtifact as ZsZscoreArtifact};
 
 // ============================================================================
@@ -22,9 +23,9 @@ enum ArtifactDetectorInner {
     /// Dynamic implementation for non-standard channel counts
     Dynamic {
         channels: usize,
-        amplitude_threshold: f32,
-        gradient_threshold: f32,
-        prev_sample: Vec<f32>,
+        amplitude_threshold: Float,
+        gradient_threshold: Float,
+        prev_sample: Vec<Float>,
         initialized: bool,
     },
 }
@@ -66,7 +67,7 @@ impl ArtifactDetector {
     /// Returns:
     ///     ArtifactDetector: A new artifact detector.
     #[new]
-    fn new(channels: usize, amplitude_threshold: f32, gradient_threshold: f32) -> PyResult<Self> {
+    fn new(channels: usize, amplitude_threshold: Float, gradient_threshold: Float) -> PyResult<Self> {
         if channels == 0 {
             return Err(PyValueError::new_err("channels must be >= 1"));
         }
@@ -110,14 +111,14 @@ impl ArtifactDetector {
 
     /// Create a detector with only amplitude threshold (no gradient check).
     #[staticmethod]
-    fn amplitude_only(channels: usize, threshold: f32) -> PyResult<Self> {
-        Self::new(channels, threshold, f32::INFINITY)
+    fn amplitude_only(channels: usize, threshold: Float) -> PyResult<Self> {
+        Self::new(channels, threshold, Float::INFINITY)
     }
 
     /// Create a detector with only gradient threshold (no amplitude check).
     #[staticmethod]
-    fn gradient_only(channels: usize, threshold: f32) -> PyResult<Self> {
-        Self::new(channels, f32::INFINITY, threshold)
+    fn gradient_only(channels: usize, threshold: Float) -> PyResult<Self> {
+        Self::new(channels, Float::INFINITY, threshold)
     }
 
     /// Detect artifacts in a multi-channel sample.
@@ -132,7 +133,7 @@ impl ArtifactDetector {
         py: Python<'py>,
         sample: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray1<bool>>> {
-        let sample_slice = sample.as_slice()?;
+        let sample_slice: Vec<Float> = sample.as_slice()?.iter().map(|&v| v as Float).collect();
         if sample_slice.len() != self.channels {
             return Err(PyValueError::new_err(format!(
                 "Sample has {} elements, expected {}",
@@ -143,27 +144,27 @@ impl ArtifactDetector {
 
         let result = match &mut self.inner {
             ArtifactDetectorInner::C1(det) => {
-                let s: [f32; 1] = [sample_slice[0]];
+                let s: [Float; 1] = [sample_slice[0]];
                 det.detect(&s).to_vec()
             }
             ArtifactDetectorInner::C4(det) => {
-                let s: [f32; 4] = sample_slice.try_into().unwrap();
+                let s: [Float; 4] = sample_slice.try_into().unwrap();
                 det.detect(&s).to_vec()
             }
             ArtifactDetectorInner::C8(det) => {
-                let s: [f32; 8] = sample_slice.try_into().unwrap();
+                let s: [Float; 8] = sample_slice.try_into().unwrap();
                 det.detect(&s).to_vec()
             }
             ArtifactDetectorInner::C16(det) => {
-                let s: [f32; 16] = sample_slice.try_into().unwrap();
+                let s: [Float; 16] = sample_slice.try_into().unwrap();
                 det.detect(&s).to_vec()
             }
             ArtifactDetectorInner::C32(det) => {
-                let s: [f32; 32] = sample_slice.try_into().unwrap();
+                let s: [Float; 32] = sample_slice.try_into().unwrap();
                 det.detect(&s).to_vec()
             }
             ArtifactDetectorInner::C64(det) => {
-                let s: [f32; 64] = sample_slice.try_into().unwrap();
+                let s: [Float; 64] = sample_slice.try_into().unwrap();
                 det.detect(&s).to_vec()
             }
             ArtifactDetectorInner::Dynamic {
@@ -180,7 +181,7 @@ impl ArtifactDetector {
                         *initialized && (s - prev_sample[i]).abs() > *gradient_threshold;
                     result[i] = amplitude_bad || gradient_bad;
                 }
-                prev_sample.copy_from_slice(sample_slice);
+                prev_sample.copy_from_slice(&sample_slice);
                 *initialized = true;
                 result
             }
@@ -191,7 +192,7 @@ impl ArtifactDetector {
 
     /// Check if any channel has an artifact.
     fn detect_any(&mut self, sample: PyReadonlyArray1<f32>) -> PyResult<bool> {
-        let sample_slice = sample.as_slice()?;
+        let sample_slice: Vec<Float> = sample.as_slice()?.iter().map(|&v| v as Float).collect();
         if sample_slice.len() != self.channels {
             return Err(PyValueError::new_err(format!(
                 "Sample has {} elements, expected {}",
@@ -202,27 +203,27 @@ impl ArtifactDetector {
 
         let result = match &mut self.inner {
             ArtifactDetectorInner::C1(det) => {
-                let s: [f32; 1] = [sample_slice[0]];
+                let s: [Float; 1] = [sample_slice[0]];
                 det.detect_any(&s)
             }
             ArtifactDetectorInner::C4(det) => {
-                let s: [f32; 4] = sample_slice.try_into().unwrap();
+                let s: [Float; 4] = sample_slice.try_into().unwrap();
                 det.detect_any(&s)
             }
             ArtifactDetectorInner::C8(det) => {
-                let s: [f32; 8] = sample_slice.try_into().unwrap();
+                let s: [Float; 8] = sample_slice.try_into().unwrap();
                 det.detect_any(&s)
             }
             ArtifactDetectorInner::C16(det) => {
-                let s: [f32; 16] = sample_slice.try_into().unwrap();
+                let s: [Float; 16] = sample_slice.try_into().unwrap();
                 det.detect_any(&s)
             }
             ArtifactDetectorInner::C32(det) => {
-                let s: [f32; 32] = sample_slice.try_into().unwrap();
+                let s: [Float; 32] = sample_slice.try_into().unwrap();
                 det.detect_any(&s)
             }
             ArtifactDetectorInner::C64(det) => {
-                let s: [f32; 64] = sample_slice.try_into().unwrap();
+                let s: [Float; 64] = sample_slice.try_into().unwrap();
                 det.detect_any(&s)
             }
             ArtifactDetectorInner::Dynamic {
@@ -241,7 +242,7 @@ impl ArtifactDetector {
                         any_artifact = true;
                     }
                 }
-                prev_sample.copy_from_slice(sample_slice);
+                prev_sample.copy_from_slice(&sample_slice);
                 *initialized = true;
                 any_artifact
             }
@@ -252,7 +253,7 @@ impl ArtifactDetector {
 
     /// Count the number of channels with artifacts.
     fn detect_count(&mut self, sample: PyReadonlyArray1<f32>) -> PyResult<usize> {
-        let sample_slice = sample.as_slice()?;
+        let sample_slice: Vec<Float> = sample.as_slice()?.iter().map(|&v| v as Float).collect();
         if sample_slice.len() != self.channels {
             return Err(PyValueError::new_err(format!(
                 "Sample has {} elements, expected {}",
@@ -263,27 +264,27 @@ impl ArtifactDetector {
 
         let result = match &mut self.inner {
             ArtifactDetectorInner::C1(det) => {
-                let s: [f32; 1] = [sample_slice[0]];
+                let s: [Float; 1] = [sample_slice[0]];
                 det.detect_count(&s)
             }
             ArtifactDetectorInner::C4(det) => {
-                let s: [f32; 4] = sample_slice.try_into().unwrap();
+                let s: [Float; 4] = sample_slice.try_into().unwrap();
                 det.detect_count(&s)
             }
             ArtifactDetectorInner::C8(det) => {
-                let s: [f32; 8] = sample_slice.try_into().unwrap();
+                let s: [Float; 8] = sample_slice.try_into().unwrap();
                 det.detect_count(&s)
             }
             ArtifactDetectorInner::C16(det) => {
-                let s: [f32; 16] = sample_slice.try_into().unwrap();
+                let s: [Float; 16] = sample_slice.try_into().unwrap();
                 det.detect_count(&s)
             }
             ArtifactDetectorInner::C32(det) => {
-                let s: [f32; 32] = sample_slice.try_into().unwrap();
+                let s: [Float; 32] = sample_slice.try_into().unwrap();
                 det.detect_count(&s)
             }
             ArtifactDetectorInner::C64(det) => {
-                let s: [f32; 64] = sample_slice.try_into().unwrap();
+                let s: [Float; 64] = sample_slice.try_into().unwrap();
                 det.detect_count(&s)
             }
             ArtifactDetectorInner::Dynamic {
@@ -302,7 +303,7 @@ impl ArtifactDetector {
                         count += 1;
                     }
                 }
-                prev_sample.copy_from_slice(sample_slice);
+                prev_sample.copy_from_slice(&sample_slice);
                 *initialized = true;
                 count
             }
@@ -339,7 +340,7 @@ impl ArtifactDetector {
 
     /// Get the amplitude threshold.
     #[getter]
-    fn amplitude_threshold(&self) -> f32 {
+    fn amplitude_threshold(&self) -> Float {
         match &self.inner {
             ArtifactDetectorInner::C1(det) => det.amplitude_threshold(),
             ArtifactDetectorInner::C4(det) => det.amplitude_threshold(),
@@ -356,7 +357,7 @@ impl ArtifactDetector {
 
     /// Get the gradient threshold.
     #[getter]
-    fn gradient_threshold(&self) -> f32 {
+    fn gradient_threshold(&self) -> Float {
         match &self.inner {
             ArtifactDetectorInner::C1(det) => det.gradient_threshold(),
             ArtifactDetectorInner::C4(det) => det.gradient_threshold(),
@@ -441,7 +442,7 @@ impl ZscoreArtifact {
     /// Returns:
     ///     ZscoreArtifact: A new z-score artifact detector.
     #[new]
-    fn new(channels: usize, threshold: f32, min_samples: u64) -> PyResult<Self> {
+    fn new(channels: usize, threshold: Float, min_samples: u64) -> PyResult<Self> {
         let inner = match channels {
             1 => ZscoreArtifactInner::C1(ZsZscoreArtifact::new(threshold, min_samples)),
             4 => ZscoreArtifactInner::C4(ZsZscoreArtifact::new(threshold, min_samples)),
@@ -465,7 +466,7 @@ impl ZscoreArtifact {
     /// Args:
     ///     sample (np.ndarray): Sample as 1D float32 array.
     fn update(&mut self, sample: PyReadonlyArray1<f32>) -> PyResult<()> {
-        let sample_slice = sample.as_slice()?;
+        let sample_slice: Vec<Float> = sample.as_slice()?.iter().map(|&v| v as Float).collect();
         if sample_slice.len() != self.channels {
             return Err(PyValueError::new_err(format!(
                 "Sample has {} elements, expected {}",
@@ -476,27 +477,27 @@ impl ZscoreArtifact {
 
         match &mut self.inner {
             ZscoreArtifactInner::C1(det) => {
-                let s: [f32; 1] = [sample_slice[0]];
+                let s: [Float; 1] = [sample_slice[0]];
                 det.update(&s);
             }
             ZscoreArtifactInner::C4(det) => {
-                let s: [f32; 4] = sample_slice.try_into().unwrap();
+                let s: [Float; 4] = sample_slice.try_into().unwrap();
                 det.update(&s);
             }
             ZscoreArtifactInner::C8(det) => {
-                let s: [f32; 8] = sample_slice.try_into().unwrap();
+                let s: [Float; 8] = sample_slice.try_into().unwrap();
                 det.update(&s);
             }
             ZscoreArtifactInner::C16(det) => {
-                let s: [f32; 16] = sample_slice.try_into().unwrap();
+                let s: [Float; 16] = sample_slice.try_into().unwrap();
                 det.update(&s);
             }
             ZscoreArtifactInner::C32(det) => {
-                let s: [f32; 32] = sample_slice.try_into().unwrap();
+                let s: [Float; 32] = sample_slice.try_into().unwrap();
                 det.update(&s);
             }
             ZscoreArtifactInner::C64(det) => {
-                let s: [f32; 64] = sample_slice.try_into().unwrap();
+                let s: [Float; 64] = sample_slice.try_into().unwrap();
                 det.update(&s);
             }
         }
@@ -518,7 +519,7 @@ impl ZscoreArtifact {
         py: Python<'py>,
         sample: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray1<bool>>> {
-        let sample_slice = sample.as_slice()?;
+        let sample_slice: Vec<Float> = sample.as_slice()?.iter().map(|&v| v as Float).collect();
         if sample_slice.len() != self.channels {
             return Err(PyValueError::new_err(format!(
                 "Sample has {} elements, expected {}",
@@ -529,27 +530,27 @@ impl ZscoreArtifact {
 
         let result = match &self.inner {
             ZscoreArtifactInner::C1(det) => {
-                let s: [f32; 1] = [sample_slice[0]];
+                let s: [Float; 1] = [sample_slice[0]];
                 det.detect(&s).to_vec()
             }
             ZscoreArtifactInner::C4(det) => {
-                let s: [f32; 4] = sample_slice.try_into().unwrap();
+                let s: [Float; 4] = sample_slice.try_into().unwrap();
                 det.detect(&s).to_vec()
             }
             ZscoreArtifactInner::C8(det) => {
-                let s: [f32; 8] = sample_slice.try_into().unwrap();
+                let s: [Float; 8] = sample_slice.try_into().unwrap();
                 det.detect(&s).to_vec()
             }
             ZscoreArtifactInner::C16(det) => {
-                let s: [f32; 16] = sample_slice.try_into().unwrap();
+                let s: [Float; 16] = sample_slice.try_into().unwrap();
                 det.detect(&s).to_vec()
             }
             ZscoreArtifactInner::C32(det) => {
-                let s: [f32; 32] = sample_slice.try_into().unwrap();
+                let s: [Float; 32] = sample_slice.try_into().unwrap();
                 det.detect(&s).to_vec()
             }
             ZscoreArtifactInner::C64(det) => {
-                let s: [f32; 64] = sample_slice.try_into().unwrap();
+                let s: [Float; 64] = sample_slice.try_into().unwrap();
                 det.detect(&s).to_vec()
             }
         };
@@ -563,7 +564,7 @@ impl ZscoreArtifact {
         py: Python<'py>,
         sample: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray1<bool>>> {
-        let sample_slice = sample.as_slice()?;
+        let sample_slice: Vec<Float> = sample.as_slice()?.iter().map(|&v| v as Float).collect();
         if sample_slice.len() != self.channels {
             return Err(PyValueError::new_err(format!(
                 "Sample has {} elements, expected {}",
@@ -574,27 +575,27 @@ impl ZscoreArtifact {
 
         let result = match &mut self.inner {
             ZscoreArtifactInner::C1(det) => {
-                let s: [f32; 1] = [sample_slice[0]];
+                let s: [Float; 1] = [sample_slice[0]];
                 det.update_and_detect(&s).to_vec()
             }
             ZscoreArtifactInner::C4(det) => {
-                let s: [f32; 4] = sample_slice.try_into().unwrap();
+                let s: [Float; 4] = sample_slice.try_into().unwrap();
                 det.update_and_detect(&s).to_vec()
             }
             ZscoreArtifactInner::C8(det) => {
-                let s: [f32; 8] = sample_slice.try_into().unwrap();
+                let s: [Float; 8] = sample_slice.try_into().unwrap();
                 det.update_and_detect(&s).to_vec()
             }
             ZscoreArtifactInner::C16(det) => {
-                let s: [f32; 16] = sample_slice.try_into().unwrap();
+                let s: [Float; 16] = sample_slice.try_into().unwrap();
                 det.update_and_detect(&s).to_vec()
             }
             ZscoreArtifactInner::C32(det) => {
-                let s: [f32; 32] = sample_slice.try_into().unwrap();
+                let s: [Float; 32] = sample_slice.try_into().unwrap();
                 det.update_and_detect(&s).to_vec()
             }
             ZscoreArtifactInner::C64(det) => {
-                let s: [f32; 64] = sample_slice.try_into().unwrap();
+                let s: [Float; 64] = sample_slice.try_into().unwrap();
                 det.update_and_detect(&s).to_vec()
             }
         };
@@ -611,7 +612,7 @@ impl ZscoreArtifact {
         py: Python<'py>,
         sample: PyReadonlyArray1<f32>,
     ) -> PyResult<Option<Bound<'py, PyArray1<f64>>>> {
-        let sample_slice = sample.as_slice()?;
+        let sample_slice: Vec<Float> = sample.as_slice()?.iter().map(|&v| v as Float).collect();
         if sample_slice.len() != self.channels {
             return Err(PyValueError::new_err(format!(
                 "Sample has {} elements, expected {}",
@@ -622,27 +623,27 @@ impl ZscoreArtifact {
 
         let result = match &self.inner {
             ZscoreArtifactInner::C1(det) => {
-                let s: [f32; 1] = [sample_slice[0]];
+                let s: [Float; 1] = [sample_slice[0]];
                 det.zscore(&s).map(|z| z.to_vec())
             }
             ZscoreArtifactInner::C4(det) => {
-                let s: [f32; 4] = sample_slice.try_into().unwrap();
+                let s: [Float; 4] = sample_slice.try_into().unwrap();
                 det.zscore(&s).map(|z| z.to_vec())
             }
             ZscoreArtifactInner::C8(det) => {
-                let s: [f32; 8] = sample_slice.try_into().unwrap();
+                let s: [Float; 8] = sample_slice.try_into().unwrap();
                 det.zscore(&s).map(|z| z.to_vec())
             }
             ZscoreArtifactInner::C16(det) => {
-                let s: [f32; 16] = sample_slice.try_into().unwrap();
+                let s: [Float; 16] = sample_slice.try_into().unwrap();
                 det.zscore(&s).map(|z| z.to_vec())
             }
             ZscoreArtifactInner::C32(det) => {
-                let s: [f32; 32] = sample_slice.try_into().unwrap();
+                let s: [Float; 32] = sample_slice.try_into().unwrap();
                 det.zscore(&s).map(|z| z.to_vec())
             }
             ZscoreArtifactInner::C64(det) => {
-                let s: [f32; 64] = sample_slice.try_into().unwrap();
+                let s: [Float; 64] = sample_slice.try_into().unwrap();
                 det.zscore(&s).map(|z| z.to_vec())
             }
         };
@@ -733,7 +734,7 @@ impl ZscoreArtifact {
 
     /// Get the z-score threshold.
     #[getter]
-    fn threshold(&self) -> f32 {
+    fn threshold(&self) -> Float {
         match &self.inner {
             ZscoreArtifactInner::C1(det) => det.threshold(),
             ZscoreArtifactInner::C4(det) => det.threshold(),

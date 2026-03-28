@@ -5,6 +5,7 @@
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use zerostone::float::Float;
 use zerostone::{
     hilbert::HilbertTransform as ZsHilbertTransform, EnvelopeFollower as ZsEnvelopeFollower,
     Rectification as ZsRectification, WindowedRms as ZsWindowedRms,
@@ -51,9 +52,9 @@ enum EnvelopeFollowerInner {
 pub struct EnvelopeFollower {
     inner: EnvelopeFollowerInner,
     channels: usize,
-    sample_rate: f32,
-    attack_time: f32,
-    release_time: f32,
+    sample_rate: Float,
+    attack_time: Float,
+    release_time: Float,
     rectification: String,
 }
 
@@ -74,9 +75,9 @@ impl EnvelopeFollower {
     #[pyo3(signature = (channels, sample_rate, attack_time, release_time, rectification="absolute"))]
     fn new(
         channels: usize,
-        sample_rate: f32,
-        attack_time: f32,
-        release_time: f32,
+        sample_rate: Float,
+        attack_time: Float,
+        release_time: Float,
         rectification: &str,
     ) -> PyResult<Self> {
         let rect = match rectification {
@@ -149,8 +150,8 @@ impl EnvelopeFollower {
     #[pyo3(signature = (channels, sample_rate, smoothing_time, rectification="absolute"))]
     fn symmetric(
         channels: usize,
-        sample_rate: f32,
-        smoothing_time: f32,
+        sample_rate: Float,
+        smoothing_time: Float,
         rectification: &str,
     ) -> PyResult<Self> {
         Self::new(
@@ -174,7 +175,7 @@ impl EnvelopeFollower {
         py: Python<'py>,
         sample: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let sample_slice = sample.as_slice()?;
+        let sample_slice: Vec<Float> = sample.as_slice()?.iter().map(|&v| v as Float).collect();
         if sample_slice.len() != self.channels {
             return Err(PyValueError::new_err(format!(
                 "Sample has {} elements, expected {}",
@@ -185,32 +186,32 @@ impl EnvelopeFollower {
 
         let result = match &mut self.inner {
             EnvelopeFollowerInner::C1(env) => {
-                let s: [f32; 1] = [sample_slice[0]];
+                let s: [Float; 1] = [sample_slice[0]];
                 env.process(&s).to_vec()
             }
             EnvelopeFollowerInner::C4(env) => {
-                let s: [f32; 4] = sample_slice.try_into().unwrap();
+                let s: [Float; 4] = sample_slice.try_into().unwrap();
                 env.process(&s).to_vec()
             }
             EnvelopeFollowerInner::C8(env) => {
-                let s: [f32; 8] = sample_slice.try_into().unwrap();
+                let s: [Float; 8] = sample_slice.try_into().unwrap();
                 env.process(&s).to_vec()
             }
             EnvelopeFollowerInner::C16(env) => {
-                let s: [f32; 16] = sample_slice.try_into().unwrap();
+                let s: [Float; 16] = sample_slice.try_into().unwrap();
                 env.process(&s).to_vec()
             }
             EnvelopeFollowerInner::C32(env) => {
-                let s: [f32; 32] = sample_slice.try_into().unwrap();
+                let s: [Float; 32] = sample_slice.try_into().unwrap();
                 env.process(&s).to_vec()
             }
             EnvelopeFollowerInner::C64(env) => {
-                let s: [f32; 64] = sample_slice.try_into().unwrap();
+                let s: [Float; 64] = sample_slice.try_into().unwrap();
                 env.process(&s).to_vec()
             }
         };
 
-        Ok(PyArray1::from_vec(py, result))
+        Ok(PyArray1::from_vec(py, result.iter().map(|&v| v as f32).collect()))
     }
 
     /// Process a block of samples.
@@ -233,14 +234,14 @@ impl EnvelopeFollower {
             )));
         }
 
-        let data = block.as_slice()?;
+        let data: Vec<Float> = block.as_slice()?.iter().map(|&v| v as Float).collect();
         let num_samples = shape[0];
-        let mut output = vec![0.0f32; num_samples * self.channels];
+        let mut output = vec![0.0; num_samples * self.channels];
 
         macro_rules! process_block {
             ($env:expr, $c:expr) => {{
                 for row in 0..num_samples {
-                    let mut input = [0.0f32; $c];
+                    let mut input = [0.0; $c];
                     for col in 0..$c {
                         input[col] = data[row * $c + col];
                     }
@@ -265,14 +266,14 @@ impl EnvelopeFollower {
             py,
             &output
                 .chunks(self.channels)
-                .map(|c| c.to_vec())
+                .map(|c| c.iter().map(|&v| v as f32).collect::<Vec<f32>>())
                 .collect::<Vec<_>>(),
         )?)
     }
 
     /// Get the current envelope values.
     fn current<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
-        let vals: Vec<f32> = match &self.inner {
+        let vals: Vec<Float> = match &self.inner {
             EnvelopeFollowerInner::C1(env) => env.current().to_vec(),
             EnvelopeFollowerInner::C4(env) => env.current().to_vec(),
             EnvelopeFollowerInner::C8(env) => env.current().to_vec(),
@@ -280,7 +281,7 @@ impl EnvelopeFollower {
             EnvelopeFollowerInner::C32(env) => env.current().to_vec(),
             EnvelopeFollowerInner::C64(env) => env.current().to_vec(),
         };
-        PyArray1::from_vec(py, vals)
+        PyArray1::from_vec(py, vals.iter().map(|&v| v as f32).collect())
     }
 
     /// Reset the envelope to zero.
@@ -303,19 +304,19 @@ impl EnvelopeFollower {
 
     /// Get the sample rate.
     #[getter]
-    fn sample_rate(&self) -> f32 {
+    fn sample_rate(&self) -> Float {
         self.sample_rate
     }
 
     /// Get the attack time.
     #[getter]
-    fn attack_time(&self) -> f32 {
+    fn attack_time(&self) -> Float {
         self.attack_time
     }
 
     /// Get the release time.
     #[getter]
-    fn release_time(&self) -> f32 {
+    fn release_time(&self) -> Float {
         self.release_time
     }
 
@@ -452,7 +453,7 @@ impl WindowedRms {
     /// Args:
     ///     sample (np.ndarray): Sample as 1D float32 array.
     fn process(&mut self, sample: PyReadonlyArray1<f32>) -> PyResult<()> {
-        let sample_slice = sample.as_slice()?;
+        let sample_slice: Vec<Float> = sample.as_slice()?.iter().map(|&v| v as Float).collect();
         if sample_slice.len() != self.channels {
             return Err(PyValueError::new_err(format!(
                 "Sample has {} elements, expected {}",
@@ -463,7 +464,7 @@ impl WindowedRms {
 
         macro_rules! do_process {
             ($rms:expr, $c:expr) => {{
-                let mut input = [0.0f32; $c];
+                let mut input = [0.0; $c];
                 for (i, &v) in sample_slice.iter().enumerate() {
                     input[i] = v;
                 }
@@ -539,7 +540,7 @@ impl WindowedRms {
             WindowedRmsInner::C64W128(rms) => get_rms!(rms),
         };
 
-        vals.map(|v| PyArray1::from_vec(py, v))
+        vals.map(|v| PyArray1::from_vec(py, v.iter().map(|&x| x as f32).collect()))
     }
 
     /// Get the current power values (more efficient than RMS).
@@ -580,7 +581,7 @@ impl WindowedRms {
             WindowedRmsInner::C64W128(rms) => get_power!(rms),
         };
 
-        vals.map(|v| PyArray1::from_vec(py, v))
+        vals.map(|v| PyArray1::from_vec(py, v.iter().map(|&x| x as f32).collect()))
     }
 
     /// Get the number of samples processed.
@@ -774,7 +775,7 @@ impl HilbertTransform {
         py: Python<'py>,
         signal: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let signal_slice = signal.as_slice()?;
+        let signal_slice: Vec<Float> = signal.as_slice()?.iter().map(|&v| v as Float).collect();
         if signal_slice.len() != self.size {
             return Err(PyValueError::new_err(format!(
                 "Signal has {} elements, expected {}",
@@ -785,8 +786,8 @@ impl HilbertTransform {
 
         macro_rules! do_transform {
             ($hilbert:expr, $n:expr) => {{
-                let input: [f32; $n] = signal_slice.try_into().unwrap();
-                let mut output = [0.0f32; $n];
+                let input: [Float; $n] = signal_slice.try_into().unwrap();
+                let mut output = [0.0; $n];
                 $hilbert.transform(&input, &mut output);
                 output.to_vec()
             }};
@@ -801,7 +802,7 @@ impl HilbertTransform {
             HilbertTransformInner::N2048(h) => do_transform!(h, 2048),
         };
 
-        Ok(PyArray1::from_vec(py, result))
+        Ok(PyArray1::from_vec(py, result.iter().map(|&v| v as f32).collect()))
     }
 
     /// Compute the instantaneous amplitude (envelope).
@@ -816,7 +817,7 @@ impl HilbertTransform {
         py: Python<'py>,
         signal: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let signal_slice = signal.as_slice()?;
+        let signal_slice: Vec<Float> = signal.as_slice()?.iter().map(|&v| v as Float).collect();
         if signal_slice.len() != self.size {
             return Err(PyValueError::new_err(format!(
                 "Signal has {} elements, expected {}",
@@ -827,8 +828,8 @@ impl HilbertTransform {
 
         macro_rules! do_amplitude {
             ($hilbert:expr, $n:expr) => {{
-                let input: [f32; $n] = signal_slice.try_into().unwrap();
-                let mut output = [0.0f32; $n];
+                let input: [Float; $n] = signal_slice.try_into().unwrap();
+                let mut output = [0.0; $n];
                 $hilbert.instantaneous_amplitude(&input, &mut output);
                 output.to_vec()
             }};
@@ -843,7 +844,7 @@ impl HilbertTransform {
             HilbertTransformInner::N2048(h) => do_amplitude!(h, 2048),
         };
 
-        Ok(PyArray1::from_vec(py, result))
+        Ok(PyArray1::from_vec(py, result.iter().map(|&v| v as f32).collect()))
     }
 
     /// Compute the instantaneous phase.
@@ -858,7 +859,7 @@ impl HilbertTransform {
         py: Python<'py>,
         signal: PyReadonlyArray1<f32>,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let signal_slice = signal.as_slice()?;
+        let signal_slice: Vec<Float> = signal.as_slice()?.iter().map(|&v| v as Float).collect();
         if signal_slice.len() != self.size {
             return Err(PyValueError::new_err(format!(
                 "Signal has {} elements, expected {}",
@@ -869,8 +870,8 @@ impl HilbertTransform {
 
         macro_rules! do_phase {
             ($hilbert:expr, $n:expr) => {{
-                let input: [f32; $n] = signal_slice.try_into().unwrap();
-                let mut output = [0.0f32; $n];
+                let input: [Float; $n] = signal_slice.try_into().unwrap();
+                let mut output = [0.0; $n];
                 $hilbert.instantaneous_phase(&input, &mut output);
                 output.to_vec()
             }};
@@ -885,7 +886,7 @@ impl HilbertTransform {
             HilbertTransformInner::N2048(h) => do_phase!(h, 2048),
         };
 
-        Ok(PyArray1::from_vec(py, result))
+        Ok(PyArray1::from_vec(py, result.iter().map(|&v| v as f32).collect()))
     }
 
     /// Compute the instantaneous frequency.
@@ -900,9 +901,9 @@ impl HilbertTransform {
         &self,
         py: Python<'py>,
         signal: PyReadonlyArray1<f32>,
-        sample_rate: f32,
+        sample_rate: Float,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let signal_slice = signal.as_slice()?;
+        let signal_slice: Vec<Float> = signal.as_slice()?.iter().map(|&v| v as Float).collect();
         if signal_slice.len() != self.size {
             return Err(PyValueError::new_err(format!(
                 "Signal has {} elements, expected {}",
@@ -913,8 +914,8 @@ impl HilbertTransform {
 
         macro_rules! do_frequency {
             ($hilbert:expr, $n:expr) => {{
-                let input: [f32; $n] = signal_slice.try_into().unwrap();
-                let mut output = vec![0.0f32; $n - 1];
+                let input: [Float; $n] = signal_slice.try_into().unwrap();
+                let mut output = vec![0.0; $n - 1];
                 $hilbert.instantaneous_frequency(&input, &mut output, sample_rate);
                 output
             }};
@@ -929,7 +930,7 @@ impl HilbertTransform {
             HilbertTransformInner::N2048(h) => do_frequency!(h, 2048),
         };
 
-        Ok(PyArray1::from_vec(py, result))
+        Ok(PyArray1::from_vec(py, result.iter().map(|&v| v as f32).collect()))
     }
 
     /// Get the signal size.
