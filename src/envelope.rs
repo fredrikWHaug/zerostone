@@ -4,7 +4,7 @@
 //! envelope from a signal using rectification and smoothing. Useful for
 //! motor imagery BCI, EMG processing, and amplitude-based event detection.
 
-use core::f32::consts::PI;
+use crate::float::{self, Float};
 
 /// Rectification method for envelope detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,13 +41,13 @@ pub enum Rectification {
 /// ```
 pub struct EnvelopeFollower<const C: usize> {
     /// Attack coefficient (for rising envelope)
-    attack_coeff: f32,
+    attack_coeff: Float,
     /// Release coefficient (for falling envelope)
-    release_coeff: f32,
+    release_coeff: Float,
     /// Rectification method
     rectification: Rectification,
     /// Current envelope value per channel
-    envelope: [f32; C],
+    envelope: [Float; C],
 }
 
 impl<const C: usize> EnvelopeFollower<C> {
@@ -74,9 +74,9 @@ impl<const C: usize> EnvelopeFollower<C> {
     /// );
     /// ```
     pub fn new(
-        sample_rate: f32,
-        attack_time: f32,
-        release_time: f32,
+        sample_rate: Float,
+        attack_time: Float,
+        release_time: Float,
         rectification: Rectification,
     ) -> Self {
         Self {
@@ -107,18 +107,22 @@ impl<const C: usize> EnvelopeFollower<C> {
     ///     Rectification::Absolute,
     /// );
     /// ```
-    pub fn symmetric(sample_rate: f32, smoothing_time: f32, rectification: Rectification) -> Self {
+    pub fn symmetric(
+        sample_rate: Float,
+        smoothing_time: Float,
+        rectification: Rectification,
+    ) -> Self {
         Self::new(sample_rate, smoothing_time, smoothing_time, rectification)
     }
 
     /// Convert time constant to filter coefficient.
     ///
     /// Uses the formula: coeff = 1 - exp(-2π / (sample_rate * time))
-    fn time_to_coeff(sample_rate: f32, time: f32) -> f32 {
+    fn time_to_coeff(sample_rate: Float, time: Float) -> Float {
         if time <= 0.0 {
             1.0 // Instant response
         } else {
-            1.0 - libm::expf(-2.0 * PI / (sample_rate * time))
+            1.0 - float::exp(-2.0 * float::PI / (sample_rate * time))
         }
     }
 
@@ -131,11 +135,11 @@ impl<const C: usize> EnvelopeFollower<C> {
     /// # Returns
     ///
     /// Current envelope value for each channel
-    pub fn process(&mut self, input: &[f32; C]) -> [f32; C] {
+    pub fn process(&mut self, input: &[Float; C]) -> [Float; C] {
         for (i, &sample) in input.iter().enumerate() {
             // Rectify
             let rectified = match self.rectification {
-                Rectification::Absolute => libm::fabsf(sample),
+                Rectification::Absolute => float::abs(sample),
                 Rectification::Squared => sample * sample,
             };
 
@@ -156,14 +160,14 @@ impl<const C: usize> EnvelopeFollower<C> {
     /// Process a block of samples in place.
     ///
     /// Each sample is replaced with its envelope value.
-    pub fn process_block(&mut self, block: &mut [[f32; C]]) {
+    pub fn process_block(&mut self, block: &mut [[Float; C]]) {
         for sample in block.iter_mut() {
             *sample = self.process(sample);
         }
     }
 
     /// Get the current envelope values.
-    pub fn current(&self) -> &[f32; C] {
+    pub fn current(&self) -> &[Float; C] {
         &self.envelope
     }
 
@@ -173,12 +177,12 @@ impl<const C: usize> EnvelopeFollower<C> {
     }
 
     /// Set new attack time.
-    pub fn set_attack_time(&mut self, sample_rate: f32, attack_time: f32) {
+    pub fn set_attack_time(&mut self, sample_rate: Float, attack_time: Float) {
         self.attack_coeff = Self::time_to_coeff(sample_rate, attack_time);
     }
 
     /// Set new release time.
-    pub fn set_release_time(&mut self, sample_rate: f32, release_time: f32) {
+    pub fn set_release_time(&mut self, sample_rate: Float, release_time: Float) {
         self.release_coeff = Self::time_to_coeff(sample_rate, release_time);
     }
 
@@ -201,9 +205,9 @@ impl<const C: usize> Default for EnvelopeFollower<C> {
 }
 
 impl<const C: usize> crate::pipeline::BlockProcessor<C> for EnvelopeFollower<C> {
-    type Sample = f32;
+    type Sample = Float;
 
-    fn process_block_inplace(&mut self, block: &mut [[f32; C]]) {
+    fn process_block_inplace(&mut self, block: &mut [[Float; C]]) {
         for sample in block.iter_mut() {
             *sample = self.process(sample);
         }
@@ -229,7 +233,7 @@ mod tests {
 
         // Feed increasing amplitude
         for i in 1..=10 {
-            let input = [i as f32 * 0.1];
+            let input = [i as Float * 0.1];
             env.process(&input);
         }
 

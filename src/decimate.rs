@@ -4,6 +4,8 @@
 //! For proper decimation, apply an anti-aliasing lowpass filter before
 //! the decimator to prevent frequency aliasing.
 
+use crate::float::Float;
+
 /// A decimator that reduces sample rate by keeping every Nth sample.
 ///
 /// The decimator counts input samples and outputs one sample for every
@@ -20,6 +22,7 @@
 ///
 /// ```
 /// use zerostone::{BiquadCoeffs, IirFilter, Decimator};
+/// use zerostone::float::Float;
 ///
 /// // Decimate from 1000 Hz to 250 Hz (factor 4)
 /// // First, create anti-alias filter (cutoff < 125 Hz)
@@ -33,7 +36,7 @@
 ///
 /// // Process samples
 /// for i in 0..100 {
-///     let sample = [i as f32; 4];
+///     let sample = [i as Float; 4];
 ///     let filtered = filter.process_sample(sample[0]);
 ///     let filtered_sample = [filtered; 4];
 ///
@@ -81,7 +84,7 @@ impl<const C: usize> Decimator<C> {
     /// # Returns
     ///
     /// `Some(input)` for every Nth sample, `None` for samples to be dropped
-    pub fn process(&mut self, input: &[f32; C]) -> Option<[f32; C]> {
+    pub fn process(&mut self, input: &[Float; C]) -> Option<[Float; C]> {
         let output = if self.counter == 0 {
             Some(*input)
         } else {
@@ -109,7 +112,7 @@ impl<const C: usize> Decimator<C> {
     /// # Returns
     ///
     /// Number of samples written to output
-    pub fn process_block(&mut self, input: &[[f32; C]], output: &mut [[f32; C]]) -> usize {
+    pub fn process_block(&mut self, input: &[[Float; C]], output: &mut [[Float; C]]) -> usize {
         let mut write_idx = 0;
 
         for sample in input {
@@ -165,9 +168,9 @@ impl<const C: usize> Default for Decimator<C> {
 }
 
 impl<const C: usize> crate::pipeline::BlockProcessor<C> for Decimator<C> {
-    type Sample = f32;
+    type Sample = Float;
 
-    fn process_block(&mut self, input: &[[f32; C]], output: &mut [[f32; C]]) -> usize {
+    fn process_block(&mut self, input: &[[Float; C]], output: &mut [[Float; C]]) -> usize {
         // Use existing process_block implementation
         self.process_block(input, output)
     }
@@ -198,7 +201,7 @@ mod tests {
 
         // Factor 1 = passthrough, every sample should output
         for i in 0..10 {
-            let input = [i as f32, (i * 2) as f32];
+            let input = [i as Float, (i * 2) as Float];
             let output = dec.process(&input);
             assert!(output.is_some());
             assert_eq!(output.unwrap(), input);
@@ -211,10 +214,10 @@ mod tests {
 
         let mut outputs = 0;
         for i in 0..16 {
-            let input = [i as f32];
+            let input = [i as Float];
             if let Some(out) = dec.process(&input) {
                 // Should output samples 0, 4, 8, 12
-                assert_eq!(out[0], (outputs * 4) as f32);
+                assert_eq!(out[0], (outputs * 4) as Float);
                 outputs += 1;
             }
         }

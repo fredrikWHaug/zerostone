@@ -17,15 +17,17 @@
 //! use zerostone::entropy::{sample_entropy, spectral_entropy};
 //!
 //! // Constant signal has zero complexity
-//! let constant = [5.0f64; 100];
+//! let constant = [5.0; 100];
 //! let se = sample_entropy(&constant, 2, 0.2);
 //! assert!(se < 1e-10, "Constant signal should have SampEn ~ 0, got {}", se);
 //!
 //! // Flat PSD (white noise) has maximum spectral entropy
-//! let flat_psd = [1.0f64; 64];
+//! let flat_psd = [1.0; 64];
 //! let h = spectral_entropy(&flat_psd, true);
 //! assert!((h - 1.0).abs() < 1e-10, "Flat PSD normalized should be 1.0, got {}", h);
 //! ```
+
+use crate::float::{self, Float};
 
 /// Compute Sample Entropy (SampEn).
 ///
@@ -42,7 +44,7 @@
 ///
 /// # Returns
 ///
-/// SampEn value. Returns `f64::INFINITY` when no matches at dimension m+1 (A == 0).
+/// SampEn value. Returns `Float::INFINITY` when no matches at dimension m+1 (A == 0).
 /// Returns 0.0 for constant signals (all templates match at both dimensions).
 ///
 /// # Panics
@@ -55,19 +57,19 @@
 /// use zerostone::entropy::sample_entropy;
 ///
 /// // Constant signal: perfectly regular -> SampEn = 0
-/// let data = [3.0f64; 50];
+/// let data = [3.0; 50];
 /// let se = sample_entropy(&data, 2, 0.2);
 /// assert!(se.abs() < 1e-10);
 ///
 /// // Periodic signal: moderate complexity
-/// let mut periodic = [0.0f64; 100];
+/// let mut periodic = [0.0; 100];
 /// for i in 0..100 {
-///     periodic[i] = libm::sin(i as f64 * 0.5);
+///     periodic[i] = zerostone::float::sin(i as zerostone::float::Float * 0.5);
 /// }
 /// let se = sample_entropy(&periodic, 2, 0.2);
 /// assert!(se > 0.0);
 /// ```
-pub fn sample_entropy(data: &[f64], m: usize, r: f64) -> f64 {
+pub fn sample_entropy(data: &[Float], m: usize, r: Float) -> Float {
     assert!(!data.is_empty(), "data must not be empty");
     assert!(m >= 1, "m must be >= 1, got {}", m);
     assert!(r > 0.0, "r must be > 0, got {}", r);
@@ -90,7 +92,7 @@ pub fn sample_entropy(data: &[f64], m: usize, r: f64) -> f64 {
             // Check dim m: Chebyshev distance with early termination
             let mut match_m = true;
             for k in 0..m {
-                if libm::fabs(data[i + k] - data[j + k]) >= r {
+                if float::abs(data[i + k] - data[j + k]) >= r {
                     match_m = false;
                     break;
                 }
@@ -100,7 +102,7 @@ pub fn sample_entropy(data: &[f64], m: usize, r: f64) -> f64 {
                 count_b += 1;
 
                 // Check dim m+1: only need to check the extra element
-                if i + m < n && j + m < n && libm::fabs(data[i + m] - data[j + m]) < r {
+                if i + m < n && j + m < n && float::abs(data[i + m] - data[j + m]) < r {
                     count_a += 1;
                 }
             }
@@ -108,13 +110,13 @@ pub fn sample_entropy(data: &[f64], m: usize, r: f64) -> f64 {
     }
 
     if count_b == 0 {
-        return f64::INFINITY;
+        return float::INFINITY;
     }
     if count_a == 0 {
-        return f64::INFINITY;
+        return float::INFINITY;
     }
 
-    -libm::log(count_a as f64 / count_b as f64)
+    -float::log(count_a as Float / count_b as Float)
 }
 
 /// Compute Approximate Entropy (ApEn).
@@ -143,11 +145,11 @@ pub fn sample_entropy(data: &[f64], m: usize, r: f64) -> f64 {
 /// use zerostone::entropy::approximate_entropy;
 ///
 /// // Constant signal: perfectly regular -> ApEn near 0
-/// let data = [3.0f64; 50];
+/// let data = [3.0; 50];
 /// let ae = approximate_entropy(&data, 2, 0.2);
 /// assert!(ae < 0.01, "Constant signal ApEn should be near 0, got {}", ae);
 /// ```
-pub fn approximate_entropy(data: &[f64], m: usize, r: f64) -> f64 {
+pub fn approximate_entropy(data: &[Float], m: usize, r: Float) -> Float {
     assert!(!data.is_empty(), "data must not be empty");
     assert!(m >= 1, "m must be >= 1, got {}", m);
     assert!(r > 0.0, "r must be > 0, got {}", r);
@@ -170,13 +172,13 @@ pub fn approximate_entropy(data: &[f64], m: usize, r: f64) -> f64 {
 }
 
 /// Compute phi(dim) for approximate entropy.
-fn phi(data: &[f64], dim: usize, r: f64) -> f64 {
+fn phi(data: &[Float], dim: usize, r: Float) -> Float {
     let n = data.len();
     if n < dim {
         return 0.0;
     }
     let n_templates = n - dim + 1;
-    let mut sum_log = 0.0f64;
+    let mut sum_log: Float = 0.0;
 
     for i in 0..n_templates {
         let mut count = 0u64;
@@ -184,7 +186,7 @@ fn phi(data: &[f64], dim: usize, r: f64) -> f64 {
             // Check if template j matches template i at dimension dim
             let mut matches = true;
             for k in 0..dim {
-                if libm::fabs(data[i + k] - data[j + k]) >= r {
+                if float::abs(data[i + k] - data[j + k]) >= r {
                     matches = false;
                     break;
                 }
@@ -194,10 +196,10 @@ fn phi(data: &[f64], dim: usize, r: f64) -> f64 {
             }
         }
         // C_i = count / n_templates (includes self-match, so count >= 1)
-        sum_log += libm::log(count as f64 / n_templates as f64);
+        sum_log += float::log(count as Float / n_templates as Float);
     }
 
-    sum_log / n_templates as f64
+    sum_log / n_templates as Float
 }
 
 /// Compute Spectral Entropy.
@@ -226,38 +228,38 @@ fn phi(data: &[f64], dim: usize, r: f64) -> f64 {
 /// use zerostone::entropy::spectral_entropy;
 ///
 /// // Flat spectrum: maximum entropy
-/// let psd = [1.0f64; 32];
+/// let psd = [1.0; 32];
 /// let h = spectral_entropy(&psd, true);
 /// assert!((h - 1.0).abs() < 1e-10, "Flat PSD should give 1.0, got {}", h);
 ///
 /// // Single peak: minimum entropy
-/// let mut peak_psd = [0.0f64; 32];
+/// let mut peak_psd = [0.0; 32];
 /// peak_psd[5] = 10.0;
 /// let h = spectral_entropy(&peak_psd, true);
 /// assert!(h < 0.01, "Single peak should give near 0, got {}", h);
 /// ```
-pub fn spectral_entropy(psd: &[f64], normalize: bool) -> f64 {
+pub fn spectral_entropy(psd: &[Float], normalize: bool) -> Float {
     assert!(!psd.is_empty(), "PSD must not be empty");
 
     let n = psd.len();
 
     // Sum for normalization
-    let total: f64 = psd.iter().sum();
+    let total: Float = psd.iter().sum();
     if total <= 0.0 {
         return 0.0;
     }
 
     // Shannon entropy
-    let mut h = 0.0f64;
+    let mut h: Float = 0.0;
     for &val in psd {
         let p = val / total;
         if p > 0.0 {
-            h -= p * libm::log(p);
+            h -= p * float::log(p);
         }
     }
 
     if normalize {
-        let log_n = libm::log(n as f64);
+        let log_n = float::log(n as Float);
         if log_n > 0.0 {
             h / log_n
         } else {
@@ -298,19 +300,19 @@ pub fn spectral_entropy(psd: &[f64], normalize: bool) -> f64 {
 ///
 /// // Scale 1 should equal sample_entropy
 /// let data = [1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0,
-///             1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0f64];
-/// let mut scratch = [0.0f64; 20];
+///             1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0];
+/// let mut scratch = [0.0; 20];
 /// let mse1 = multiscale_entropy(&data, 1, 2, 0.5, &mut scratch);
 /// let se = zerostone::entropy::sample_entropy(&data, 2, 0.5);
 /// assert!((mse1 - se).abs() < 1e-10);
 /// ```
 pub fn multiscale_entropy(
-    data: &[f64],
+    data: &[Float],
     scale: usize,
     m: usize,
-    r: f64,
-    scratch: &mut [f64],
-) -> f64 {
+    r: Float,
+    scratch: &mut [Float],
+) -> Float {
     assert!(!data.is_empty(), "data must not be empty");
     assert!(scale >= 1, "scale must be >= 1, got {}", scale);
     assert!(m >= 1, "m must be >= 1, got {}", m);
@@ -338,11 +340,11 @@ pub fn multiscale_entropy(
     // Coarse-grain: average non-overlapping windows
     for (j, out) in scratch.iter_mut().enumerate().take(coarse_len) {
         let start = j * scale;
-        let mut sum = 0.0f64;
+        let mut sum: Float = 0.0;
         for &val in &data[start..start + scale] {
             sum += val;
         }
-        *out = sum / scale as f64;
+        *out = sum / scale as Float;
     }
 
     sample_entropy(&scratch[..coarse_len], m, r)
@@ -359,7 +361,7 @@ mod tests {
     #[test]
     fn test_sampen_constant_signal() {
         // Constant signal: all templates match at all dimensions -> SampEn = 0
-        let data = [5.0f64; 50];
+        let data = [5.0 as Float; 50];
         let se = sample_entropy(&data, 2, 0.2);
         assert!(
             se.abs() < 1e-10,
@@ -371,9 +373,9 @@ mod tests {
     #[test]
     fn test_sampen_periodic_signal() {
         // Periodic signal: moderate complexity
-        let mut data = [0.0f64; 200];
+        let mut data = [0.0 as Float; 200];
         for (i, val) in data.iter_mut().enumerate() {
-            *val = libm::sin(i as f64 * 0.3);
+            *val = float::sin(i as Float * 0.3);
         }
         let se = sample_entropy(&data, 2, 0.2);
         assert!(
@@ -386,10 +388,10 @@ mod tests {
     #[test]
     fn test_sampen_regularity_ordering() {
         // Constant < periodic complexity
-        let constant = [3.0f64; 100];
-        let mut periodic = [0.0f64; 100];
+        let constant = [3.0 as Float; 100];
+        let mut periodic = [0.0 as Float; 100];
         for (i, val) in periodic.iter_mut().enumerate() {
-            *val = libm::sin(i as f64 * 0.5);
+            *val = float::sin(i as Float * 0.5);
         }
         let se_const = sample_entropy(&constant, 2, 0.2);
         let se_periodic = sample_entropy(&periodic, 2, 0.2);
@@ -405,9 +407,9 @@ mod tests {
     fn test_sampen_returns_inf() {
         // Monotonic data: templates of length m=2 may match but m+1 won't
         // with tight enough tolerance, or no matches at m at all -> inf
-        let mut data = [0.0f64; 50];
+        let mut data = [0.0 as Float; 50];
         for (i, val) in data.iter_mut().enumerate() {
-            *val = i as f64;
+            *val = i as Float;
         }
         let se = sample_entropy(&data, 2, 0.001);
         assert!(se.is_infinite(), "Should return inf, got {}", se);
@@ -416,7 +418,18 @@ mod tests {
     #[test]
     fn test_sampen_non_negative() {
         let data = [
-            1.0, 2.0, 3.0, 2.0, 1.0, 2.0, 3.0, 2.0, 1.0, 2.0, 3.0, 2.0f64,
+            1.0,
+            2.0,
+            3.0,
+            2.0,
+            1.0,
+            2.0,
+            3.0,
+            2.0,
+            1.0,
+            2.0,
+            3.0,
+            2.0 as Float,
         ];
         let se = sample_entropy(&data, 2, 0.5);
         assert!(se >= 0.0, "SampEn should be non-negative, got {}", se);
@@ -452,7 +465,7 @@ mod tests {
 
     #[test]
     fn test_apen_constant_signal() {
-        let data = [3.0f64; 50];
+        let data = [3.0 as Float; 50];
         let ae = approximate_entropy(&data, 2, 0.2);
         assert!(
             ae < 0.01,
@@ -464,7 +477,7 @@ mod tests {
     #[test]
     fn test_apen_always_finite() {
         // Even with tight tolerance, ApEn is finite (self-matches guarantee count >= 1)
-        let mut data = [0.0f64; 50];
+        let mut data = [0.0 as Float; 50];
         for (i, val) in data.iter_mut().enumerate() {
             *val = if i % 2 == 0 { 1.0 } else { -1.0 };
         }
@@ -474,7 +487,7 @@ mod tests {
 
     #[test]
     fn test_apen_non_negative() {
-        let data = [1.0, 2.0, 3.0, 2.0, 1.0, 2.0, 3.0, 2.0, 1.0, 2.0f64];
+        let data = [1.0, 2.0, 3.0, 2.0, 1.0, 2.0, 3.0, 2.0, 1.0, 2.0 as Float];
         let ae = approximate_entropy(&data, 2, 0.5);
         assert!(ae >= 0.0, "ApEn should be non-negative, got {}", ae);
     }
@@ -497,7 +510,7 @@ mod tests {
 
     #[test]
     fn test_spectral_entropy_flat_normalized() {
-        let psd = [1.0f64; 64];
+        let psd = [1.0 as Float; 64];
         let h = spectral_entropy(&psd, true);
         assert!(
             (h - 1.0).abs() < 1e-10,
@@ -509,9 +522,9 @@ mod tests {
     #[test]
     fn test_spectral_entropy_flat_unnormalized() {
         let n = 64;
-        let psd = [1.0f64; 64];
+        let psd = [1.0 as Float; 64];
         let h = spectral_entropy(&psd, false);
-        let expected = libm::log(n as f64);
+        let expected = float::log(n as Float);
         assert!(
             (h - expected).abs() < 1e-10,
             "Flat PSD unnormalized should be ln({}), got {}",
@@ -522,7 +535,7 @@ mod tests {
 
     #[test]
     fn test_spectral_entropy_single_peak() {
-        let mut psd = [0.0f64; 64];
+        let mut psd = [0.0 as Float; 64];
         psd[10] = 100.0;
         let h = spectral_entropy(&psd, true);
         assert!(h < 0.01, "Single peak should give near 0, got {}", h);
@@ -530,11 +543,11 @@ mod tests {
 
     #[test]
     fn test_spectral_entropy_two_peaks() {
-        let mut psd = [0.0f64; 64];
+        let mut psd = [0.0 as Float; 64];
         psd[10] = 1.0;
         psd[30] = 1.0;
         let h = spectral_entropy(&psd, true);
-        let expected = libm::log(2.0) / libm::log(64.0);
+        let expected = float::log(2.0) / float::log(64.0);
         assert!(
             (h - expected).abs() < 1e-10,
             "Two equal peaks should give ln(2)/ln(N), got {} expected {}",
@@ -546,7 +559,7 @@ mod tests {
     #[test]
     fn test_spectral_entropy_normalized_range() {
         // Random-ish PSD values
-        let psd = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0f64];
+        let psd = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0 as Float];
         let h = spectral_entropy(&psd, true);
         assert!(
             h >= 0.0,
@@ -562,7 +575,7 @@ mod tests {
 
     #[test]
     fn test_spectral_entropy_all_zero() {
-        let psd = [0.0f64; 32];
+        let psd = [0.0 as Float; 32];
         let h = spectral_entropy(&psd, true);
         assert!(h.abs() < 1e-10, "All-zero PSD should give 0, got {}", h);
     }
@@ -580,10 +593,28 @@ mod tests {
     #[test]
     fn test_mse_scale1_equals_sampen() {
         let data = [
-            1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0,
-            2.0, 1.0, 2.0f64,
+            1.0,
+            2.0,
+            1.0,
+            2.0,
+            1.0,
+            2.0,
+            1.0,
+            2.0,
+            1.0,
+            2.0,
+            1.0,
+            2.0,
+            1.0,
+            2.0,
+            1.0,
+            2.0,
+            1.0,
+            2.0,
+            1.0,
+            2.0 as Float,
         ];
-        let mut scratch = [0.0f64; 20];
+        let mut scratch = [0.0 as Float; 20];
         let mse1 = multiscale_entropy(&data, 1, 2, 0.5, &mut scratch);
         let se = sample_entropy(&data, 2, 0.5);
         assert!(
@@ -596,8 +627,8 @@ mod tests {
 
     #[test]
     fn test_mse_constant_zero() {
-        let data = [5.0f64; 100];
-        let mut scratch = [0.0f64; 50];
+        let data = [5.0 as Float; 100];
+        let mut scratch = [0.0 as Float; 50];
         // Scale 2: coarse_len = 50, still constant
         let mse = multiscale_entropy(&data, 2, 2, 0.2, &mut scratch);
         assert!(
@@ -609,11 +640,11 @@ mod tests {
 
     #[test]
     fn test_mse_non_negative() {
-        let mut data = [0.0f64; 100];
+        let mut data = [0.0 as Float; 100];
         for (i, val) in data.iter_mut().enumerate() {
-            *val = libm::sin(i as f64 * 0.3);
+            *val = float::sin(i as Float * 0.3);
         }
-        let mut scratch = [0.0f64; 50];
+        let mut scratch = [0.0 as Float; 50];
         let mse = multiscale_entropy(&data, 2, 2, 0.2, &mut scratch);
         assert!(mse >= 0.0, "MSE should be non-negative, got {}", mse);
     }
@@ -621,8 +652,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "scale must be >= 1")]
     fn test_mse_scale_zero() {
-        let data = [1.0f64; 100];
-        let mut scratch = [0.0f64; 100];
+        let data = [1.0 as Float; 100];
+        let mut scratch = [0.0 as Float; 100];
         multiscale_entropy(&data, 0, 2, 0.2, &mut scratch);
     }
 
@@ -630,8 +661,8 @@ mod tests {
     #[should_panic(expected = "coarse_len")]
     fn test_mse_too_short_after_coarsening() {
         // 10 samples, scale=5 -> coarse_len=2, which is <= m+1=3
-        let data = [1.0f64; 10];
-        let mut scratch = [0.0f64; 10];
+        let data = [1.0 as Float; 10];
+        let mut scratch = [0.0 as Float; 10];
         multiscale_entropy(&data, 5, 2, 0.2, &mut scratch);
     }
 }

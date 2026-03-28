@@ -39,6 +39,7 @@
 //! - Ramoser et al. (2000): "Optimal spatial filtering of single trial EEG during imagined hand movement"
 //! - Blankertz et al. (2008): "Optimizing spatial filters for robust EEG single-trial analysis"
 
+use crate::float::Float;
 use crate::linalg::{generalized_eigen, Matrix};
 use crate::stats::OnlineCov;
 
@@ -71,13 +72,13 @@ pub struct UpdateConfig {
     pub update_interval: u64,
 
     /// Regularization parameter for covariance matrices
-    pub regularization: f64,
+    pub regularization: Float,
 
     /// Max iterations for eigenvalue decomposition
     pub max_eigen_iters: usize,
 
     /// Convergence tolerance for eigenvalue decomposition
-    pub eigen_tol: f64,
+    pub eigen_tol: Float,
 }
 
 impl Default for UpdateConfig {
@@ -122,7 +123,7 @@ pub struct AdaptiveCsp<const C: usize, const M: usize, const K: usize, const F: 
 
     /// Current spatial filters (K filters × C channels)
     /// Stored row-major: filters[k*C + c] is k-th filter, c-th channel
-    filters: [f64; F],
+    filters: [Float; F],
 
     /// Update trigger strategy
     update_config: UpdateConfig,
@@ -161,7 +162,7 @@ impl<const C: usize, const M: usize, const K: usize, const F: usize> AdaptiveCsp
     /// # Arguments
     ///
     /// * `trial` - Multi-channel time series \[samples\]\[channels\]
-    pub fn update_class1(&mut self, trial: &[[f64; C]]) {
+    pub fn update_class1(&mut self, trial: &[[Float; C]]) {
         for sample in trial {
             self.cov1.update(sample);
         }
@@ -170,7 +171,7 @@ impl<const C: usize, const M: usize, const K: usize, const F: usize> AdaptiveCsp
     }
 
     /// Update with class 2 trial.
-    pub fn update_class2(&mut self, trial: &[[f64; C]]) {
+    pub fn update_class2(&mut self, trial: &[[Float; C]]) {
         for sample in trial {
             self.cov2.update(sample);
         }
@@ -223,7 +224,7 @@ impl<const C: usize, const M: usize, const K: usize, const F: usize> AdaptiveCsp
     /// # Errors
     ///
     /// Returns error if filters not yet computed.
-    pub fn apply(&self, sample: &[f64; C]) -> Result<[f64; K], CspError> {
+    pub fn apply(&self, sample: &[Float; C]) -> Result<[Float; K], CspError> {
         if !self.filters_ready {
             return Err(CspError::FiltersNotReady);
         }
@@ -244,7 +245,7 @@ impl<const C: usize, const M: usize, const K: usize, const F: usize> AdaptiveCsp
     /// Get current filter matrix (for inspection).
     ///
     /// Returns None if filters not yet computed.
-    pub fn filters(&self) -> Option<&[f64; F]> {
+    pub fn filters(&self) -> Option<&[Float; F]> {
         if self.filters_ready {
             Some(&self.filters)
         } else {
@@ -365,10 +366,10 @@ impl<const C: usize, const M: usize, const K: usize, const F: usize> Default
 /// });
 ///
 /// // Training: update each class with its trials
-/// # let left_trial = [[0.0f64; 8]; 100];
-/// # let right_trial = [[0.0f64; 8]; 100];
-/// # let feet_trial = [[0.0f64; 8]; 100];
-/// # let tongue_trial = [[0.0f64; 8]; 100];
+/// # let left_trial = [[0.0; 8]; 100];
+/// # let right_trial = [[0.0; 8]; 100];
+/// # let feet_trial = [[0.0; 8]; 100];
+/// # let tongue_trial = [[0.0; 8]; 100];
 /// csp.update_class(0, &left_trial);   // Left hand
 /// csp.update_class(1, &right_trial);  // Right hand
 /// csp.update_class(2, &feet_trial);   // Feet
@@ -378,7 +379,7 @@ impl<const C: usize, const M: usize, const K: usize, const F: usize> Default
 /// csp.recompute_filters().unwrap();
 ///
 /// // Apply to new sample - returns N×K = 16 features
-/// let sample = [0.0f64; 8];
+/// let sample = [0.0; 8];
 /// let features = csp.apply(&sample).unwrap();
 /// assert_eq!(features.len(), 16);
 /// ```
@@ -402,7 +403,7 @@ pub struct MulticlassCsp<
     /// CSP filters for all classes
     /// Indexed as: filters[class * F + filter * C + channel]
     /// Total size: N × K × C = T
-    filters: [f64; T],
+    filters: [Float; T],
 
     /// Configuration for filter computation
     config: UpdateConfig,
@@ -467,7 +468,7 @@ impl<
     /// # Panics
     ///
     /// Panics if `class_idx >= N`.
-    pub fn update_class(&mut self, class_idx: usize, trial: &[[f64; C]]) {
+    pub fn update_class(&mut self, class_idx: usize, trial: &[[Float; C]]) {
         assert!(class_idx < N, "Class index out of bounds");
 
         for sample in trial {
@@ -514,7 +515,7 @@ impl<
     /// # Errors
     ///
     /// Returns error if filters not yet computed.
-    pub fn apply(&self, sample: &[f64; C]) -> Result<[f64; O], CspError> {
+    pub fn apply(&self, sample: &[Float; C]) -> Result<[Float; O], CspError> {
         if !self.filters_ready {
             return Err(CspError::FiltersNotReady);
         }
@@ -552,7 +553,11 @@ impl<
     /// # Panics
     ///
     /// Panics if `class_idx >= N`.
-    pub fn apply_class(&self, class_idx: usize, sample: &[f64; C]) -> Result<[f64; K], CspError> {
+    pub fn apply_class(
+        &self,
+        class_idx: usize,
+        sample: &[Float; C],
+    ) -> Result<[Float; K], CspError> {
         assert!(class_idx < N, "Class index out of bounds");
 
         if !self.filters_ready {
@@ -577,7 +582,7 @@ impl<
     /// Returns None if filters not yet computed.
     ///
     /// Filters are organized as: `filters[class * F + filter * C + channel]`
-    pub fn filters(&self) -> Option<&[f64; T]> {
+    pub fn filters(&self) -> Option<&[Float; T]> {
         if self.filters_ready {
             Some(&self.filters)
         } else {
@@ -592,7 +597,7 @@ impl<
     /// # Panics
     ///
     /// Panics if `class_idx >= N`.
-    pub fn class_filters(&self, class_idx: usize) -> Option<&[f64]> {
+    pub fn class_filters(&self, class_idx: usize) -> Option<&[Float]> {
         assert!(class_idx < N, "Class index out of bounds");
 
         if self.filters_ready {
@@ -654,7 +659,7 @@ impl<
         let c_target: Matrix<C, M> = Matrix::from_array(self.class_cov[class_idx].covariance());
 
         // Compute "rest" covariance (sum of all other classes)
-        let mut c_rest_data = [0.0; M];
+        let mut c_rest_data: [Float; M] = [0.0; M];
         for (other_idx, cov) in self.class_cov.iter().enumerate() {
             if other_idx != class_idx {
                 let other_cov = cov.covariance();
@@ -721,6 +726,7 @@ impl<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::float;
 
     #[test]
     fn test_csp_initialization() {
@@ -772,7 +778,7 @@ mod tests {
         for _ in 0..50 {
             let mut trial = [[0.0; 2]; 10];
             for sample in &mut trial {
-                sample[0] = 1.0 + (libm::sin(0.1) * 0.5); // Signal
+                sample[0] = 1.0 + (float::sin(0.1) * 0.5); // Signal
                 sample[1] = 0.1; // Noise
             }
             csp.update_class1(&trial);
@@ -783,7 +789,7 @@ mod tests {
             let mut trial = [[0.0; 2]; 10];
             for sample in &mut trial {
                 sample[0] = 0.1; // Noise
-                sample[1] = 1.0 + (libm::cos(0.1) * 0.5); // Signal
+                sample[1] = 1.0 + (float::cos(0.1) * 0.5); // Signal
             }
             csp.update_class2(&trial);
         }

@@ -18,9 +18,10 @@
 //!
 //! ```
 //! use zerostone::{WindowType, apply_window, Fft, Complex};
+//! use zerostone::float::Float;
 //!
 //! // Prepare signal for spectral analysis
-//! let mut signal = [1.0f32; 256];
+//! let mut signal = [1.0 as Float; 256];
 //!
 //! // Apply Hann window to reduce spectral leakage
 //! apply_window(&mut signal, WindowType::Hann);
@@ -42,7 +43,7 @@
 //! let coeff = window_coefficient(WindowType::Hamming, 10, 256);
 //! ```
 
-use core::f64::consts::PI;
+use crate::float::{self, Float};
 
 /// Window function types for spectral analysis.
 ///
@@ -118,7 +119,7 @@ pub enum WindowType {
 /// assert!(middle > 0.99); // Maximum at center
 /// ```
 #[inline]
-pub fn window_coefficient(window: WindowType, index: usize, length: usize) -> f32 {
+pub fn window_coefficient(window: WindowType, index: usize, length: usize) -> Float {
     assert!(length > 0, "Window length must be positive");
     assert!(index < length, "Index must be less than length");
 
@@ -126,29 +127,31 @@ pub fn window_coefficient(window: WindowType, index: usize, length: usize) -> f3
         return 1.0;
     }
 
-    let n = index as f64;
-    let len = (length - 1) as f64;
+    let n = index as Float;
+    let len = (length - 1) as Float;
     let ratio = n / len;
 
     let value = match window {
         WindowType::Rectangular => 1.0,
 
         // Hann: 0.5 * (1 - cos(2*pi*n/(N-1)))
-        WindowType::Hann => 0.5 * (1.0 - libm::cos(2.0 * PI * ratio)),
+        WindowType::Hann => 0.5 * (1.0 - float::cos(2.0 * float::PI * ratio)),
 
         // Hamming: 0.54 - 0.46 * cos(2*pi*n/(N-1))
-        WindowType::Hamming => 0.54 - 0.46 * libm::cos(2.0 * PI * ratio),
+        WindowType::Hamming => 0.54 - 0.46 * float::cos(2.0 * float::PI * ratio),
 
         // Blackman: 0.42 - 0.5*cos(2*pi*n/(N-1)) + 0.08*cos(4*pi*n/(N-1))
         WindowType::Blackman => {
-            0.42 - 0.5 * libm::cos(2.0 * PI * ratio) + 0.08 * libm::cos(4.0 * PI * ratio)
+            0.42 - 0.5 * float::cos(2.0 * float::PI * ratio)
+                + 0.08 * float::cos(4.0 * float::PI * ratio)
         }
 
         // Blackman-Harris (4-term):
         // 0.35875 - 0.48829*cos(2*pi*n/(N-1)) + 0.14128*cos(4*pi*n/(N-1)) - 0.01168*cos(6*pi*n/(N-1))
         WindowType::BlackmanHarris => {
-            0.35875 - 0.48829 * libm::cos(2.0 * PI * ratio) + 0.14128 * libm::cos(4.0 * PI * ratio)
-                - 0.01168 * libm::cos(6.0 * PI * ratio)
+            0.35875 - 0.48829 * float::cos(2.0 * float::PI * ratio)
+                + 0.14128 * float::cos(4.0 * float::PI * ratio)
+                - 0.01168 * float::cos(6.0 * float::PI * ratio)
         }
     };
 
@@ -157,7 +160,7 @@ pub fn window_coefficient(window: WindowType, index: usize, length: usize) -> f3
     if value < 0.0 {
         0.0
     } else {
-        value as f32
+        value
     }
 }
 
@@ -180,8 +183,9 @@ pub fn window_coefficient(window: WindowType, index: usize, length: usize) -> f3
 ///
 /// ```
 /// use zerostone::{WindowType, apply_window};
+/// use zerostone::float::Float;
 ///
-/// let mut signal = [1.0f32; 128];
+/// let mut signal = [1.0 as Float; 128];
 /// apply_window(&mut signal, WindowType::Hann);
 ///
 /// // Endpoints are now near zero
@@ -189,7 +193,7 @@ pub fn window_coefficient(window: WindowType, index: usize, length: usize) -> f3
 /// assert!(signal[127] < 0.01);
 /// ```
 #[inline]
-pub fn apply_window(signal: &mut [f32], window: WindowType) {
+pub fn apply_window(signal: &mut [Float], window: WindowType) {
     let len = signal.len();
     if len == 0 {
         return;
@@ -197,37 +201,6 @@ pub fn apply_window(signal: &mut [f32], window: WindowType) {
 
     for (i, sample) in signal.iter_mut().enumerate() {
         *sample *= window_coefficient(window, i, len);
-    }
-}
-
-/// Applies a window function to a signal buffer in-place (f64 precision).
-///
-/// Same as [`apply_window`] but for double-precision signals.
-/// Use this when working with high dynamic range signals or when
-/// maximum numerical precision is required.
-///
-/// # Arguments
-///
-/// * `signal` - Signal buffer to window (modified in-place)
-/// * `window` - Window type to apply
-///
-/// # Example
-///
-/// ```
-/// use zerostone::{WindowType, apply_window_f64};
-///
-/// let mut signal = [1.0f64; 128];
-/// apply_window_f64(&mut signal, WindowType::Blackman);
-/// ```
-#[inline]
-pub fn apply_window_f64(signal: &mut [f64], window: WindowType) {
-    let len = signal.len();
-    if len == 0 {
-        return;
-    }
-
-    for (i, sample) in signal.iter_mut().enumerate() {
-        *sample *= window_coefficient(window, i, len) as f64;
     }
 }
 
@@ -259,16 +232,16 @@ pub fn apply_window_f64(signal: &mut [f64], window: WindowType) {
 /// let hann_gain = coherent_gain(WindowType::Hann, 256);
 /// assert!((hann_gain - 0.5).abs() < 0.01);
 /// ```
-pub fn coherent_gain(window: WindowType, length: usize) -> f64 {
+pub fn coherent_gain(window: WindowType, length: usize) -> Float {
     if length == 0 {
         return 0.0;
     }
 
-    let sum: f64 = (0..length)
-        .map(|i| window_coefficient(window, i, length) as f64)
+    let sum: Float = (0..length)
+        .map(|i| window_coefficient(window, i, length))
         .sum();
 
-    sum / length as f64
+    sum / length as Float
 }
 
 /// Computes the noise equivalent bandwidth (ENBW) of a window.
@@ -299,16 +272,16 @@ pub fn coherent_gain(window: WindowType, length: usize) -> f64 {
 /// let hann_enbw = equivalent_noise_bandwidth(WindowType::Hann, 256);
 /// assert!((hann_enbw - 1.5).abs() < 0.05);
 /// ```
-pub fn equivalent_noise_bandwidth(window: WindowType, length: usize) -> f64 {
+pub fn equivalent_noise_bandwidth(window: WindowType, length: usize) -> Float {
     if length == 0 {
         return 0.0;
     }
 
-    let mut sum = 0.0;
-    let mut sum_sq = 0.0;
+    let mut sum: Float = 0.0;
+    let mut sum_sq: Float = 0.0;
 
     for i in 0..length {
-        let w = window_coefficient(window, i, length) as f64;
+        let w = window_coefficient(window, i, length);
         sum += w;
         sum_sq += w * w;
     }
@@ -318,7 +291,7 @@ pub fn equivalent_noise_bandwidth(window: WindowType, length: usize) -> f64 {
     }
 
     // ENBW = N * sum(w^2) / sum(w)^2
-    length as f64 * sum_sq / (sum * sum)
+    length as Float * sum_sq / (sum * sum)
 }
 
 #[cfg(test)]
@@ -412,7 +385,7 @@ mod tests {
 
     #[test]
     fn test_apply_window_in_place() {
-        let mut signal = [1.0f32; 64];
+        let mut signal = [1.0 as Float; 64];
         apply_window(&mut signal, WindowType::Hann);
 
         // Check endpoints are near zero
@@ -424,18 +397,8 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_window_f64() {
-        let mut signal = [1.0f64; 64];
-        apply_window_f64(&mut signal, WindowType::Hamming);
-
-        // Check Hamming endpoints (~0.08)
-        assert!((signal[0] - 0.08).abs() < 0.01);
-        assert!((signal[63] - 0.08).abs() < 0.01);
-    }
-
-    #[test]
     fn test_apply_window_empty() {
-        let mut signal: [f32; 0] = [];
+        let mut signal: [Float; 0] = [];
         apply_window(&mut signal, WindowType::Hann); // Should not panic
     }
 

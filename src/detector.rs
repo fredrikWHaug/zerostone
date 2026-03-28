@@ -1,3 +1,5 @@
+use crate::float::{self, Float};
+
 /// Detector state for threshold crossing detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetectorState {
@@ -27,7 +29,7 @@ pub struct SpikeEvent {
     /// Channel index where spike was detected
     pub channel: usize,
     /// Sample value that triggered the detection
-    pub amplitude: f32,
+    pub amplitude: Float,
 }
 
 /// Collection of spike events from a single multi-channel sample.
@@ -130,7 +132,7 @@ impl<const C: usize> SpikeEvents<C> {
 /// }
 /// ```
 pub struct ThresholdDetector<const C: usize> {
-    threshold: f32,
+    threshold: Float,
     refractory_samples: u32,
     refractory_counter: [u32; C],
 }
@@ -148,7 +150,7 @@ impl<const C: usize> ThresholdDetector<C> {
     /// // Detect spikes above 3.0 with 100-sample refractory period
     /// let detector: ThresholdDetector<32> = ThresholdDetector::new(3.0, 100);
     /// ```
-    pub fn new(threshold: f32, refractory_samples: u32) -> Self {
+    pub fn new(threshold: Float, refractory_samples: u32) -> Self {
         Self {
             threshold,
             refractory_samples,
@@ -162,7 +164,7 @@ impl<const C: usize> ThresholdDetector<C> {
     ///
     /// # Performance
     /// O(C) - checks all channels sequentially
-    pub fn process_sample(&mut self, samples: &[f32; C]) -> Option<SpikeEvent> {
+    pub fn process_sample(&mut self, samples: &[Float; C]) -> Option<SpikeEvent> {
         for (ch, &amplitude) in samples.iter().enumerate() {
             // Update refractory counter
             if self.refractory_counter[ch] > 0 {
@@ -171,7 +173,7 @@ impl<const C: usize> ThresholdDetector<C> {
             }
 
             // Check threshold crossing
-            if libm::fabsf(amplitude) > self.threshold {
+            if float::abs(amplitude) > self.threshold {
                 // Trigger detection
                 self.refractory_counter[ch] = self.refractory_samples;
                 return Some(SpikeEvent {
@@ -198,7 +200,7 @@ impl<const C: usize> ThresholdDetector<C> {
     /// let events = detector.process_sample_all(&samples);
     /// assert_eq!(events.len(), 2);
     /// ```
-    pub fn process_sample_all(&mut self, samples: &[f32; C]) -> SpikeEvents<C> {
+    pub fn process_sample_all(&mut self, samples: &[Float; C]) -> SpikeEvents<C> {
         let mut events = SpikeEvents::new();
 
         for (ch, &amplitude) in samples.iter().enumerate() {
@@ -209,7 +211,7 @@ impl<const C: usize> ThresholdDetector<C> {
             }
 
             // Check threshold crossing
-            if libm::fabsf(amplitude) > self.threshold {
+            if float::abs(amplitude) > self.threshold {
                 self.refractory_counter[ch] = self.refractory_samples;
                 events.push(SpikeEvent {
                     channel: ch,
@@ -229,7 +231,7 @@ impl<const C: usize> ThresholdDetector<C> {
     ///
     /// # Returns
     /// `Some(amplitude)` if threshold crossed, `None` otherwise
-    pub fn process_channel(&mut self, channel: usize, sample: f32) -> Option<f32> {
+    pub fn process_channel(&mut self, channel: usize, sample: Float) -> Option<Float> {
         if channel >= C {
             return None;
         }
@@ -241,7 +243,7 @@ impl<const C: usize> ThresholdDetector<C> {
         }
 
         // Check threshold crossing
-        if libm::fabsf(sample) > self.threshold {
+        if float::abs(sample) > self.threshold {
             self.refractory_counter[channel] = self.refractory_samples;
             return Some(sample);
         }
@@ -268,12 +270,12 @@ impl<const C: usize> ThresholdDetector<C> {
     }
 
     /// Updates the detection threshold.
-    pub fn set_threshold(&mut self, threshold: f32) {
+    pub fn set_threshold(&mut self, threshold: Float) {
         self.threshold = threshold;
     }
 
     /// Returns the current threshold.
-    pub fn threshold(&self) -> f32 {
+    pub fn threshold(&self) -> Float {
         self.threshold
     }
 
@@ -324,11 +326,11 @@ impl<const C: usize> ThresholdDetector<C> {
 /// ```
 pub struct AdaptiveThresholdDetector<const C: usize> {
     stats: crate::OnlineStats<C>,
-    multiplier: f32,
+    multiplier: Float,
     min_samples: u64,
     refractory_samples: u32,
     refractory_counter: [u32; C],
-    frozen_threshold: Option<[f32; C]>,
+    frozen_threshold: Option<[Float; C]>,
 }
 
 impl<const C: usize> AdaptiveThresholdDetector<C> {
@@ -345,7 +347,7 @@ impl<const C: usize> AdaptiveThresholdDetector<C> {
     /// // Typical settings: 4×σ, 1ms refractory at 30kHz, 500-sample warm-up
     /// let detector: AdaptiveThresholdDetector<32> = AdaptiveThresholdDetector::new(4.0, 30, 500);
     /// ```
-    pub fn new(multiplier: f32, refractory_samples: u32, min_samples: u64) -> Self {
+    pub fn new(multiplier: Float, refractory_samples: u32, min_samples: u64) -> Self {
         Self {
             stats: crate::OnlineStats::new(),
             multiplier,
@@ -362,16 +364,10 @@ impl<const C: usize> AdaptiveThresholdDetector<C> {
     /// (count < min_samples), only statistics are updated—no detection occurs.
     ///
     /// Returns the first detected event, or None if no detection.
-    pub fn process_sample(&mut self, samples: &[f32; C]) -> Option<SpikeEvent> {
-        // Convert to f64 for stats update
-        let mut samples_f64 = [0.0f64; C];
-        for (i, &s) in samples.iter().enumerate() {
-            samples_f64[i] = s as f64;
-        }
-
+    pub fn process_sample(&mut self, samples: &[Float; C]) -> Option<SpikeEvent> {
         // Always update statistics (unless frozen)
         if self.frozen_threshold.is_none() {
-            self.stats.update(&samples_f64);
+            self.stats.update(samples);
         }
 
         // Don't detect during warm-up period
@@ -391,7 +387,7 @@ impl<const C: usize> AdaptiveThresholdDetector<C> {
             }
 
             // Check threshold crossing
-            if libm::fabsf(amplitude) > thresholds[ch] {
+            if float::abs(amplitude) > thresholds[ch] {
                 self.refractory_counter[ch] = self.refractory_samples;
                 return Some(SpikeEvent {
                     channel: ch,
@@ -423,18 +419,12 @@ impl<const C: usize> AdaptiveThresholdDetector<C> {
     /// let samples = [0.0, 1.0, 1.0, 0.0]; // Channels 1 and 2 above threshold
     /// let events = detector.process_sample_all(&samples);
     /// ```
-    pub fn process_sample_all(&mut self, samples: &[f32; C]) -> SpikeEvents<C> {
+    pub fn process_sample_all(&mut self, samples: &[Float; C]) -> SpikeEvents<C> {
         let mut events = SpikeEvents::new();
-
-        // Convert to f64 for stats update
-        let mut samples_f64 = [0.0f64; C];
-        for (i, &s) in samples.iter().enumerate() {
-            samples_f64[i] = s as f64;
-        }
 
         // Always update statistics (unless frozen)
         if self.frozen_threshold.is_none() {
-            self.stats.update(&samples_f64);
+            self.stats.update(samples);
         }
 
         // Don't detect during warm-up period
@@ -454,7 +444,7 @@ impl<const C: usize> AdaptiveThresholdDetector<C> {
             }
 
             // Check threshold crossing
-            if libm::fabsf(amplitude) > thresholds[ch] {
+            if float::abs(amplitude) > thresholds[ch] {
                 self.refractory_counter[ch] = self.refractory_samples;
                 events.push(SpikeEvent {
                     channel: ch,
@@ -470,21 +460,21 @@ impl<const C: usize> AdaptiveThresholdDetector<C> {
     ///
     /// If frozen, returns the frozen thresholds. Otherwise computes
     /// multiplier × std_dev for each channel.
-    pub fn thresholds(&self) -> [f32; C] {
+    pub fn thresholds(&self) -> [Float; C] {
         if let Some(frozen) = self.frozen_threshold {
             return frozen;
         }
 
         let std_dev = self.stats.std_dev();
-        let mut thresholds = [0.0f32; C];
+        let mut thresholds = [0.0; C];
         for (i, &s) in std_dev.iter().enumerate() {
-            thresholds[i] = self.multiplier * (s as f32);
+            thresholds[i] = self.multiplier * (s as Float);
         }
         thresholds
     }
 
     /// Returns the threshold for a specific channel.
-    pub fn threshold(&self, channel: usize) -> f32 {
+    pub fn threshold(&self, channel: usize) -> Float {
         if channel >= C {
             return 0.0;
         }
@@ -540,12 +530,12 @@ impl<const C: usize> AdaptiveThresholdDetector<C> {
     }
 
     /// Returns the multiplier.
-    pub fn multiplier(&self) -> f32 {
+    pub fn multiplier(&self) -> Float {
         self.multiplier
     }
 
     /// Sets the multiplier.
-    pub fn set_multiplier(&mut self, multiplier: f32) {
+    pub fn set_multiplier(&mut self, multiplier: Float) {
         self.multiplier = multiplier;
     }
 
@@ -627,16 +617,17 @@ impl<const C: usize> AdaptiveThresholdDetector<C> {
 /// # Example: Computing Zero-Crossing Rate
 /// ```
 /// # use zerostone::ZeroCrossingDetector;
+/// # use zerostone::float::{self, Float, PI};
 /// let mut detector: ZeroCrossingDetector<2> = ZeroCrossingDetector::new(0.0);
 ///
 /// // Create a block of samples (e.g., 1-second window at 256 Hz)
 /// let mut block = Vec::new();
 /// for i in 0..256 {
-///     let t = i as f32 * 0.01;
+///     let t = i as Float * 0.01;
 ///     // Channel 0: 10 Hz sine wave
-///     let ch0 = libm::sinf(2.0 * core::f32::consts::PI * 10.0 * t);
+///     let ch0 = float::sin(2.0 * PI * 10.0 * t);
 ///     // Channel 1: 50 Hz sine wave (higher frequency)
-///     let ch1 = libm::sinf(2.0 * core::f32::consts::PI * 50.0 * t);
+///     let ch1 = float::sin(2.0 * PI * 50.0 * t);
 ///     block.push([ch0, ch1]);
 /// }
 ///
@@ -674,9 +665,9 @@ impl<const C: usize> AdaptiveThresholdDetector<C> {
 /// }
 /// ```
 pub struct ZeroCrossingDetector<const C: usize> {
-    threshold: f32,
+    threshold: Float,
     direction: CrossingDirection,
-    prev_sample: [f32; C],
+    prev_sample: [Float; C],
     initialized: bool,
 }
 
@@ -693,7 +684,7 @@ impl<const C: usize> ZeroCrossingDetector<C> {
     /// // Detect crossings with 0.1 threshold for noise rejection
     /// let detector: ZeroCrossingDetector<32> = ZeroCrossingDetector::new(0.1);
     /// ```
-    pub fn new(threshold: f32) -> Self {
+    pub fn new(threshold: Float) -> Self {
         Self {
             threshold,
             direction: CrossingDirection::default(),
@@ -715,7 +706,7 @@ impl<const C: usize> ZeroCrossingDetector<C> {
     /// let detector: ZeroCrossingDetector<8> =
     ///     ZeroCrossingDetector::with_direction(0.1, CrossingDirection::Rising);
     /// ```
-    pub fn with_direction(threshold: f32, direction: CrossingDirection) -> Self {
+    pub fn with_direction(threshold: Float, direction: CrossingDirection) -> Self {
         Self {
             threshold,
             direction,
@@ -750,7 +741,7 @@ impl<const C: usize> ZeroCrossingDetector<C> {
     /// assert!(crossings[2]); // -0.3 → 0.5 crossed
     /// assert!(!crossings[3]); // -0.2 → -0.1 no crossing
     /// ```
-    pub fn detect(&mut self, samples: &[f32; C]) -> [bool; C] {
+    pub fn detect(&mut self, samples: &[Float; C]) -> [bool; C] {
         let mut result = [false; C];
 
         // First sample has no previous - return all false
@@ -803,7 +794,7 @@ impl<const C: usize> ZeroCrossingDetector<C> {
     /// // No channels cross
     /// assert!(!detector.detect_any(&[0.5, -0.5, -0.8, -0.3]));
     /// ```
-    pub fn detect_any(&mut self, samples: &[f32; C]) -> bool {
+    pub fn detect_any(&mut self, samples: &[Float; C]) -> bool {
         let crossings = self.detect(samples);
         crossings.iter().any(|&x| x)
     }
@@ -827,7 +818,7 @@ impl<const C: usize> ZeroCrossingDetector<C> {
     /// let count = detector.detect_count(&[1.0, 1.0, -1.0, -1.0]);
     /// assert_eq!(count, 4);
     /// ```
-    pub fn detect_count(&mut self, samples: &[f32; C]) -> usize {
+    pub fn detect_count(&mut self, samples: &[Float; C]) -> usize {
         let crossings = self.detect(samples);
         crossings.iter().filter(|&&x| x).count()
     }
@@ -846,12 +837,13 @@ impl<const C: usize> ZeroCrossingDetector<C> {
     /// # Example
     /// ```
     /// # use zerostone::ZeroCrossingDetector;
+    /// # use zerostone::Float;
     /// let mut detector: ZeroCrossingDetector<2> = ZeroCrossingDetector::new(0.0);
     ///
     /// // Create test signals
     /// let mut block = Vec::new();
     /// for i in 0..100 {
-    ///     let t = i as f32 * 0.1;
+    ///     let _t = i as Float * 0.1;
     ///     // Channel 0: slow oscillation (low ZCR)
     ///     let ch0 = if i < 50 { -1.0 } else { 1.0 };
     ///     // Channel 1: fast alternation (high ZCR)
@@ -863,7 +855,7 @@ impl<const C: usize> ZeroCrossingDetector<C> {
     /// assert!(zcr[0] < 0.1);  // Low ZCR for slow signal
     /// assert!(zcr[1] > 0.4);  // High ZCR for fast signal
     /// ```
-    pub fn zcr(&mut self, block: &[[f32; C]]) -> [f32; C] {
+    pub fn zcr(&mut self, block: &[[Float; C]]) -> [Float; C] {
         if block.is_empty() {
             return [0.0; C];
         }
@@ -880,17 +872,17 @@ impl<const C: usize> ZeroCrossingDetector<C> {
         }
 
         // Compute proportion
-        let mut zcr = [0.0f32; C];
-        let total_samples = block.len() as f32;
+        let mut zcr = [0.0; C];
+        let total_samples = block.len() as Float;
         for ch in 0..C {
-            zcr[ch] = crossing_counts[ch] as f32 / total_samples;
+            zcr[ch] = crossing_counts[ch] as Float / total_samples;
         }
 
         zcr
     }
 
     /// Returns the current noise rejection threshold.
-    pub fn threshold(&self) -> f32 {
+    pub fn threshold(&self) -> Float {
         self.threshold
     }
 
@@ -908,7 +900,7 @@ impl<const C: usize> ZeroCrossingDetector<C> {
     /// detector.set_threshold(0.2);
     /// assert_eq!(detector.threshold(), 0.2);
     /// ```
-    pub fn set_threshold(&mut self, threshold: f32) {
+    pub fn set_threshold(&mut self, threshold: Float) {
         self.threshold = threshold;
     }
 
@@ -971,8 +963,8 @@ impl<const C: usize> ZeroCrossingDetector<C> {
     /// - 1 if value > threshold
     /// - -1 if value < -threshold
     #[inline]
-    fn get_sign(&self, value: f32) -> i8 {
-        if libm::fabsf(value) <= self.threshold {
+    fn get_sign(&self, value: Float) -> i8 {
+        if float::abs(value) <= self.threshold {
             0
         } else if value > 0.0 {
             1
@@ -995,9 +987,9 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(2)]
     fn threshold_detector_no_panic() {
-        let threshold: f32 = kani::any();
+        let threshold: Float = kani::any();
         let refractory_samples: u32 = kani::any();
-        let input: f32 = kani::any();
+        let input: Float = kani::any();
         let counter: u32 = kani::any();
 
         kani::assume(threshold.is_finite());
@@ -1746,7 +1738,7 @@ mod tests {
     fn test_zero_crossing_empty_block() {
         let mut detector: ZeroCrossingDetector<2> = ZeroCrossingDetector::new(0.0);
 
-        let empty_block: Vec<[f32; 2]> = Vec::new();
+        let empty_block: Vec<[Float; 2]> = Vec::new();
         let zcr = detector.zcr(&empty_block);
 
         assert_eq!(zcr[0], 0.0);

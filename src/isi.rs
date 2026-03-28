@@ -3,6 +3,8 @@
 //! Provides streaming ISI histogram computation, firing regularity metrics,
 //! burst detection, and autocorrelogram construction from spike times.
 
+use crate::float::{self, Float};
+
 /// Fixed-bin ISI histogram with streaming updates.
 ///
 /// Accumulates inter-spike intervals into fixed-width bins. Intervals
@@ -24,10 +26,10 @@
 /// ```
 pub struct IsiHistogram<const BINS: usize> {
     bins: [u64; BINS],
-    bin_width: f64,
+    bin_width: Float,
     overflow: u64,
-    sum: f64,
-    sum_sq: f64,
+    sum: Float,
+    sum_sq: Float,
     count: u64,
 }
 
@@ -36,7 +38,7 @@ impl<const BINS: usize> IsiHistogram<BINS> {
     ///
     /// `bin_width` is in the same units as the spike times (typically seconds or milliseconds).
     /// The histogram covers the range `[0, BINS * bin_width)`.
-    pub fn new(bin_width: f64) -> Self {
+    pub fn new(bin_width: Float) -> Self {
         assert!(bin_width > 0.0, "bin_width must be positive");
         Self {
             bins: [0; BINS],
@@ -49,7 +51,7 @@ impl<const BINS: usize> IsiHistogram<BINS> {
     }
 
     /// Add a single ISI value to the histogram.
-    pub fn add_interval(&mut self, isi: f64) {
+    pub fn add_interval(&mut self, isi: Float) {
         if isi < 0.0 {
             return;
         }
@@ -68,7 +70,7 @@ impl<const BINS: usize> IsiHistogram<BINS> {
     /// Compute ISIs from a sorted spike train and add them all.
     ///
     /// Spike times must be sorted in ascending order.
-    pub fn add_train(&mut self, spike_times: &[f64]) {
+    pub fn add_train(&mut self, spike_times: &[Float]) {
         if spike_times.len() < 2 {
             return;
         }
@@ -81,13 +83,13 @@ impl<const BINS: usize> IsiHistogram<BINS> {
     /// Compute ISIs from sorted spike time indices and sample rate.
     ///
     /// Converts sample indices to time intervals using `1.0 / sample_rate`.
-    pub fn add_train_samples(&mut self, spike_indices: &[usize], sample_rate: f64) {
+    pub fn add_train_samples(&mut self, spike_indices: &[usize], sample_rate: Float) {
         if spike_indices.len() < 2 {
             return;
         }
         let inv_sr = 1.0 / sample_rate;
         for i in 1..spike_indices.len() {
-            let isi = (spike_indices[i] as f64 - spike_indices[i - 1] as f64) * inv_sr;
+            let isi = (spike_indices[i] as Float - spike_indices[i - 1] as Float) * inv_sr;
             self.add_interval(isi);
         }
     }
@@ -112,37 +114,37 @@ impl<const BINS: usize> IsiHistogram<BINS> {
     }
 
     /// Mean ISI computed from all intervals.
-    pub fn mean(&self) -> f64 {
+    pub fn mean(&self) -> Float {
         if self.count == 0 {
             return 0.0;
         }
-        self.sum / self.count as f64
+        self.sum / self.count as Float
     }
 
     /// Variance of ISI computed from all intervals.
-    pub fn variance(&self) -> f64 {
+    pub fn variance(&self) -> Float {
         if self.count < 2 {
             return 0.0;
         }
-        let n = self.count as f64;
+        let n = self.count as Float;
         let mean = self.sum / n;
         self.sum_sq / n - mean * mean
     }
 
     /// Standard deviation of ISI.
-    pub fn std_dev(&self) -> f64 {
+    pub fn std_dev(&self) -> Float {
         let v = self.variance();
         if v <= 0.0 {
             return 0.0;
         }
-        libm::sqrt(v)
+        float::sqrt(v)
     }
 
     /// Coefficient of variation: std / mean.
     ///
     /// CV = 0 for perfectly regular firing. CV = 1 for Poisson firing.
     /// CV > 1 indicates bursty firing.
-    pub fn coefficient_of_variation(&self) -> f64 {
+    pub fn coefficient_of_variation(&self) -> Float {
         let m = self.mean();
         if m <= 0.0 {
             return 0.0;
@@ -154,7 +156,7 @@ impl<const BINS: usize> IsiHistogram<BINS> {
     ///
     /// Returns value in [0, 1]. Higher values indicate more bursty firing.
     /// Typical burst threshold: 5-10 ms for cortical neurons.
-    pub fn burst_index(&self, threshold: f64) -> f64 {
+    pub fn burst_index(&self, threshold: Float) -> Float {
         if self.count == 0 {
             return 0.0;
         }
@@ -164,7 +166,7 @@ impl<const BINS: usize> IsiHistogram<BINS> {
         for i in 0..limit {
             burst_count += self.bins[i];
         }
-        burst_count as f64 / self.count as f64
+        burst_count as Float / self.count as Float
     }
 
     /// Read the histogram bins.
@@ -173,7 +175,7 @@ impl<const BINS: usize> IsiHistogram<BINS> {
     }
 
     /// Bin width.
-    pub fn bin_width(&self) -> f64 {
+    pub fn bin_width(&self) -> Float {
         self.bin_width
     }
 
@@ -219,9 +221,9 @@ impl<const BINS: usize> IsiHistogram<BINS> {
 ///
 /// Returns the number of bins filled in `output`.
 pub fn autocorrelogram(
-    spike_times: &[f64],
-    bin_width: f64,
-    max_lag: f64,
+    spike_times: &[Float],
+    bin_width: Float,
+    max_lag: Float,
     output: &mut [u64],
 ) -> usize {
     let n_bins = (max_lag / bin_width) as usize;
@@ -255,14 +257,14 @@ pub fn autocorrelogram(
 /// Compute the coefficient of variation directly from spike times.
 ///
 /// CV = std(ISI) / mean(ISI). Returns 0.0 if fewer than 2 spikes.
-pub fn isi_cv(spike_times: &[f64]) -> f64 {
+pub fn isi_cv(spike_times: &[Float]) -> Float {
     let n = spike_times.len();
     if n < 2 {
         return 0.0;
     }
-    let mut sum = 0.0;
-    let mut sum_sq = 0.0;
-    let count = (n - 1) as f64;
+    let mut sum: Float = 0.0;
+    let mut sum_sq: Float = 0.0;
+    let count = (n - 1) as Float;
     for i in 1..n {
         let isi = spike_times[i] - spike_times[i - 1];
         sum += isi;
@@ -276,7 +278,7 @@ pub fn isi_cv(spike_times: &[f64]) -> f64 {
     if var <= 0.0 {
         return 0.0;
     }
-    libm::sqrt(var) / mean
+    float::sqrt(var) / mean
 }
 
 /// Local variation (Lv) of ISIs -- measures local firing irregularity.
@@ -287,13 +289,13 @@ pub fn isi_cv(spike_times: &[f64]) -> f64 {
 /// More robust than CV because it compares adjacent intervals rather than global stats.
 ///
 /// Returns 0.0 if fewer than 3 spikes (need at least 2 consecutive ISIs).
-pub fn local_variation(spike_times: &[f64]) -> f64 {
+pub fn local_variation(spike_times: &[Float]) -> Float {
     let n = spike_times.len();
     if n < 3 {
         return 0.0;
     }
     let n_isi = n - 1;
-    let mut sum = 0.0;
+    let mut sum: Float = 0.0;
     for i in 0..n_isi - 1 {
         let isi_a = spike_times[i + 1] - spike_times[i];
         let isi_b = spike_times[i + 2] - spike_times[i + 1];
@@ -303,7 +305,7 @@ pub fn local_variation(spike_times: &[f64]) -> f64 {
             sum += (diff * diff) / (denom * denom);
         }
     }
-    3.0 * sum / (n_isi - 1) as f64
+    3.0 * sum / (n_isi - 1) as Float
 }
 
 /// Compute a cross-correlogram between two sorted spike trains.
@@ -322,10 +324,10 @@ pub fn local_variation(spike_times: &[f64]) -> f64 {
 ///
 /// Returns the number of bins filled in `output`.
 pub fn cross_correlogram(
-    train_a: &[f64],
-    train_b: &[f64],
-    bin_width: f64,
-    max_lag: f64,
+    train_a: &[Float],
+    train_b: &[Float],
+    bin_width: Float,
+    max_lag: Float,
     output: &mut [u64],
 ) -> usize {
     let n_bins = (max_lag / bin_width) as usize;
@@ -392,8 +394,8 @@ pub fn has_refractory_dip(histogram: &[u64], n_refractory_bins: usize) -> bool {
         return false;
     }
 
-    let refractory_mean = refractory_sum as f64 / n_refractory_bins as f64;
-    let baseline_mean = baseline_sum as f64 / n_refractory_bins as f64;
+    let refractory_mean = refractory_sum as Float / n_refractory_bins as Float;
+    let baseline_mean = baseline_sum as Float / n_refractory_bins as Float;
 
     refractory_mean < 0.5 * baseline_mean
 }
@@ -406,7 +408,7 @@ mod tests {
     fn test_histogram_basic() {
         let mut hist = IsiHistogram::<10>::new(10.0); // 10ms bins, using ms units
                                                       // Spike times in ms -- all exactly representable
-        let spike_times = [0.0, 20.0, 40.0, 60.0, 80.0]; // 20ms intervals
+        let spike_times = [0.0, 20.0, 40.0, 60.0, 80.0];
         hist.add_train(&spike_times);
         assert_eq!(hist.total_count(), 4);
         assert_eq!(hist.bins()[2], 4); // bin 2 covers [20, 30)
@@ -488,7 +490,7 @@ mod tests {
 
     #[test]
     fn test_autocorrelogram_empty() {
-        let spike_times: [f64; 0] = [];
+        let spike_times: [Float; 0] = [];
         let mut output = [0u64; 10];
         let n = autocorrelogram(&spike_times, 0.001, 0.050, &mut output);
         for &v in &output[..n] {
@@ -586,7 +588,7 @@ mod tests {
 
     #[test]
     fn test_cross_correlogram_empty() {
-        let train_a: [f64; 0] = [];
+        let train_a: [Float; 0] = [];
         let train_b = [0.0, 0.010];
         let mut output = [0u64; 10];
         let n = cross_correlogram(&train_a, &train_b, 0.005, 0.050, &mut output);

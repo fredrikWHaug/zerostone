@@ -26,7 +26,7 @@
 //! # Basic Usage
 //!
 //! ```
-//! use zerostone::{OasisDeconvolution, StreamingPercentile, DeconvolutionResult};
+//! use zerostone::{OasisDeconvolution, StreamingPercentile, DeconvolutionResult, Float};
 //!
 //! // Create baseline estimator (8th percentile)
 //! let mut baseline: StreamingPercentile<8> = StreamingPercentile::new(0.08);
@@ -36,14 +36,14 @@
 //!     OasisDeconvolution::new(0.95, 0.1);
 //!
 //! // Process streaming calcium imaging data
-//! for frame in &[[1.0f32; 8], [2.0; 8], [3.0; 8]] {
+//! for frame in &[[1.0 as Float; 8], [2.0 as Float; 8], [3.0 as Float; 8]] {
 //!     // Update baseline estimate (StreamingPercentile uses f64)
 //!     let frame_f64 = frame.map(|x| x as f64);
 //!     baseline.update(&frame_f64);
 //!
 //!     if let Some(b64) = baseline.percentile() {
-//!         // Convert baseline to f32 for deconvolution
-//!         let b = b64.map(|x| x as f32);
+//!         // Convert baseline to Float for deconvolution
+//!         let b = b64.map(|x| x as Float);
 //!         let result = deconv.update(frame, &b);
 //!
 //!         // result.calcium = denoised calcium concentration
@@ -94,6 +94,8 @@
 //! of calcium imaging data. PLOS Computational Biology, 13(3), e1005423.
 //! <https://doi.org/10.1371/journal.pcbi.1005423>
 
+use crate::float::{self, Float};
+
 /// Pool representing a contiguous segment of equal calcium values.
 ///
 /// Pools are the fundamental unit of the OASIS active set method. Each pool
@@ -102,9 +104,9 @@
 #[derive(Clone, Copy, Debug)]
 struct Pool {
     /// Calcium concentration for this segment
-    value: f32,
+    value: Float,
     /// Accumulated weight for L1 penalty calculation
-    weight: f32,
+    weight: Float,
     /// Number of timepoints in this pool
     size: u32,
 }
@@ -116,9 +118,9 @@ struct Pool {
 #[derive(Clone, Copy, Debug)]
 pub struct DeconvolutionResult<const C: usize> {
     /// Denoised calcium concentration c\[t\] for each channel
-    pub calcium: [f32; C],
+    pub calcium: [Float; C],
     /// Inferred spike s\[t\] for each channel
-    pub spike: [f32; C],
+    pub spike: [Float; C],
 }
 
 /// OASIS deconvolution for calcium imaging data.
@@ -144,7 +146,7 @@ pub struct DeconvolutionResult<const C: usize> {
 /// # Example
 ///
 /// ```
-/// use zerostone::{OasisDeconvolution, StreamingPercentile};
+/// use zerostone::{OasisDeconvolution, StreamingPercentile, Float};
 ///
 /// // Create deconvolution with gamma=0.95, lambda=0.1
 /// let mut deconv: OasisDeconvolution<8, 256> =
@@ -155,12 +157,12 @@ pub struct DeconvolutionResult<const C: usize> {
 ///     StreamingPercentile::new(0.08);
 ///
 /// // Process streaming data
-/// let sample = [5.0f32; 8];
+/// let sample = [5.0 as Float; 8];
 /// let sample_f64 = sample.map(|x| x as f64);
 /// baseline.update(&sample_f64);
 ///
 /// if let Some(b64) = baseline.percentile() {
-///     let b = b64.map(|x| x as f32);
+///     let b = b64.map(|x| x as Float);
 ///     let result = deconv.update(&sample, &b);
 ///     // result.calcium = denoised calcium trace
 ///     // result.spike = inferred spike train
@@ -168,10 +170,10 @@ pub struct DeconvolutionResult<const C: usize> {
 /// ```
 pub struct OasisDeconvolution<const C: usize, const MAX_POOLS: usize> {
     /// Decay factor γ ∈ (0, 1)
-    gamma: f32,
+    gamma: Float,
 
     /// Sparsity penalty λ (higher = sparser solutions)
-    lambda: f32,
+    lambda: Float,
 
     /// Pools for each channel
     pools: [[Pool; MAX_POOLS]; C],
@@ -180,13 +182,13 @@ pub struct OasisDeconvolution<const C: usize, const MAX_POOLS: usize> {
     pool_count: [usize; C],
 
     /// Previous calcium concentration (for spike extraction)
-    prev_calcium: [f32; C],
+    prev_calcium: [Float; C],
 
     /// Total samples processed
     sample_count: u64,
 
     /// Pre-computed penalty threshold (λ / (1 + γ + γ² + ...))
-    penalty_threshold: f32,
+    penalty_threshold: Float,
 }
 
 impl<const C: usize, const MAX_POOLS: usize> OasisDeconvolution<C, MAX_POOLS> {
@@ -213,7 +215,7 @@ impl<const C: usize, const MAX_POOLS: usize> OasisDeconvolution<C, MAX_POOLS> {
     /// let deconv: OasisDeconvolution<32, 256> =
     ///     OasisDeconvolution::new(0.717, 0.1);
     /// ```
-    pub fn new(gamma: f32, lambda: f32) -> Self {
+    pub fn new(gamma: Float, lambda: Float) -> Self {
         assert!(
             gamma > 0.0 && gamma < 1.0,
             "gamma must be in (0, 1), got {}",
@@ -257,9 +259,9 @@ impl<const C: usize, const MAX_POOLS: usize> OasisDeconvolution<C, MAX_POOLS> {
     /// let deconv: OasisDeconvolution<8, 256> =
     ///     OasisDeconvolution::from_tau(30.0, 0.1, 0.1);
     /// ```
-    pub fn from_tau(sample_rate: f32, tau: f32, lambda: f32) -> Self {
+    pub fn from_tau(sample_rate: Float, tau: Float, lambda: Float) -> Self {
         let dt = 1.0 / sample_rate;
-        let gamma = libm::expf(-dt / tau);
+        let gamma = float::exp(-dt / tau);
         Self::new(gamma, lambda)
     }
 
@@ -282,25 +284,25 @@ impl<const C: usize, const MAX_POOLS: usize> OasisDeconvolution<C, MAX_POOLS> {
     /// # Example
     ///
     /// ```
-    /// use zerostone::{OasisDeconvolution, StreamingPercentile};
+    /// use zerostone::{OasisDeconvolution, StreamingPercentile, Float};
     ///
     /// let mut baseline: StreamingPercentile<4> = StreamingPercentile::new(0.08);
     /// let mut deconv: OasisDeconvolution<4, 256> = OasisDeconvolution::new(0.95, 0.1);
     ///
-    /// let fluorescence = [5.0f32, 6.0, 7.0, 8.0];
+    /// let fluorescence: [Float; 4] = [5.0, 6.0, 7.0, 8.0];
     /// let fluor_f64 = fluorescence.map(|x| x as f64);
     /// baseline.update(&fluor_f64);
     ///
     /// if let Some(b64) = baseline.percentile() {
-    ///     let b = b64.map(|x| x as f32);
+    ///     let b = b64.map(|x| x as Float);
     ///     let result = deconv.update(&fluorescence, &b);
     ///     // Use result.calcium and result.spike
     /// }
     /// ```
     pub fn update(
         &mut self,
-        fluorescence: &[f32; C],
-        baseline: &[f32; C],
+        fluorescence: &[Float; C],
+        baseline: &[Float; C],
     ) -> DeconvolutionResult<C> {
         self.sample_count += 1;
 
@@ -334,7 +336,7 @@ impl<const C: usize, const MAX_POOLS: usize> OasisDeconvolution<C, MAX_POOLS> {
 
     /// Updates a single channel with new observation.
     /// Returns the denoised calcium concentration.
-    fn update_channel(&mut self, ch: usize, observation: f32) -> f32 {
+    fn update_channel(&mut self, ch: usize, observation: Float) -> Float {
         // Handle pool overflow
         if self.pool_count[ch] >= MAX_POOLS {
             // Strategy: merge oldest pools to make room
@@ -408,7 +410,7 @@ impl<const C: usize, const MAX_POOLS: usize> OasisDeconvolution<C, MAX_POOLS> {
 
         // Compute weight update for AR(1) process
         // weight_new = weight1 + γ^size1 * weight2
-        let gamma_power = libm::powf(self.gamma, pool1.size as f32);
+        let gamma_power = float::pow(self.gamma, pool1.size as Float);
         let new_weight = pool1.weight + gamma_power * pool2.weight;
 
         // Compute weighted average value
@@ -479,12 +481,12 @@ impl<const C: usize, const MAX_POOLS: usize> OasisDeconvolution<C, MAX_POOLS> {
     }
 
     /// Returns gamma parameter.
-    pub fn gamma(&self) -> f32 {
+    pub fn gamma(&self) -> Float {
         self.gamma
     }
 
     /// Returns lambda parameter.
-    pub fn lambda(&self) -> f32 {
+    pub fn lambda(&self) -> Float {
         self.lambda
     }
 
@@ -516,7 +518,7 @@ impl<const C: usize, const MAX_POOLS: usize> OasisDeconvolution<C, MAX_POOLS> {
     /// deconv.set_lambda(0.2);
     /// assert_eq!(deconv.lambda(), 0.2);
     /// ```
-    pub fn set_lambda(&mut self, lambda: f32) {
+    pub fn set_lambda(&mut self, lambda: Float) {
         assert!(lambda > 0.0, "lambda must be positive");
         self.lambda = lambda;
         self.penalty_threshold = lambda * (1.0 - self.gamma);
@@ -559,7 +561,7 @@ mod tests {
         let deconv: OasisDeconvolution<1, 256> = OasisDeconvolution::from_tau(30.0, 0.1, 0.1);
 
         // gamma should be exp(-1/3) ≈ 0.7165
-        let expected_gamma = libm::expf(-1.0 / 3.0);
+        let expected_gamma = float::exp(-1.0 / 3.0);
         assert!((deconv.gamma() - expected_gamma).abs() < 0.001);
     }
 
@@ -601,7 +603,7 @@ mod tests {
 
         // Add many diverse samples to create many pools
         for i in 0..100 {
-            let fluorescence = [(i % 10) as f32];
+            let fluorescence = [(i % 10) as Float];
             let _result = deconv.update(&fluorescence, &baseline);
 
             // Should not panic, pool count should stay <= MAX_POOLS
@@ -615,7 +617,7 @@ mod tests {
 
         // Process some data
         for i in 0..50 {
-            deconv.update(&[i as f32, i as f32], &[0.0, 0.0]);
+            deconv.update(&[i as Float, i as Float], &[0.0, 0.0]);
         }
 
         assert!(deconv.sample_count() > 0);
@@ -671,7 +673,7 @@ mod tests {
 
         // Various inputs including negative
         for i in -10..10 {
-            let fluorescence = [i as f32];
+            let fluorescence = [i as Float];
             let baseline = [0.0];
 
             let result = deconv.update(&fluorescence, &baseline);

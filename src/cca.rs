@@ -25,8 +25,8 @@
 //! - Lin et al. (2007): "Frequency recognition based on CCA for SSVEP-based BCIs"
 //! - Chen et al. (2015): "Filter bank CCA for SSVEP frequency recognition"
 
+use crate::float::{self, Float};
 use crate::linalg::{LinalgError, Matrix};
-use core::f64::consts::PI;
 
 /// Errors that can occur during CCA operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,29 +72,30 @@ pub enum CcaError {
 ///
 /// ```
 /// use zerostone::cca::cca;
+/// use zerostone::float::{self, Float};
 ///
 /// // 2 channels, 4 reference components (2 harmonics)
-/// let signals: Vec<[f64; 2]> = (0..100).map(|t| {
-///     let time = t as f64 / 250.0;
-///     [libm::sin(2.0 * core::f64::consts::PI * 10.0 * time),
-///      libm::cos(2.0 * core::f64::consts::PI * 10.0 * time)]
+/// let signals: Vec<[Float; 2]> = (0..100).map(|t| {
+///     let time = t as Float / 250.0;
+///     [float::sin(2.0 * float::PI * 10.0 * time),
+///      float::cos(2.0 * float::PI * 10.0 * time)]
 /// }).collect();
-/// let references: Vec<[f64; 4]> = (0..100).map(|t| {
-///     let time = t as f64 / 250.0;
-///     [libm::sin(2.0 * core::f64::consts::PI * 10.0 * time),
-///      libm::cos(2.0 * core::f64::consts::PI * 10.0 * time),
-///      libm::sin(2.0 * core::f64::consts::PI * 20.0 * time),
-///      libm::cos(2.0 * core::f64::consts::PI * 20.0 * time)]
+/// let references: Vec<[Float; 4]> = (0..100).map(|t| {
+///     let time = t as Float / 250.0;
+///     [float::sin(2.0 * float::PI * 10.0 * time),
+///      float::cos(2.0 * float::PI * 10.0 * time),
+///      float::sin(2.0 * float::PI * 20.0 * time),
+///      float::cos(2.0 * float::PI * 20.0 * time)]
 /// }).collect();
 /// let mut correlations = [0.0; 2];
 /// let n = cca::<2, 4, 4, 16>(&signals, &references, &mut correlations, 1e-6).unwrap();
 /// assert!(correlations[0] > 0.9); // High correlation expected
 /// ```
 pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
-    signals: &[[f64; C]],
-    references: &[[f64; H]],
-    correlations: &mut [f64],
-    regularization: f64,
+    signals: &[[Float; C]],
+    references: &[[Float; H]],
+    correlations: &mut [Float],
+    regularization: Float,
 ) -> Result<usize, LinalgError> {
     assert!(MC == C * C, "MC must equal C * C");
     assert!(MH == H * H, "MH must equal H * H");
@@ -110,8 +111,8 @@ pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
     let n_corr = if C < H { C } else { H };
 
     // 1. Compute means
-    let mut mean_x = [0.0; C];
-    let mut mean_y = [0.0; H];
+    let mut mean_x = [0.0 as Float; C];
+    let mut mean_y = [0.0 as Float; H];
     for i in 0..t {
         for c in 0..C {
             mean_x[c] += signals[i][c];
@@ -120,24 +121,24 @@ pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
             mean_y[h] += references[i][h];
         }
     }
-    let t_f64 = t as f64;
+    let t_float = t as Float;
     for val in mean_x.iter_mut() {
-        *val /= t_f64;
+        *val /= t_float;
     }
     for val in mean_y.iter_mut() {
-        *val /= t_f64;
+        *val /= t_float;
     }
 
     // 2. Compute covariance matrices and cross-covariance
     let mut cxx = Matrix::<C, MC>::zeros();
     let mut cyy = Matrix::<H, MH>::zeros();
     // Cross-covariance stored as H columns of C-vectors: cxy_cols[h][c] = Cxy[c][h]
-    let mut cxy_cols = [[0.0; C]; H];
+    let mut cxy_cols = [[0.0 as Float; C]; H];
 
     for i in 0..t {
         // Centered samples
-        let mut dx = [0.0; C];
-        let mut dy = [0.0; H];
+        let mut dx = [0.0 as Float; C];
+        let mut dy = [0.0 as Float; H];
         for c in 0..C {
             dx[c] = signals[i][c] - mean_x[c];
         }
@@ -170,7 +171,7 @@ pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
     }
 
     // Normalize by T-1
-    let scale = 1.0 / (t_f64 - 1.0);
+    let scale = 1.0 / (t_float - 1.0);
     for r in 0..C {
         for c in 0..C {
             let cur = cxx.get(r, c);
@@ -199,7 +200,7 @@ pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
 
     // 5. Compute W = Lx^{-1} * Cxy (H columns of C-vectors)
     // w_cols[h] = Lx.forward_substitute(cxy_cols[h])
-    let mut w_cols = [[0.0; C]; H];
+    let mut w_cols = [[0.0 as Float; C]; H];
     for (w_col, cxy_col) in w_cols.iter_mut().zip(cxy_cols.iter()) {
         *w_col = lx.forward_substitute(cxy_col);
     }
@@ -213,7 +214,7 @@ pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
     let mut m = Matrix::<H, MH>::zeros();
     #[allow(clippy::needless_range_loop)]
     for c in 0..C {
-        let mut w_row = [0.0; H];
+        let mut w_row = [0.0 as Float; H];
         for h in 0..H {
             w_row[h] = w_cols[h][c];
         }
@@ -239,7 +240,7 @@ pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
         .take(n_corr)
     {
         if ev > 0.0 {
-            let rho = libm::sqrt(ev);
+            let rho = float::sqrt(ev);
             *corr = if rho > 1.0 { 1.0 } else { rho };
         } else {
             *corr = 0.0;
@@ -268,17 +269,18 @@ pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
 ///
 /// ```
 /// use zerostone::cca::fill_ssvep_references;
+/// use zerostone::float::Float;
 ///
 /// // Generate references for 10 Hz with 2 harmonics (H=4) over 100 samples
-/// let mut refs = [[0.0f64; 4]; 100];
+/// let mut refs = [[0.0 as Float; 4]; 100];
 /// fill_ssvep_references::<4>(250.0, 10.0, &mut refs);
 /// // refs[t] = [sin(2*pi*10*t/250), cos(2*pi*10*t/250),
 /// //            sin(2*pi*20*t/250), cos(2*pi*20*t/250)]
 /// ```
 pub fn fill_ssvep_references<const H: usize>(
-    sample_rate: f64,
-    frequency: f64,
-    output: &mut [[f64; H]],
+    sample_rate: Float,
+    frequency: Float,
+    output: &mut [[Float; H]],
 ) {
     assert!(H >= 2, "Need at least 2 reference components (1 harmonic)");
     #[allow(clippy::manual_is_multiple_of)]
@@ -289,12 +291,12 @@ pub fn fill_ssvep_references<const H: usize>(
     let n_harmonics = H / 2;
 
     for (t, sample) in output.iter_mut().enumerate() {
-        let time = t as f64 / sample_rate;
+        let time = t as Float / sample_rate;
         for k in 0..n_harmonics {
-            let freq = frequency * (k + 1) as f64;
-            let angle = 2.0 * PI * freq * time;
-            sample[2 * k] = libm::sin(angle);
-            sample[2 * k + 1] = libm::cos(angle);
+            let freq = frequency * (k + 1) as Float;
+            let angle = 2.0 * float::PI * freq * time;
+            sample[2 * k] = float::sin(angle);
+            sample[2 * k + 1] = float::cos(angle);
         }
     }
 }
@@ -326,12 +328,12 @@ pub fn fill_ssvep_references<const H: usize>(
 ///
 /// `(best_frequency_index, max_canonical_correlation)`
 pub fn ssvep_detect<const C: usize, const MC: usize, const H: usize, const MH: usize>(
-    signals: &[[f64; C]],
-    sample_rate: f64,
-    target_frequencies: &[f64],
-    ref_buffer: &mut [[f64; H]],
-    regularization: f64,
-) -> Result<(usize, f64), CcaError> {
+    signals: &[[Float; C]],
+    sample_rate: Float,
+    target_frequencies: &[Float],
+    ref_buffer: &mut [[Float; H]],
+    regularization: Float,
+) -> Result<(usize, Float), CcaError> {
     if target_frequencies.is_empty() {
         return Err(CcaError::NoTargetFrequencies);
     }
@@ -343,8 +345,8 @@ pub fn ssvep_detect<const C: usize, const MC: usize, const H: usize, const MH: u
     }
 
     let mut best_idx = 0;
-    let mut best_corr = -1.0;
-    let mut correlations = [0.0; H]; // max H correlations per frequency
+    let mut best_corr: Float = -1.0;
+    let mut correlations = [0.0 as Float; H]; // max H correlations per frequency
 
     for (freq_idx, &freq) in target_frequencies.iter().enumerate() {
         // Generate reference signals for this frequency
@@ -382,26 +384,26 @@ mod tests {
 
     // Helper: generate synthetic SSVEP signal
     fn generate_ssvep_signal<const C: usize>(
-        sample_rate: f64,
+        sample_rate: Float,
         n_samples: usize,
-        frequency: f64,
-        snr_linear: f64,
-    ) -> Vec<[f64; C]> {
-        let mut signals = vec![[0.0; C]; n_samples];
+        frequency: Float,
+        snr_linear: Float,
+    ) -> Vec<[Float; C]> {
+        let mut signals = vec![[0.0 as Float; C]; n_samples];
         // Simple LCG for deterministic pseudo-random noise
         let mut rng_state: u64 = 12345;
 
         for (t, sample) in signals.iter_mut().enumerate() {
-            let time = t as f64 / sample_rate;
+            let time = t as Float / sample_rate;
             for (c, val) in sample.iter_mut().enumerate() {
                 // LCG pseudo-random
                 rng_state = rng_state
                     .wrapping_mul(6364136223846793005)
                     .wrapping_add(1442695040888963407);
-                let noise = ((rng_state >> 33) as f64 / (1u64 << 31) as f64) * 2.0 - 1.0;
+                let noise = ((rng_state >> 33) as Float / (1u64 << 31) as Float) * 2.0 - 1.0;
                 // Scale noise and different phase per channel
-                let phase = c as f64 * 0.3;
-                let signal = libm::sin(2.0 * PI * frequency * time + phase);
+                let phase = c as Float * 0.3;
+                let signal = float::sin(2.0 * float::PI * frequency * time + phase);
                 *val = signal * snr_linear + noise;
             }
         }
@@ -410,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_fill_ssvep_references_basic() {
-        let mut refs = [[0.0f64; 4]; 250];
+        let mut refs = [[0.0 as Float; 4]; 250];
         fill_ssvep_references::<4>(250.0, 10.0, &mut refs);
 
         // At t=0, all sin should be 0, all cos should be 1
@@ -425,17 +427,16 @@ mod tests {
 
     #[test]
     fn test_fill_ssvep_references_correct_harmonics() {
-        let mut refs = [[0.0f64; 6]; 1000];
+        let mut refs = [[0.0 as Float; 6]; 1000];
         fill_ssvep_references::<6>(1000.0, 10.0, &mut refs);
 
         // 3 harmonics: 10 Hz, 20 Hz, 30 Hz
         // At t=250 samples (0.25 sec):
-        // sin(2*pi*10*0.25) = sin(5*pi/2) = 1 (approx, actually sin(pi/2) for the period)
         let t = 250;
-        let time = t as f64 / 1000.0; // 0.25 sec
-        let expected_sin_10 = libm::sin(2.0 * PI * 10.0 * time);
-        let expected_cos_10 = libm::cos(2.0 * PI * 10.0 * time);
-        let expected_sin_20 = libm::sin(2.0 * PI * 20.0 * time);
+        let time = t as Float / 1000.0; // 0.25 sec
+        let expected_sin_10 = float::sin(2.0 * float::PI * 10.0 * time);
+        let expected_cos_10 = float::cos(2.0 * float::PI * 10.0 * time);
+        let expected_sin_20 = float::sin(2.0 * float::PI * 20.0 * time);
 
         assert!((refs[t][0] - expected_sin_10).abs() < 1e-10);
         assert!((refs[t][1] - expected_cos_10).abs() < 1e-10);
@@ -445,16 +446,16 @@ mod tests {
     #[test]
     fn test_cca_perfect_correlation() {
         // When signals ARE the references, correlation should be ~1.0
-        let sample_rate = 250.0;
-        let freq = 12.0;
+        let sample_rate: Float = 250.0;
+        let freq: Float = 12.0;
 
-        let mut refs = [[0.0f64; 4]; 200];
+        let mut refs = [[0.0 as Float; 4]; 200];
         fill_ssvep_references::<4>(sample_rate, freq, &mut refs);
 
         // Use first 2 reference columns as "signals"
-        let signals: Vec<[f64; 2]> = refs.iter().map(|r| [r[0], r[1]]).collect();
+        let signals: Vec<[Float; 2]> = refs.iter().map(|r| [r[0], r[1]]).collect();
 
-        let mut correlations = [0.0; 2];
+        let mut correlations = [0.0 as Float; 2];
         let n_corr = cca::<2, 4, 4, 16>(&signals, &refs, &mut correlations, 1e-6).unwrap();
 
         assert_eq!(n_corr, 2);
@@ -469,24 +470,24 @@ mod tests {
     fn test_cca_uncorrelated_signals() {
         // When signals are at a different frequency than references
         let n = 500;
-        let sample_rate = 250.0;
+        let sample_rate: Float = 250.0;
 
         // Signals at 10 Hz
-        let signals: Vec<[f64; 2]> = (0..n)
+        let signals: Vec<[Float; 2]> = (0..n)
             .map(|t| {
-                let time = t as f64 / sample_rate;
+                let time = t as Float / sample_rate;
                 [
-                    libm::sin(2.0 * PI * 10.0 * time),
-                    libm::cos(2.0 * PI * 10.0 * time),
+                    float::sin(2.0 * float::PI * 10.0 * time),
+                    float::cos(2.0 * float::PI * 10.0 * time),
                 ]
             })
             .collect();
 
         // References at 37 Hz (incommensurate with 10 Hz)
-        let mut refs = [[0.0f64; 4]; 500];
+        let mut refs = [[0.0 as Float; 4]; 500];
         fill_ssvep_references::<4>(sample_rate, 37.0, &mut refs);
 
-        let mut correlations = [0.0; 2];
+        let mut correlations = [0.0 as Float; 2];
         let _ = cca::<2, 4, 4, 16>(&signals, &refs, &mut correlations, 1e-6).unwrap();
 
         // Correlation should be low (not exactly 0 due to finite samples)
@@ -502,30 +503,30 @@ mod tests {
         // Generate SSVEP at 12 Hz, test CCA against 8, 10, 12, 15 Hz
         // 12 Hz should have the highest correlation
         let n = 500;
-        let sample_rate = 250.0;
-        let target_freq = 12.0;
+        let sample_rate: Float = 250.0;
+        let target_freq: Float = 12.0;
 
-        let signals: Vec<[f64; 4]> = (0..n)
+        let signals: Vec<[Float; 4]> = (0..n)
             .map(|t| {
-                let time = t as f64 / sample_rate;
+                let time = t as Float / sample_rate;
                 [
-                    libm::sin(2.0 * PI * target_freq * time) + 0.1,
-                    libm::cos(2.0 * PI * target_freq * time) + 0.2,
-                    libm::sin(2.0 * PI * target_freq * time + 0.5),
-                    libm::cos(2.0 * PI * target_freq * time + 0.8),
+                    float::sin(2.0 * float::PI * target_freq * time) + 0.1,
+                    float::cos(2.0 * float::PI * target_freq * time) + 0.2,
+                    float::sin(2.0 * float::PI * target_freq * time + 0.5),
+                    float::cos(2.0 * float::PI * target_freq * time + 0.8),
                 ]
             })
             .collect();
 
-        let test_freqs = [8.0, 10.0, 12.0, 15.0];
+        let test_freqs: [Float; 4] = [8.0, 10.0, 12.0, 15.0];
         let mut best_idx = 0;
-        let mut best_corr = 0.0;
+        let mut best_corr: Float = 0.0;
 
         for (idx, &freq) in test_freqs.iter().enumerate() {
-            let mut refs = [[0.0f64; 4]; 500];
+            let mut refs = [[0.0 as Float; 4]; 500];
             fill_ssvep_references::<4>(sample_rate, freq, &mut refs);
 
-            let mut correlations = [0.0; 4];
+            let mut correlations = [0.0 as Float; 4];
             let _ = cca::<4, 16, 4, 16>(&signals, &refs, &mut correlations, 1e-6).unwrap();
 
             if correlations[0] > best_corr {
@@ -549,23 +550,23 @@ mod tests {
     #[test]
     fn test_ssvep_detect_basic() {
         let n = 500;
-        let sample_rate = 250.0;
-        let target_freq = 10.0;
+        let sample_rate: Float = 250.0;
+        let target_freq: Float = 10.0;
 
-        let signals: Vec<[f64; 4]> = (0..n)
+        let signals: Vec<[Float; 4]> = (0..n)
             .map(|t| {
-                let time = t as f64 / sample_rate;
+                let time = t as Float / sample_rate;
                 [
-                    libm::sin(2.0 * PI * target_freq * time),
-                    libm::cos(2.0 * PI * target_freq * time),
-                    libm::sin(2.0 * PI * target_freq * time + 1.0),
-                    libm::cos(2.0 * PI * target_freq * time + 2.0),
+                    float::sin(2.0 * float::PI * target_freq * time),
+                    float::cos(2.0 * float::PI * target_freq * time),
+                    float::sin(2.0 * float::PI * target_freq * time + 1.0),
+                    float::cos(2.0 * float::PI * target_freq * time + 2.0),
                 ]
             })
             .collect();
 
-        let target_freqs = [8.0, 10.0, 12.0, 15.0];
-        let mut ref_buffer = [[0.0f64; 4]; 500];
+        let target_freqs: [Float; 4] = [8.0, 10.0, 12.0, 15.0];
+        let mut ref_buffer = [[0.0 as Float; 4]; 500];
 
         let (best_idx, best_corr) = ssvep_detect::<4, 16, 4, 16>(
             &signals,
@@ -584,13 +585,13 @@ mod tests {
     fn test_ssvep_detect_with_noise() {
         // Test detection with noisy signals
         let n = 500;
-        let sample_rate = 250.0;
-        let target_freq = 15.0;
+        let sample_rate: Float = 250.0;
+        let target_freq: Float = 15.0;
 
         let signals = generate_ssvep_signal::<8>(sample_rate, n, target_freq, 2.0);
 
-        let target_freqs = [8.0, 10.0, 12.0, 15.0, 20.0];
-        let mut ref_buffer = [[0.0f64; 4]; 500];
+        let target_freqs: [Float; 5] = [8.0, 10.0, 12.0, 15.0, 20.0];
+        let mut ref_buffer = [[0.0 as Float; 4]; 500];
 
         let (best_idx, _) = ssvep_detect::<8, 64, 4, 16>(
             &signals,
@@ -608,15 +609,15 @@ mod tests {
     fn test_cca_more_channels_than_references() {
         // Typical SSVEP: 8 channels, 4 reference components
         let n = 300;
-        let sample_rate = 250.0;
-        let freq = 10.0;
+        let sample_rate: Float = 250.0;
+        let freq: Float = 10.0;
 
         let signals = generate_ssvep_signal::<8>(sample_rate, n, freq, 3.0);
 
-        let mut refs = [[0.0f64; 4]; 300];
+        let mut refs = [[0.0 as Float; 4]; 300];
         fill_ssvep_references::<4>(sample_rate, freq, &mut refs);
 
-        let mut correlations = [0.0; 4];
+        let mut correlations = [0.0 as Float; 4];
         let n_corr = cca::<8, 64, 4, 16>(&signals, &refs, &mut correlations, 1e-6).unwrap();
 
         assert_eq!(n_corr, 4); // min(8, 4) = 4
@@ -629,15 +630,15 @@ mod tests {
     #[test]
     fn test_cca_returns_descending_correlations() {
         let n = 500;
-        let sample_rate = 250.0;
-        let freq = 10.0;
+        let sample_rate: Float = 250.0;
+        let freq: Float = 10.0;
 
         let signals = generate_ssvep_signal::<4>(sample_rate, n, freq, 3.0);
 
-        let mut refs = [[0.0f64; 4]; 500];
+        let mut refs = [[0.0 as Float; 4]; 500];
         fill_ssvep_references::<4>(sample_rate, freq, &mut refs);
 
-        let mut correlations = [0.0; 4];
+        let mut correlations = [0.0 as Float; 4];
         let n_corr = cca::<4, 16, 4, 16>(&signals, &refs, &mut correlations, 1e-6).unwrap();
 
         // Canonical correlations should be in descending order
@@ -655,14 +656,14 @@ mod tests {
     fn test_cca_correlations_bounded() {
         // All canonical correlations should be in [0, 1]
         let n = 200;
-        let sample_rate = 250.0;
+        let sample_rate: Float = 250.0;
 
         let signals = generate_ssvep_signal::<4>(sample_rate, n, 10.0, 1.0);
 
-        let mut refs = [[0.0f64; 4]; 200];
+        let mut refs = [[0.0 as Float; 4]; 200];
         fill_ssvep_references::<4>(sample_rate, 10.0, &mut refs);
 
-        let mut correlations = [0.0; 4];
+        let mut correlations = [0.0 as Float; 4];
         let n_corr = cca::<4, 16, 4, 16>(&signals, &refs, &mut correlations, 1e-6).unwrap();
 
         for &corr in correlations.iter().take(n_corr) {
@@ -676,8 +677,8 @@ mod tests {
 
     #[test]
     fn test_ssvep_detect_empty_frequencies() {
-        let signals = [[0.0f64; 4]; 100];
-        let mut ref_buffer = [[0.0f64; 4]; 100];
+        let signals = [[0.0 as Float; 4]; 100];
+        let mut ref_buffer = [[0.0 as Float; 4]; 100];
 
         let result = ssvep_detect::<4, 16, 4, 16>(&signals, 250.0, &[], &mut ref_buffer, 1e-6);
         assert_eq!(result, Err(CcaError::NoTargetFrequencies));
@@ -685,8 +686,8 @@ mod tests {
 
     #[test]
     fn test_ssvep_detect_insufficient_samples() {
-        let signals = [[0.0f64; 4]; 1]; // Only 1 sample
-        let mut ref_buffer = [[0.0f64; 4]; 1];
+        let signals = [[0.0 as Float; 4]; 1]; // Only 1 sample
+        let mut ref_buffer = [[0.0 as Float; 4]; 1];
 
         let result = ssvep_detect::<4, 16, 4, 16>(&signals, 250.0, &[10.0], &mut ref_buffer, 1e-6);
         assert_eq!(result, Err(CcaError::InsufficientSamples));
@@ -694,9 +695,9 @@ mod tests {
 
     #[test]
     fn test_cca_dimension_mismatch() {
-        let signals = [[0.0f64; 2]; 100];
-        let refs = [[0.0f64; 4]; 50]; // Different length
-        let mut correlations = [0.0; 2];
+        let signals = [[0.0 as Float; 2]; 100];
+        let refs = [[0.0 as Float; 4]; 50]; // Different length
+        let mut correlations = [0.0 as Float; 2];
 
         let result = cca::<2, 4, 4, 16>(&signals, &refs, &mut correlations, 1e-6);
         assert!(result.is_err());
@@ -706,15 +707,15 @@ mod tests {
     fn test_cca_16_channels() {
         // Test with 16 channels to verify larger matrix handling
         let n = 500;
-        let sample_rate = 250.0;
-        let freq = 12.0;
+        let sample_rate: Float = 250.0;
+        let freq: Float = 12.0;
 
         let signals = generate_ssvep_signal::<16>(sample_rate, n, freq, 3.0);
 
-        let mut refs = [[0.0f64; 4]; 500];
+        let mut refs = [[0.0 as Float; 4]; 500];
         fill_ssvep_references::<4>(sample_rate, freq, &mut refs);
 
-        let mut correlations = [0.0; 4];
+        let mut correlations = [0.0 as Float; 4];
         let n_corr = cca::<16, 256, 4, 16>(&signals, &refs, &mut correlations, 1e-6).unwrap();
 
         assert_eq!(n_corr, 4);
@@ -727,14 +728,14 @@ mod tests {
     #[test]
     fn test_multi_frequency_detection_accuracy() {
         // Test detection across multiple frequencies - each should be correctly identified
-        let sample_rate = 250.0;
+        let sample_rate: Float = 250.0;
         let n = 500;
-        let target_freqs = [8.0, 10.0, 12.0, 15.0];
+        let target_freqs: [Float; 4] = [8.0, 10.0, 12.0, 15.0];
 
         let mut correct = 0;
         for (true_idx, &true_freq) in target_freqs.iter().enumerate() {
             let signals = generate_ssvep_signal::<4>(sample_rate, n, true_freq, 3.0);
-            let mut ref_buffer = [[0.0f64; 4]; 500];
+            let mut ref_buffer = [[0.0 as Float; 4]; 500];
 
             let (detected_idx, _) = ssvep_detect::<4, 16, 4, 16>(
                 &signals,

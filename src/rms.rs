@@ -41,13 +41,15 @@
 ///     println!("Channel 0 power: {}", power_vals[0]);
 /// }
 /// ```
+use crate::float::{self, Float};
+
 pub struct WindowedRms<const C: usize, const WINDOW_SIZE: usize> {
     /// Circular buffer of multi-channel samples
-    buffer: [[f32; C]; WINDOW_SIZE],
+    buffer: [[Float; C]; WINDOW_SIZE],
     /// Write position in circular buffer
     index: usize,
     /// Per-channel running sum of squared values
-    sum_squared: [f32; C],
+    sum_squared: [Float; C],
     /// Number of valid samples in buffer (0 to WINDOW_SIZE)
     count: usize,
 }
@@ -104,7 +106,7 @@ impl<const C: usize, const WINDOW_SIZE: usize> WindowedRms<C, WINDOW_SIZE> {
     /// assert!(rms.rms().is_some());
     /// ```
     #[inline]
-    pub fn process(&mut self, input: &[f32; C]) {
+    pub fn process(&mut self, input: &[Float; C]) {
         // For each channel
         for (ch, &sample) in input.iter().enumerate() {
             let old_sample = self.buffer[self.index][ch];
@@ -151,15 +153,15 @@ impl<const C: usize, const WINDOW_SIZE: usize> WindowedRms<C, WINDOW_SIZE> {
     /// let rms_vals = rms.rms().unwrap();
     /// assert!((rms_vals[0] - 2.0).abs() < 1e-6);
     /// ```
-    pub fn rms(&self) -> Option<[f32; C]> {
+    pub fn rms(&self) -> Option<[Float; C]> {
         if self.count < WINDOW_SIZE {
             return None;
         }
 
         let mut rms_vals = [0.0; C];
-        let n = WINDOW_SIZE as f32;
+        let n = WINDOW_SIZE as Float;
         for (i, &sum_sq) in self.sum_squared.iter().enumerate() {
-            rms_vals[i] = libm::sqrtf(sum_sq / n);
+            rms_vals[i] = float::sqrt(sum_sq / n);
         }
         Some(rms_vals)
     }
@@ -191,13 +193,13 @@ impl<const C: usize, const WINDOW_SIZE: usize> WindowedRms<C, WINDOW_SIZE> {
     /// let rms_vals = rms.rms().unwrap();
     /// assert!((power_vals[0] - rms_vals[0] * rms_vals[0]).abs() < 1e-6);
     /// ```
-    pub fn power(&self) -> Option<[f32; C]> {
+    pub fn power(&self) -> Option<[Float; C]> {
         if self.count < WINDOW_SIZE {
             return None;
         }
 
         let mut power_vals = [0.0; C];
-        let n = WINDOW_SIZE as f32;
+        let n = WINDOW_SIZE as Float;
         for (i, &sum_sq) in self.sum_squared.iter().enumerate() {
             power_vals[i] = sum_sq / n;
         }
@@ -230,7 +232,7 @@ impl<const C: usize, const WINDOW_SIZE: usize> WindowedRms<C, WINDOW_SIZE> {
     /// assert!((block[3][0] - 1.0).abs() < 1e-6);
     /// assert!((block[3][1] - 2.0).abs() < 1e-6);
     /// ```
-    pub fn process_block(&mut self, block: &mut [[f32; C]]) {
+    pub fn process_block(&mut self, block: &mut [[Float; C]]) {
         for sample in block.iter_mut() {
             self.process(sample);
             if let Some(rms_vals) = self.rms() {
@@ -503,7 +505,7 @@ mod tests {
         let mut rms: WindowedRms<1, 4> = WindowedRms::new();
 
         // Use large but not overflow-inducing values
-        let large_val = 1e6;
+        let large_val: Float = 1e6;
         for _ in 0..4 {
             rms.process(&[large_val]);
         }
@@ -523,7 +525,7 @@ mod tests {
 
         // RMS = sqrt((1 + 4 + 9) / 3) = sqrt(14/3) ≈ 2.160
         let rms1 = rms.rms().unwrap()[0];
-        let expected1 = libm::sqrtf(14.0 / 3.0);
+        let expected1 = float::sqrt(14.0 / 3.0);
         assert!((rms1 - expected1).abs() < 1e-6);
 
         // Add 4, window becomes [2, 3, 4]
@@ -531,7 +533,7 @@ mod tests {
 
         // RMS = sqrt((4 + 9 + 16) / 3) = sqrt(29/3) ≈ 3.109
         let rms2 = rms.rms().unwrap()[0];
-        let expected2 = libm::sqrtf(29.0 / 3.0);
+        let expected2 = float::sqrt(29.0 / 3.0);
         assert!((rms2 - expected2).abs() < 1e-6);
     }
 

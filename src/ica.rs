@@ -19,19 +19,20 @@
 //!
 //! ```
 //! use zerostone::ica::{ContrastFunction, Ica};
+//! use zerostone::float::{self, Float};
 //!
 //! // 4-channel ICA
 //! let mut ica: Ica<4, 16> = Ica::new(ContrastFunction::LogCosh);
 //!
 //! // Generate some mixed data (4 channels, 1000 samples)
-//! let data: Vec<[f64; 4]> = (0..1000)
+//! let data: Vec<[Float; 4]> = (0..1000)
 //!     .map(|t| {
-//!         let t = t as f64 / 1000.0;
+//!         let t = t as Float / 1000.0;
 //!         [
-//!             libm::sin(2.0 * core::f64::consts::PI * 5.0 * t) + 0.5 * libm::cos(2.0 * core::f64::consts::PI * 11.0 * t),
-//!             0.7 * libm::sin(2.0 * core::f64::consts::PI * 5.0 * t) + libm::cos(2.0 * core::f64::consts::PI * 11.0 * t),
-//!             libm::sin(2.0 * core::f64::consts::PI * 5.0 * t) + 0.3 * libm::cos(2.0 * core::f64::consts::PI * 11.0 * t),
-//!             0.4 * libm::sin(2.0 * core::f64::consts::PI * 5.0 * t) + 0.9 * libm::cos(2.0 * core::f64::consts::PI * 11.0 * t),
+//!             float::sin(2.0 * float::PI * 5.0 * t) + 0.5 * float::cos(2.0 * float::PI * 11.0 * t),
+//!             0.7 * float::sin(2.0 * float::PI * 5.0 * t) + float::cos(2.0 * float::PI * 11.0 * t),
+//!             float::sin(2.0 * float::PI * 5.0 * t) + 0.3 * float::cos(2.0 * float::PI * 11.0 * t),
+//!             0.4 * float::sin(2.0 * float::PI * 5.0 * t) + 0.9 * float::cos(2.0 * float::PI * 11.0 * t),
 //!         ]
 //!     })
 //!     .collect();
@@ -47,9 +48,9 @@
 //! ica.remove_components(&data, &[0], &mut cleaned).unwrap();
 //! ```
 
+use crate::float::{self, Float};
 use crate::linalg::Matrix;
 use crate::riemannian::reconstruct_from_eigen;
-use libm;
 
 /// Errors specific to ICA operations.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -82,14 +83,14 @@ pub enum ContrastFunction {
 
 /// Apply contrast function, returning (g(u), g'(u)).
 #[inline]
-fn apply_contrast(u: f64, contrast: ContrastFunction) -> (f64, f64) {
+fn apply_contrast(u: Float, contrast: ContrastFunction) -> (Float, Float) {
     match contrast {
         ContrastFunction::LogCosh => {
-            let t = libm::tanh(u);
+            let t = float::tanh(u);
             (t, 1.0 - t * t)
         }
         ContrastFunction::Exp => {
-            let e = libm::exp(-u * u / 2.0);
+            let e = float::exp(-u * u / 2.0);
             (u * e, (1.0 - u * u) * e)
         }
         ContrastFunction::Cube => (u * u * u, 3.0 * u * u),
@@ -99,8 +100,8 @@ fn apply_contrast(u: f64, contrast: ContrastFunction) -> (f64, f64) {
 /// Matrix-vector multiply: result = mat * v.
 #[inline]
 #[allow(clippy::needless_range_loop)]
-fn matvec<const C: usize, const M: usize>(mat: &Matrix<C, M>, v: &[f64; C]) -> [f64; C] {
-    let mut result = [0.0f64; C];
+fn matvec<const C: usize, const M: usize>(mat: &Matrix<C, M>, v: &[Float; C]) -> [Float; C] {
+    let mut result = [0.0; C];
     for i in 0..C {
         let mut sum = 0.0;
         for j in 0..C {
@@ -130,7 +131,7 @@ fn sym_decorrelate<const C: usize, const M: usize>(
         if *val <= 1e-15 {
             return Err(IcaError::NumericalInstability);
         }
-        *val = 1.0 / libm::sqrt(*val);
+        *val = 1.0 / float::sqrt(*val);
     }
 
     // Reconstruct (W * W^T)^{-1/2}
@@ -145,15 +146,15 @@ fn sym_decorrelate<const C: usize, const M: usize>(
 fn check_convergence<const C: usize, const M: usize>(
     w_new: &Matrix<C, M>,
     w_old: &Matrix<C, M>,
-    tol: f64,
+    tol: Float,
 ) -> bool {
     let w_old_t = w_old.transpose();
     let product = w_new.matmul(&w_old_t);
 
-    let mut max_diff = 0.0f64;
+    let mut max_diff: Float = 0.0;
     for i in 0..C {
         let diag_val = product.get(i, i);
-        let diff = libm::fabs(libm::fabs(diag_val) - 1.0);
+        let diff = float::abs(float::abs(diag_val) - 1.0);
         if diff > max_diff {
             max_diff = diff;
         }
@@ -181,7 +182,7 @@ pub struct Ica<const C: usize, const M: usize> {
     /// Mixing matrix (C x C): x = mixing * s + mean
     mixing: Matrix<C, M>,
     /// Per-channel mean
-    mean: [f64; C],
+    mean: [Float; C],
     /// Whether the model has been fitted
     fitted: bool,
     /// Contrast function
@@ -229,9 +230,9 @@ impl<const C: usize, const M: usize> Ica<C, M> {
     #[allow(clippy::needless_range_loop)]
     pub fn fit(
         &mut self,
-        data: &[[f64; C]],
+        data: &[[Float; C]],
         max_iter: usize,
-        tolerance: f64,
+        tolerance: Float,
     ) -> Result<(), IcaError> {
         let n = data.len();
         if n < 2 * C {
@@ -239,13 +240,13 @@ impl<const C: usize, const M: usize> Ica<C, M> {
         }
 
         // Step 1: Compute mean
-        let mut mean = [0.0f64; C];
+        let mut mean = [0.0; C];
         for sample in data {
             for j in 0..C {
                 mean[j] += sample[j];
             }
         }
-        let inv_n = 1.0 / n as f64;
+        let inv_n = 1.0 / n as Float;
         for j in 0..C {
             mean[j] *= inv_n;
         }
@@ -284,7 +285,7 @@ impl<const C: usize, const M: usize> Ica<C, M> {
             .map_err(|_| IcaError::EigenFailed)?;
 
         // Find max eigenvalue for clipping threshold
-        let mut max_eig = 0.0f64;
+        let mut max_eig: Float = 0.0;
         for i in 0..C {
             if eigen.eigenvalues[i] > max_eig {
                 max_eig = eigen.eigenvalues[i];
@@ -293,16 +294,16 @@ impl<const C: usize, const M: usize> Ica<C, M> {
         let eig_floor = max_eig * 1e-12;
 
         // Compute whitening K = D^{-1/2} * E^T and de-whitening K_inv = E * D^{1/2}
-        let mut d_inv_sqrt = [0.0f64; C];
-        let mut d_sqrt = [0.0f64; C];
+        let mut d_inv_sqrt = [0.0; C];
+        let mut d_sqrt = [0.0; C];
         for i in 0..C {
             let eig = if eigen.eigenvalues[i] < eig_floor {
                 eig_floor
             } else {
                 eigen.eigenvalues[i]
             };
-            d_inv_sqrt[i] = 1.0 / libm::sqrt(eig);
-            d_sqrt[i] = libm::sqrt(eig);
+            d_inv_sqrt[i] = 1.0 / float::sqrt(eig);
+            d_sqrt[i] = float::sqrt(eig);
         }
 
         // K = D^{-1/2} * E^T  (whitening matrix)
@@ -335,11 +336,11 @@ impl<const C: usize, const M: usize> Ica<C, M> {
             // G[p][j] = (1/T) * sum_t g(y_p_t) * z_j_t
             // gp[p]   = (1/T) * sum_t g'(y_p_t)
             let mut g_mat = Matrix::<C, M>::zeros();
-            let mut gp = [0.0f64; C];
+            let mut gp = [0.0; C];
 
             for sample in data.iter() {
                 // Whiten on-the-fly: z = K * (x - mean)
-                let mut centered = [0.0f64; C];
+                let mut centered = [0.0; C];
                 for j in 0..C {
                     centered[j] = sample[j] - mean[j];
                 }
@@ -417,12 +418,16 @@ impl<const C: usize, const M: usize> Ica<C, M> {
     ///
     /// * `data` - Input samples (T x C)
     /// * `output` - Output buffer for independent components (T x C)
-    pub fn transform(&self, data: &[[f64; C]], output: &mut [[f64; C]]) -> Result<(), IcaError> {
+    pub fn transform(
+        &self,
+        data: &[[Float; C]],
+        output: &mut [[Float; C]],
+    ) -> Result<(), IcaError> {
         if !self.fitted {
             return Err(IcaError::NotFitted);
         }
         for (i, sample) in data.iter().enumerate() {
-            let mut centered = [0.0f64; C];
+            let mut centered = [0.0; C];
             for j in 0..C {
                 centered[j] = sample[j] - self.mean[j];
             }
@@ -441,8 +446,8 @@ impl<const C: usize, const M: usize> Ica<C, M> {
     /// * `output` - Output buffer for reconstructed data (T x C)
     pub fn inverse_transform(
         &self,
-        sources: &[[f64; C]],
-        output: &mut [[f64; C]],
+        sources: &[[Float; C]],
+        output: &mut [[Float; C]],
     ) -> Result<(), IcaError> {
         if !self.fitted {
             return Err(IcaError::NotFitted);
@@ -467,16 +472,16 @@ impl<const C: usize, const M: usize> Ica<C, M> {
     /// * `output` - Output buffer for cleaned data (T x C)
     pub fn remove_components(
         &self,
-        data: &[[f64; C]],
+        data: &[[Float; C]],
         exclude: &[usize],
-        output: &mut [[f64; C]],
+        output: &mut [[Float; C]],
     ) -> Result<(), IcaError> {
         if !self.fitted {
             return Err(IcaError::NotFitted);
         }
         for (i, sample) in data.iter().enumerate() {
             // Transform to IC space
-            let mut centered = [0.0f64; C];
+            let mut centered = [0.0; C];
             for j in 0..C {
                 centered[j] = sample[j] - self.mean[j];
             }
@@ -513,7 +518,7 @@ impl<const C: usize, const M: usize> Ica<C, M> {
     }
 
     /// Get the per-channel mean.
-    pub fn mean(&self) -> &[f64; C] {
+    pub fn mean(&self) -> &[Float; C] {
         &self.mean
     }
 
@@ -527,9 +532,9 @@ impl<const C: usize, const M: usize> Ica<C, M> {
 mod tests {
     extern crate alloc;
     use super::*;
+    use crate::float;
     use alloc::vec;
     use alloc::vec::Vec;
-    use core::f64::consts::PI;
 
     /// Simple LCG pseudo-random number generator for no_std tests.
     struct Rng {
@@ -541,37 +546,37 @@ mod tests {
             Self { state: seed }
         }
 
-        fn next_f64(&mut self) -> f64 {
+        fn next_f64(&mut self) -> Float {
             // LCG parameters from Numerical Recipes
             self.state = self
                 .state
                 .wrapping_mul(6364136223846793005)
                 .wrapping_add(1442695040888963407);
             // Map to [0, 1)
-            (self.state >> 11) as f64 / (1u64 << 53) as f64
+            (self.state >> 11) as Float / (1u64 << 53) as Float
         }
 
         /// Approximate normal via Box-Muller
-        fn next_normal(&mut self) -> f64 {
+        fn next_normal(&mut self) -> Float {
             let u1 = self.next_f64().max(1e-15);
             let u2 = self.next_f64();
-            libm::sqrt(-2.0 * libm::log(u1)) * libm::cos(2.0 * PI * u2)
+            float::sqrt(-2.0 * float::log(u1)) * float::cos(2.0 * float::PI * u2)
         }
     }
 
     /// Generate a simple signal: sine wave
-    fn sine_wave(n: usize, freq: f64) -> Vec<f64> {
+    fn sine_wave(n: usize, freq: Float) -> Vec<Float> {
         (0..n)
-            .map(|t| libm::sin(2.0 * PI * freq * t as f64 / n as f64))
+            .map(|t| float::sin(2.0 * float::PI * freq * t as Float / n as Float))
             .collect()
     }
 
     /// Generate a square wave
-    fn square_wave(n: usize, freq: f64) -> Vec<f64> {
+    fn square_wave(n: usize, freq: Float) -> Vec<Float> {
         (0..n)
             .map(|t| {
-                let phase = freq * t as f64 / n as f64;
-                if phase - libm::floor(phase) < 0.5 {
+                let phase = freq * t as Float / n as Float;
+                if phase - float::floor(phase) < 0.5 {
                     1.0
                 } else {
                     -1.0
@@ -581,20 +586,20 @@ mod tests {
     }
 
     /// Generate a sawtooth wave
-    fn sawtooth_wave(n: usize, freq: f64) -> Vec<f64> {
+    fn sawtooth_wave(n: usize, freq: Float) -> Vec<Float> {
         (0..n)
             .map(|t| {
-                let phase = freq * t as f64 / n as f64;
-                2.0 * (phase - libm::floor(phase)) - 1.0
+                let phase = freq * t as Float / n as Float;
+                2.0 * (phase - float::floor(phase)) - 1.0
             })
             .collect()
     }
 
     /// Compute Pearson correlation between two signals (absolute value).
-    fn abs_correlation(a: &[f64], b: &[f64]) -> f64 {
-        let n = a.len() as f64;
-        let mean_a: f64 = a.iter().sum::<f64>() / n;
-        let mean_b: f64 = b.iter().sum::<f64>() / n;
+    fn abs_correlation(a: &[Float], b: &[Float]) -> Float {
+        let n = a.len() as Float;
+        let mean_a: Float = a.iter().sum::<Float>() / n;
+        let mean_b: Float = b.iter().sum::<Float>() / n;
 
         let mut cov = 0.0;
         let mut var_a = 0.0;
@@ -610,18 +615,18 @@ mod tests {
         if var_a < 1e-15 || var_b < 1e-15 {
             return 0.0;
         }
-        libm::fabs(cov / libm::sqrt(var_a * var_b))
+        float::abs(cov / float::sqrt(var_a * var_b))
     }
 
     /// Find the best match correlation between sources and recovered signals.
     /// Returns the minimum best-match correlation.
-    fn best_match_correlation(sources: &[Vec<f64>], recovered: &[Vec<f64>]) -> f64 {
+    fn best_match_correlation(sources: &[Vec<Float>], recovered: &[Vec<Float>]) -> Float {
         let n_sources = sources.len();
-        let mut min_corr = f64::MAX;
+        let mut min_corr = float::MAX;
 
         // For each source, find the recovered signal with highest correlation
         for src in sources {
-            let mut best = 0.0f64;
+            let mut best: Float = 0.0;
             for rec in recovered.iter().take(n_sources) {
                 let c = abs_correlation(src, rec);
                 if c > best {
@@ -644,7 +649,7 @@ mod tests {
         // Mixing matrix
         let a = [[0.8, 0.6], [0.3, 0.9]];
 
-        let data: Vec<[f64; 2]> = (0..n)
+        let data: Vec<[Float; 2]> = (0..n)
             .map(|t| {
                 [
                     a[0][0] * s1[t] + a[0][1] * s2[t],
@@ -660,8 +665,8 @@ mod tests {
         ica.transform(&data, &mut sources).unwrap();
 
         // Extract recovered signals
-        let rec0: Vec<f64> = sources.iter().map(|s| s[0]).collect();
-        let rec1: Vec<f64> = sources.iter().map(|s| s[1]).collect();
+        let rec0: Vec<Float> = sources.iter().map(|s| s[0]).collect();
+        let rec1: Vec<Float> = sources.iter().map(|s| s[1]).collect();
 
         let min_corr = best_match_correlation(&[s1, s2], &[rec0, rec1]);
         assert!(
@@ -687,7 +692,7 @@ mod tests {
             [0.2, 0.4, 0.2, 0.9],
         ];
 
-        let data: Vec<[f64; 4]> = (0..n)
+        let data: Vec<[Float; 4]> = (0..n)
             .map(|t| {
                 [
                     a[0][0] * s1[t] + a[0][1] * s2[t] + a[0][2] * s3[t] + a[0][3] * s4[t],
@@ -704,7 +709,7 @@ mod tests {
         let mut sources = vec![[0.0; 4]; n];
         ica.transform(&data, &mut sources).unwrap();
 
-        let recovered: Vec<Vec<f64>> = (0..4)
+        let recovered: Vec<Vec<Float>> = (0..4)
             .map(|c| sources.iter().map(|s| s[c]).collect())
             .collect();
 
@@ -723,7 +728,7 @@ mod tests {
         let mut rng = Rng::new(123);
 
         // Generate correlated data
-        let data: Vec<[f64; 3]> = (0..n)
+        let data: Vec<[Float; 3]> = (0..n)
             .map(|_| {
                 let x = rng.next_normal();
                 let y = rng.next_normal();
@@ -736,7 +741,7 @@ mod tests {
         ica.fit(&data, 200, 1e-4).unwrap();
 
         // Whiten all data using K * (x - mean)
-        let whitened: Vec<[f64; 3]> = data
+        let whitened: Vec<[Float; 3]> = data
             .iter()
             .map(|x| {
                 let mut centered = [0.0; 3];
@@ -748,8 +753,8 @@ mod tests {
             .collect();
 
         // Compute covariance of whitened data
-        let mut cov = [[0.0f64; 3]; 3];
-        let inv_n = 1.0 / n as f64;
+        let mut cov = [[0.0; 3]; 3];
+        let inv_n = 1.0 / n as Float;
         for z in &whitened {
             for i in 0..3 {
                 for j in 0..3 {
@@ -768,7 +773,7 @@ mod tests {
             for j in 0..3 {
                 let expected = if i == j { 1.0 } else { 0.0 };
                 assert!(
-                    libm::fabs(cov[i][j] - expected) < 0.1,
+                    float::abs(cov[i][j] - expected) < 0.1,
                     "Whitened covariance [{},{}] = {}, expected {}",
                     i,
                     j,
@@ -788,7 +793,7 @@ mod tests {
 
         let a = [[0.7, 0.3, 0.5], [0.2, 0.8, 0.1], [0.4, 0.1, 0.7]];
 
-        let data: Vec<[f64; 3]> = (0..n)
+        let data: Vec<[Float; 3]> = (0..n)
             .map(|t| {
                 [
                     a[0][0] * s1[t] + a[0][1] * s2[t] + a[0][2] * s3[t],
@@ -808,7 +813,7 @@ mod tests {
             for j in 0..3 {
                 let expected = if i == j { 1.0 } else { 0.0 };
                 assert!(
-                    libm::fabs(wwt.get(i, j) - expected) < 1e-6,
+                    float::abs(wwt.get(i, j) - expected) < 1e-6,
                     "W*W^T [{},{}] = {}, expected {}",
                     i,
                     j,
@@ -824,12 +829,12 @@ mod tests {
         let n = 1000;
         let mut rng = Rng::new(99);
 
-        let data: Vec<[f64; 2]> = (0..n)
+        let data: Vec<[Float; 2]> = (0..n)
             .map(|t| {
-                let t_f = t as f64 / n as f64;
+                let t_f = t as Float / n as Float;
                 [
-                    libm::sin(2.0 * PI * 5.0 * t_f) + 0.1 * rng.next_normal(),
-                    libm::cos(2.0 * PI * 3.0 * t_f) + 0.1 * rng.next_normal(),
+                    float::sin(2.0 * float::PI * 5.0 * t_f) + 0.1 * rng.next_normal(),
+                    float::cos(2.0 * float::PI * 3.0 * t_f) + 0.1 * rng.next_normal(),
                 ]
             })
             .collect();
@@ -846,7 +851,7 @@ mod tests {
         for t in 0..n {
             for j in 0..2 {
                 assert!(
-                    libm::fabs(reconstructed[t][j] - data[t][j]) < 1e-10,
+                    float::abs(reconstructed[t][j] - data[t][j]) < 1e-10,
                     "Round trip error at t={}, ch={}: got {}, expected {}",
                     t,
                     j,
@@ -879,7 +884,7 @@ mod tests {
         let s1 = sine_wave(n, 3.0);
         let s2 = square_wave(n, 7.0);
 
-        let data: Vec<[f64; 2]> = (0..n)
+        let data: Vec<[Float; 2]> = (0..n)
             .map(|t| [0.8 * s1[t] + 0.6 * s2[t], 0.3 * s1[t] + 0.9 * s2[t]])
             .collect();
 
@@ -896,7 +901,7 @@ mod tests {
         let s1 = sine_wave(n, 3.0);
         let s2 = square_wave(n, 7.0);
 
-        let data: Vec<[f64; 2]> = (0..n)
+        let data: Vec<[Float; 2]> = (0..n)
             .map(|t| [0.8 * s1[t] + 0.6 * s2[t], 0.3 * s1[t] + 0.9 * s2[t]])
             .collect();
 
@@ -906,8 +911,8 @@ mod tests {
         let mut sources = vec![[0.0; 2]; n];
         ica.transform(&data, &mut sources).unwrap();
 
-        let rec0: Vec<f64> = sources.iter().map(|s| s[0]).collect();
-        let rec1: Vec<f64> = sources.iter().map(|s| s[1]).collect();
+        let rec0: Vec<Float> = sources.iter().map(|s| s[0]).collect();
+        let rec1: Vec<Float> = sources.iter().map(|s| s[1]).collect();
 
         let min_corr = best_match_correlation(&[s1, s2], &[rec0, rec1]);
         assert!(
@@ -923,7 +928,7 @@ mod tests {
         let s1 = sine_wave(n, 3.0);
         let s2 = square_wave(n, 7.0);
 
-        let data: Vec<[f64; 2]> = (0..n)
+        let data: Vec<[Float; 2]> = (0..n)
             .map(|t| [0.8 * s1[t] + 0.6 * s2[t], 0.3 * s1[t] + 0.9 * s2[t]])
             .collect();
 
@@ -933,8 +938,8 @@ mod tests {
         let mut sources = vec![[0.0; 2]; n];
         ica.transform(&data, &mut sources).unwrap();
 
-        let rec0: Vec<f64> = sources.iter().map(|s| s[0]).collect();
-        let rec1: Vec<f64> = sources.iter().map(|s| s[1]).collect();
+        let rec0: Vec<Float> = sources.iter().map(|s| s[0]).collect();
+        let rec1: Vec<Float> = sources.iter().map(|s| s[1]).collect();
 
         let min_corr = best_match_correlation(&[s1, s2], &[rec0, rec1]);
         assert!(
@@ -950,7 +955,7 @@ mod tests {
         let s1 = sine_wave(n, 3.0);
         let s2 = square_wave(n, 7.0);
 
-        let data: Vec<[f64; 2]> = (0..n)
+        let data: Vec<[Float; 2]> = (0..n)
             .map(|t| [0.8 * s1[t] + 0.6 * s2[t], 0.3 * s1[t] + 0.9 * s2[t]])
             .collect();
 
@@ -964,7 +969,7 @@ mod tests {
         let mut total_diff = 0.0;
         for t in 0..n {
             for j in 0..2 {
-                total_diff += libm::fabs(cleaned[t][j] - data[t][j]);
+                total_diff += float::abs(cleaned[t][j] - data[t][j]);
             }
         }
         assert!(

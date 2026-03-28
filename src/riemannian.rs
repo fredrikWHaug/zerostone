@@ -59,8 +59,8 @@
 //! assert_eq!(vec1.len(), 6);
 //! ```
 
+use crate::float::{self, Float};
 use crate::linalg::{LinalgError, Matrix};
-use libm;
 
 /// Tangent space projection for SPD matrices.
 ///
@@ -153,7 +153,7 @@ impl<const C: usize, const M: usize, const V: usize> TangentSpace<C, M, V> {
     /// # Errors
     ///
     /// Returns error if `fit()` has not been called or if matrix logarithm fails.
-    pub fn transform(&self, matrix: &Matrix<C, M>) -> Result<[f64; V], LinalgError> {
+    pub fn transform(&self, matrix: &Matrix<C, M>) -> Result<[Float; V], LinalgError> {
         let inv_sqrt = self
             .reference_inv_sqrt
             .as_ref()
@@ -194,7 +194,7 @@ impl<const C: usize, const M: usize, const V: usize> TangentSpace<C, M, V> {
     /// # Errors
     ///
     /// Returns error if `fit()` has not been called or if matrix exponential fails.
-    pub fn inverse_transform(&self, vector: &[f64; V]) -> Result<Matrix<C, M>, LinalgError> {
+    pub fn inverse_transform(&self, vector: &[Float; V]) -> Result<Matrix<C, M>, LinalgError> {
         let inv_sqrt = self
             .reference_inv_sqrt
             .as_ref()
@@ -259,7 +259,7 @@ pub fn matrix_log<const C: usize, const M: usize>(
         if *val <= 0.0 {
             return Err(LinalgError::NotPositiveDefinite);
         }
-        *val = libm::log(*val);
+        *val = float::log(*val);
     }
 
     // Reconstruct: log(P) = U * log(Λ) * U^T
@@ -291,7 +291,7 @@ pub fn matrix_exp<const C: usize, const M: usize>(
     // Take exp of eigenvalues
     let mut exp_eigenvalues = eigen.eigenvalues;
     for val in &mut exp_eigenvalues {
-        *val = libm::exp(*val);
+        *val = float::exp(*val);
     }
 
     // Reconstruct: exp(S) = U * exp(Λ) * U^T
@@ -324,7 +324,7 @@ pub fn matrix_sqrt<const C: usize, const M: usize>(
         if *val < 0.0 {
             return Err(LinalgError::NotPositiveDefinite);
         }
-        *val = libm::sqrt(*val);
+        *val = float::sqrt(*val);
     }
 
     reconstruct_from_eigen(&eigen.eigenvectors, &sqrt_eigenvalues)
@@ -356,7 +356,7 @@ pub fn matrix_inv_sqrt<const C: usize, const M: usize>(
         if *val <= 0.0 {
             return Err(LinalgError::NotPositiveDefinite);
         }
-        *val = 1.0 / libm::sqrt(*val);
+        *val = 1.0 / float::sqrt(*val);
     }
 
     reconstruct_from_eigen(&eigen.eigenvectors, &inv_sqrt_eigenvalues)
@@ -367,7 +367,7 @@ pub fn matrix_inv_sqrt<const C: usize, const M: usize>(
 /// Computes: U * diag(eigenvalues) * U^T
 pub fn reconstruct_from_eigen<const C: usize, const M: usize>(
     eigenvectors: &Matrix<C, M>,
-    eigenvalues: &[f64; C],
+    eigenvalues: &[Float; C],
 ) -> Result<Matrix<C, M>, LinalgError> {
     let mut result = Matrix::zeros();
 
@@ -404,7 +404,7 @@ pub fn reconstruct_from_eigen<const C: usize, const M: usize>(
 /// ```
 fn vectorize_upper_triangular<const C: usize, const M: usize, const V: usize>(
     matrix: &Matrix<C, M>,
-) -> [f64; V] {
+) -> [Float; V] {
     let mut vec = [0.0; V];
     let mut idx = 0;
 
@@ -423,7 +423,7 @@ fn vectorize_upper_triangular<const C: usize, const M: usize, const V: usize>(
 /// Inverse of `vectorize_upper_triangular`. Fills both upper and lower
 /// triangular parts to maintain symmetry.
 fn unvectorize_upper_triangular<const C: usize, const M: usize, const V: usize>(
-    vector: &[f64; V],
+    vector: &[Float; V],
 ) -> Matrix<C, M> {
     let mut matrix = Matrix::zeros();
     let mut idx = 0;
@@ -455,7 +455,7 @@ fn unvectorize_upper_triangular<const C: usize, const M: usize, const V: usize>(
 pub fn riemannian_distance<const C: usize, const M: usize>(
     a: &Matrix<C, M>,
     b: &Matrix<C, M>,
-) -> Result<f64, LinalgError> {
+) -> Result<Float, LinalgError> {
     let a_inv_sqrt = matrix_inv_sqrt(a)?;
 
     // Compute A^{-1/2} B A^{-1/2}
@@ -470,11 +470,11 @@ pub fn riemannian_distance<const C: usize, const M: usize>(
         if eigen.eigenvalues[i] <= 0.0 {
             return Err(LinalgError::NotPositiveDefinite);
         }
-        let log_val = libm::log(eigen.eigenvalues[i]);
+        let log_val = float::log(eigen.eigenvalues[i]);
         sum_sq += log_val * log_val;
     }
 
-    Ok(libm::sqrt(sum_sq))
+    Ok(float::sqrt(sum_sq))
 }
 
 /// Compute the Frechet (geometric/Karcher) mean of a set of SPD matrices.
@@ -499,7 +499,7 @@ pub fn frechet_mean<const C: usize, const M: usize>(
     matrices: &[&Matrix<C, M>],
     output: &mut Matrix<C, M>,
     max_iter: usize,
-    tolerance: f64,
+    tolerance: Float,
 ) -> Result<usize, LinalgError> {
     let n = matrices.len();
     if n == 0 {
@@ -515,10 +515,10 @@ pub fn frechet_mean<const C: usize, const M: usize>(
     for mat in matrices {
         g = g.add(mat);
     }
-    g = g.scale(1.0 / n as f64);
+    g = g.scale(1.0 / n as Float);
 
     let mut nu = 1.0; // adaptive step size
-    let mut prev_norm = f64::MAX;
+    let mut prev_norm = float::MAX;
 
     for iter in 0..max_iter {
         let g_sqrt = matrix_sqrt(&g)?;
@@ -532,7 +532,7 @@ pub fn frechet_mean<const C: usize, const M: usize>(
             let log_whitened = matrix_log(&whitened)?;
             j = j.add(&log_whitened);
         }
-        j = j.scale(1.0 / n as f64);
+        j = j.scale(1.0 / n as Float);
 
         // Check convergence
         let j_norm = j.frobenius_norm();
@@ -606,13 +606,13 @@ pub fn recenter<const C: usize, const M: usize>(
 pub fn mdm_classify<const C: usize, const M: usize>(
     trial: &Matrix<C, M>,
     class_means: &[&Matrix<C, M>],
-) -> Result<(usize, f64), LinalgError> {
+) -> Result<(usize, Float), LinalgError> {
     if class_means.is_empty() {
         return Err(LinalgError::DimensionMismatch);
     }
 
     let mut best_class = 0;
-    let mut best_dist = f64::MAX;
+    let mut best_dist = float::MAX;
 
     for (i, mean) in class_means.iter().enumerate() {
         let dist = riemannian_distance(trial, mean)?;
@@ -738,7 +738,7 @@ mod tests {
         m.set(1, 2, 5.0);
         m.set(2, 2, 6.0);
 
-        let vec: [f64; 6] = vectorize_upper_triangular(&m);
+        let vec: [Float; 6] = vectorize_upper_triangular(&m);
 
         assert_eq!(vec, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
     }
@@ -776,9 +776,9 @@ mod tests {
         let vec = ts.transform(&p).unwrap();
 
         // Should be close to log([2, 0, 0, 3]) = [log(2), 0, log(3)]
-        assert!((vec[0] - libm::log(2.0)).abs() < 1e-9, "Diagonal element");
+        assert!((vec[0] - float::log(2.0)).abs() < 1e-9, "Diagonal element");
         assert!(vec[1].abs() < 1e-9, "Off-diagonal should be zero");
-        assert!((vec[2] - libm::log(3.0)).abs() < 1e-9, "Diagonal element");
+        assert!((vec[2] - float::log(3.0)).abs() < 1e-9, "Diagonal element");
     }
 
     #[test]
@@ -852,7 +852,7 @@ mod tests {
 
         let d = riemannian_distance(&eye, &diag).unwrap();
         let expected =
-            libm::sqrt(libm::log(2.0) * libm::log(2.0) + libm::log(3.0) * libm::log(3.0));
+            float::sqrt(float::log(2.0) * float::log(2.0) + float::log(3.0) * float::log(3.0));
         assert!(
             (d - expected).abs() < 1e-9,
             "d={}, expected={}",
@@ -948,11 +948,11 @@ mod tests {
         for (idx, mat) in mats.iter_mut().enumerate() {
             *mat = Matrix::identity();
             for i in 0..8 {
-                mat.set(i, i, 1.0 + 0.5 * ((i + idx) as f64));
+                mat.set(i, i, 1.0 + 0.5 * ((i + idx) as Float));
             }
             // Add small off-diagonal
             for i in 0..7 {
-                let off = 0.1 * libm::sin((i + idx + 1) as f64);
+                let off = 0.1 * float::sin((i + idx + 1) as Float);
                 mat.set(i, i + 1, off);
                 mat.set(i + 1, i, off);
             }

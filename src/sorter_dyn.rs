@@ -11,15 +11,16 @@
 //! # Example
 //!
 //! ```
+//! use zerostone::float::{self, Float};
 //! use zerostone::sorter::SortConfig;
 //! use zerostone::sorter_dyn::{DynSortResult, sort_dyn};
 //! use zerostone::probe::ProbeLayout;
 //!
 //! let n_ch = 4;
 //! let n_samples = 5000;
-//! let mut data = vec![0.0f64; n_samples * n_ch];
+//! let mut data = vec![0.0 as Float; n_samples * n_ch];
 //! let probe = ProbeLayout::<4>::linear(25.0);
-//! let positions: Vec<[f64; 2]> = probe.positions().to_vec();
+//! let positions: Vec<[Float; 2]> = probe.positions().to_vec();
 //! let config = SortConfig::default();
 //!
 //! let result = sort_dyn(&config, &positions, &mut data, n_samples, n_ch);
@@ -33,6 +34,7 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::float::Float;
 use crate::probe::ProbeLayout;
 use crate::sorter::{sort_multichannel, ClusterInfo, SortConfig};
 use crate::spike_sort::{MultiChannelEvent, SortError};
@@ -60,9 +62,9 @@ pub struct DynClusterInfo {
     /// Number of spikes assigned to this cluster.
     pub count: usize,
     /// Signal-to-noise ratio.
-    pub snr: f64,
+    pub snr: Float,
     /// ISI violation rate.
-    pub isi_violation_rate: f64,
+    pub isi_violation_rate: Float,
 }
 
 impl From<&ClusterInfo> for DynClusterInfo {
@@ -94,8 +96,8 @@ impl From<&ClusterInfo> for DynClusterInfo {
 /// `DynSortResult` with labels, spike times, and cluster info.
 pub fn sort_dyn(
     config: &SortConfig,
-    positions: &[[f64; 2]],
-    data: &mut [f64],
+    positions: &[[Float; 2]],
+    data: &mut [Float],
     n_samples: usize,
     n_channels: usize,
 ) -> Result<DynSortResult, SortError> {
@@ -116,7 +118,7 @@ pub fn sort_dyn(
     macro_rules! dispatch {
         ($c:expr, $cm:expr) => {{
             // Build const-generic probe from positions
-            let mut pos_arr = [[0.0f64; 2]; $c];
+            let mut pos_arr = [[0.0; 2]; $c];
             for i in 0..$c {
                 if i < positions.len() {
                     pos_arr[i] = positions[i];
@@ -125,14 +127,14 @@ pub fn sort_dyn(
             let probe = ProbeLayout::<$c>::new(pos_arr);
 
             // Copy flat data into const-generic array format
-            let mut data_arr: Vec<[f64; $c]> = Vec::with_capacity(n_samples);
+            let mut data_arr: Vec<[Float; $c]> = Vec::with_capacity(n_samples);
             for t in 0..n_samples {
-                let mut row = [0.0f64; $c];
+                let mut row = [0.0; $c];
                 row.copy_from_slice(&data[t * $c..(t + 1) * $c]);
                 data_arr.push(row);
             }
 
-            let mut scratch = vec![0.0f64; n_samples];
+            let mut scratch = vec![0.0 as Float; n_samples];
             let mut event_buf = vec![
                 MultiChannelEvent {
                     sample: 0,
@@ -141,8 +143,8 @@ pub fn sort_dyn(
                 };
                 max_events
             ];
-            let mut waveform_buf = vec![[0.0f64; W]; max_events];
-            let mut feature_buf = vec![[0.0f64; K]; max_events];
+            let mut waveform_buf = vec![[0.0 as Float; W]; max_events];
+            let mut feature_buf = vec![[0.0 as Float; K]; max_events];
             let mut labels = vec![0usize; max_events];
 
             let sr = sort_multichannel::<$c, $cm, W, K, 2304, N>(
@@ -211,8 +213,8 @@ pub fn sort_dyn(
 #[cfg(feature = "parallel")]
 pub fn sort_batch_parallel(
     config: &SortConfig,
-    positions: &[[f64; 2]],
-    data: &mut [f64],
+    positions: &[[Float; 2]],
+    data: &mut [Float],
     n_samples: usize,
     n_channels: usize,
     segment_samples: usize,
@@ -231,7 +233,7 @@ pub fn sort_batch_parallel(
 
     // Split into segments
     let n_segments = n_samples.div_ceil(segment_samples);
-    let mut segments: Vec<(usize, Vec<f64>)> = Vec::with_capacity(n_segments);
+    let mut segments: Vec<(usize, Vec<Float>)> = Vec::with_capacity(n_segments);
     for seg in 0..n_segments {
         let start = seg * segment_samples;
         let end = (start + segment_samples).min(n_samples);
@@ -302,13 +304,13 @@ mod tests {
     fn test_sort_dyn_4ch_noise() {
         let n_ch = 4;
         let n_samples = 5000;
-        let mut data = vec![0.0f64; n_samples * n_ch];
+        let mut data = vec![0.0 as Float; n_samples * n_ch];
         // Fill with small noise
         for (i, d) in data.iter_mut().enumerate() {
-            *d = ((i * 17 + 3) % 100) as f64 * 0.001 - 0.05;
+            *d = ((i * 17 + 3) % 100) as Float * 0.001 - 0.05;
         }
         let probe = ProbeLayout::<4>::linear(25.0);
-        let positions: Vec<[f64; 2]> = probe.positions().to_vec();
+        let positions: Vec<[Float; 2]> = probe.positions().to_vec();
         let config = SortConfig::default();
         let result = sort_dyn(&config, &positions, &mut data, n_samples, n_ch).unwrap();
         assert_eq!(result.n_spikes, 0);
@@ -318,12 +320,12 @@ mod tests {
     fn test_sort_dyn_32ch() {
         let n_ch = 32;
         let n_samples = 3000;
-        let mut data = vec![0.0f64; n_samples * n_ch];
+        let mut data = vec![0.0 as Float; n_samples * n_ch];
         for (i, d) in data.iter_mut().enumerate() {
-            *d = ((i * 13 + 7) % 100) as f64 * 0.001 - 0.05;
+            *d = ((i * 13 + 7) % 100) as Float * 0.001 - 0.05;
         }
         let probe = ProbeLayout::<32>::linear(25.0);
-        let positions: Vec<[f64; 2]> = probe.positions().to_vec();
+        let positions: Vec<[Float; 2]> = probe.positions().to_vec();
         let config = SortConfig::default();
         let result = sort_dyn(&config, &positions, &mut data, n_samples, n_ch).unwrap();
         assert!(result.labels.len() == result.n_spikes);
@@ -335,12 +337,12 @@ mod tests {
     fn test_sort_dyn_128ch() {
         let n_ch = 128;
         let n_samples = 2000;
-        let mut data = vec![0.0f64; n_samples * n_ch];
+        let mut data = vec![0.0 as Float; n_samples * n_ch];
         for (i, d) in data.iter_mut().enumerate() {
-            *d = ((i * 11 + 5) % 100) as f64 * 0.001 - 0.05;
+            *d = ((i * 11 + 5) % 100) as Float * 0.001 - 0.05;
         }
         let probe = ProbeLayout::<128>::linear(25.0);
-        let positions: Vec<[f64; 2]> = probe.positions().to_vec();
+        let positions: Vec<[Float; 2]> = probe.positions().to_vec();
         let config = SortConfig::default();
         let result = sort_dyn(&config, &positions, &mut data, n_samples, n_ch).unwrap();
         assert!(result.labels.len() == result.n_spikes);
@@ -350,8 +352,8 @@ mod tests {
     fn test_sort_dyn_invalid_channels() {
         let n_ch = 3; // unsupported
         let n_samples = 1000;
-        let mut data = vec![0.0f64; n_samples * n_ch];
-        let positions: Vec<[f64; 2]> = (0..n_ch).map(|i| [0.0, i as f64 * 25.0]).collect();
+        let mut data = vec![0.0 as Float; n_samples * n_ch];
+        let positions: Vec<[Float; 2]> = (0..n_ch).map(|i| [0.0, i as Float * 25.0]).collect();
         let config = SortConfig::default();
         let result = sort_dyn(&config, &positions, &mut data, n_samples, n_ch);
         assert!(result.is_err());
@@ -361,8 +363,8 @@ mod tests {
     fn test_sort_dyn_data_length_mismatch() {
         let n_ch = 4;
         let n_samples = 1000;
-        let mut data = vec![0.0f64; 100]; // too short
-        let positions: Vec<[f64; 2]> = (0..n_ch).map(|i| [0.0, i as f64 * 25.0]).collect();
+        let mut data = vec![0.0 as Float; 100]; // too short
+        let positions: Vec<[Float; 2]> = (0..n_ch).map(|i| [0.0, i as Float * 25.0]).collect();
         let config = SortConfig::default();
         let result = sort_dyn(&config, &positions, &mut data, n_samples, n_ch);
         assert!(result.is_err());
@@ -374,12 +376,12 @@ mod tests {
         let n_ch = 4;
         let n_samples = 10000;
         let segment = 3000;
-        let mut data = vec![0.0f64; n_samples * n_ch];
+        let mut data = vec![0.0 as Float; n_samples * n_ch];
         for (i, d) in data.iter_mut().enumerate() {
-            *d = ((i * 17 + 3) % 100) as f64 * 0.001 - 0.05;
+            *d = ((i * 17 + 3) % 100) as Float * 0.001 - 0.05;
         }
         let probe = ProbeLayout::<4>::linear(25.0);
-        let positions: Vec<[f64; 2]> = probe.positions().to_vec();
+        let positions: Vec<[Float; 2]> = probe.positions().to_vec();
         let config = SortConfig::default();
         let results =
             super::sort_batch_parallel(&config, &positions, &mut data, n_samples, n_ch, segment)
@@ -397,12 +399,12 @@ mod tests {
         let n_ch = 4;
         let n_samples = 6000;
         let segment = 3000;
-        let mut data = vec![0.0f64; n_samples * n_ch];
+        let mut data = vec![0.0 as Float; n_samples * n_ch];
         for (i, d) in data.iter_mut().enumerate() {
-            *d = ((i * 17 + 3) % 100) as f64 * 0.001 - 0.05;
+            *d = ((i * 17 + 3) % 100) as Float * 0.001 - 0.05;
         }
         let probe = ProbeLayout::<4>::linear(25.0);
-        let positions: Vec<[f64; 2]> = probe.positions().to_vec();
+        let positions: Vec<[Float; 2]> = probe.positions().to_vec();
         let config = SortConfig::default();
         let results =
             super::sort_batch_parallel(&config, &positions, &mut data, n_samples, n_ch, segment)
@@ -420,10 +422,10 @@ mod tests {
         let n_ch = 4;
         let n_samples = 6000;
         let segment = 3000;
-        let mut data = vec![0.0f64; n_samples * n_ch];
+        let mut data = vec![0.0 as Float; n_samples * n_ch];
         // Small noise everywhere
         for (i, d) in data.iter_mut().enumerate() {
-            *d = ((i * 7 + 11) % 50) as f64 * 0.001 - 0.025;
+            *d = ((i * 7 + 11) % 50) as Float * 0.001 - 0.025;
         }
         // Inject spike at sample 4000 (second segment, local sample 1000), channel 0
         for offset in 0..20 {
@@ -431,15 +433,15 @@ mod tests {
             if t < n_samples {
                 // Triangle shape with peak at center
                 let amp = if offset < 10 {
-                    -(offset as f64) * 3.0
+                    -(offset as Float) * 3.0
                 } else {
-                    -((20 - offset) as f64) * 3.0
+                    -((20 - offset) as Float) * 3.0
                 };
                 data[t * n_ch] = amp;
             }
         }
         let probe = ProbeLayout::<4>::linear(25.0);
-        let positions: Vec<[f64; 2]> = probe.positions().to_vec();
+        let positions: Vec<[Float; 2]> = probe.positions().to_vec();
         let config = SortConfig::default();
         let results =
             super::sort_batch_parallel(&config, &positions, &mut data, n_samples, n_ch, segment)
@@ -459,11 +461,11 @@ mod tests {
     fn test_sort_dyn_256ch_heap_path() {
         let n_ch = 256;
         let n_samples = 3000;
-        let mut data = vec![0.0f64; n_samples * n_ch];
+        let mut data = vec![0.0 as Float; n_samples * n_ch];
         for (i, d) in data.iter_mut().enumerate() {
-            *d = ((i * 17 + 3) % 100) as f64 * 0.001 - 0.05;
+            *d = ((i * 17 + 3) % 100) as Float * 0.001 - 0.05;
         }
-        let positions: Vec<[f64; 2]> = (0..n_ch).map(|i| [0.0, i as f64 * 25.0]).collect();
+        let positions: Vec<[Float; 2]> = (0..n_ch).map(|i| [0.0, i as Float * 25.0]).collect();
         let config = SortConfig::default();
         let result = sort_dyn(&config, &positions, &mut data, n_samples, n_ch).unwrap();
         assert_eq!(result.n_spikes, 0);
@@ -473,11 +475,11 @@ mod tests {
     fn test_sort_dyn_384ch_heap_path() {
         let n_ch = 384;
         let n_samples = 3000;
-        let mut data = vec![0.0f64; n_samples * n_ch];
+        let mut data = vec![0.0 as Float; n_samples * n_ch];
         for (i, d) in data.iter_mut().enumerate() {
-            *d = ((i * 13 + 7) % 100) as f64 * 0.001 - 0.05;
+            *d = ((i * 13 + 7) % 100) as Float * 0.001 - 0.05;
         }
-        let positions: Vec<[f64; 2]> = (0..n_ch).map(|i| [0.0, i as f64 * 25.0]).collect();
+        let positions: Vec<[Float; 2]> = (0..n_ch).map(|i| [0.0, i as Float * 25.0]).collect();
         let config = SortConfig::default();
         let result = sort_dyn(&config, &positions, &mut data, n_samples, n_ch).unwrap();
         assert_eq!(result.n_spikes, 0);

@@ -9,6 +9,7 @@
 //! - Calibrated probability output via sigmoid
 //! - Cholesky-based solve (reuses existing linalg infrastructure)
 
+use crate::float::{self, Float};
 use crate::linalg::Matrix;
 
 /// Errors that can occur during LDA operations.
@@ -30,17 +31,17 @@ pub enum LdaError {
 /// * `M` - Must equal C*C
 pub struct Lda<const C: usize, const M: usize> {
     /// Discriminant direction (unit norm)
-    weights: [f64; C],
+    weights: [Float; C],
     /// Decision boundary threshold
-    threshold: f64,
+    threshold: Float,
     /// Class 0 mean
-    mean0: [f64; C],
+    mean0: [Float; C],
     /// Class 1 mean
-    mean1: [f64; C],
+    mean1: [Float; C],
     /// Pooled within-class variance along w (for calibrated probabilities)
-    pooled_var: f64,
+    pooled_var: Float,
     /// Regularization parameter [0, 1]
-    shrinkage: f64,
+    shrinkage: Float,
     /// Whether the model has been fitted
     fitted: bool,
 }
@@ -52,7 +53,7 @@ impl<const C: usize, const M: usize> Lda<C, M> {
     ///
     /// * `shrinkage` - Regularization parameter in [0, 1]. Default: 0.01.
     ///   Higher values help with ill-conditioned scatter matrices.
-    pub fn new(shrinkage: f64) -> Self {
+    pub fn new(shrinkage: Float) -> Self {
         assert!(M == C * C, "M must equal C * C");
         Self {
             weights: [0.0; C],
@@ -77,7 +78,7 @@ impl<const C: usize, const M: usize> Lda<C, M> {
     /// Returns `InsufficientData` if either class has fewer than 2 samples.
     /// Returns `SingularScatter` if the within-class scatter matrix is not
     /// positive definite even after regularization.
-    pub fn fit(&mut self, class0: &[[f64; C]], class1: &[[f64; C]]) -> Result<(), LdaError> {
+    pub fn fit(&mut self, class0: &[[Float; C]], class1: &[[Float; C]]) -> Result<(), LdaError> {
         let n0 = class0.len();
         let n1 = class1.len();
         if n0 < 2 || n1 < 2 {
@@ -85,8 +86,8 @@ impl<const C: usize, const M: usize> Lda<C, M> {
         }
 
         // Compute class means
-        let mut m0 = [0.0f64; C];
-        let mut m1 = [0.0f64; C];
+        let mut m0 = [0.0; C];
+        let mut m1 = [0.0; C];
         for sample in class0 {
             for j in 0..C {
                 m0[j] += sample[j];
@@ -98,14 +99,14 @@ impl<const C: usize, const M: usize> Lda<C, M> {
             }
         }
         for j in 0..C {
-            m0[j] /= n0 as f64;
-            m1[j] /= n1 as f64;
+            m0[j] /= n0 as Float;
+            m1[j] /= n1 as Float;
         }
 
         // Compute within-class scatter: Sw = S0 + S1
         let mut sw = Matrix::<C, M>::zeros();
         for sample in class0 {
-            let mut diff = [0.0f64; C];
+            let mut diff = [0.0; C];
             for j in 0..C {
                 diff[j] = sample[j] - m0[j];
             }
@@ -118,7 +119,7 @@ impl<const C: usize, const M: usize> Lda<C, M> {
             }
         }
         for sample in class1 {
-            let mut diff = [0.0f64; C];
+            let mut diff = [0.0; C];
             for j in 0..C {
                 diff[j] = sample[j] - m1[j];
             }
@@ -139,14 +140,14 @@ impl<const C: usize, const M: usize> Lda<C, M> {
             t
         };
         let alpha = self.shrinkage;
-        let shrink_val = alpha * trace / C as f64;
+        let shrink_val = alpha * trace / C as Float;
         for i in 0..M {
             sw.data_mut()[i] *= 1.0 - alpha;
         }
         sw.add_diagonal(shrink_val);
 
         // Mean difference: m0 - m1
-        let mut diff_mean = [0.0f64; C];
+        let mut diff_mean = [0.0; C];
         for j in 0..C {
             diff_mean[j] = m0[j] - m1[j];
         }
@@ -161,12 +162,12 @@ impl<const C: usize, const M: usize> Lda<C, M> {
         for val in w.iter() {
             norm += val * val;
         }
-        norm = libm::sqrt(norm);
+        norm = float::sqrt(norm);
         if norm < 1e-15 {
             return Err(LdaError::SingularScatter);
         }
 
-        let mut w_unit = [0.0f64; C];
+        let mut w_unit = [0.0; C];
         for j in 0..C {
             w_unit[j] = w[j] / norm;
         }
@@ -177,7 +178,7 @@ impl<const C: usize, const M: usize> Lda<C, M> {
         let threshold = (dot0 + dot1) * 0.5;
 
         // Compute pooled variance along w for calibrated probabilities
-        let n_total = (n0 + n1) as f64;
+        let n_total: Float = (n0 + n1) as Float;
         let mut var_sum = 0.0;
         for sample in class0 {
             let proj = dot::<C>(&w_unit, sample) - dot0;
@@ -200,7 +201,7 @@ impl<const C: usize, const M: usize> Lda<C, M> {
     }
 
     /// Predict class label (0 or 1) for a single sample.
-    pub fn predict(&self, x: &[f64; C]) -> Result<usize, LdaError> {
+    pub fn predict(&self, x: &[Float; C]) -> Result<usize, LdaError> {
         if !self.fitted {
             return Err(LdaError::NotFitted);
         }
@@ -211,20 +212,20 @@ impl<const C: usize, const M: usize> Lda<C, M> {
     /// Compute probability of class 0 for a single sample.
     ///
     /// Uses sigmoid scaled by pooled within-class variance.
-    pub fn predict_proba(&self, x: &[f64; C]) -> Result<f64, LdaError> {
+    pub fn predict_proba(&self, x: &[Float; C]) -> Result<Float, LdaError> {
         if !self.fitted {
             return Err(LdaError::NotFitted);
         }
         let d = self.decision_function_inner(x);
         // Scale by inverse of pooled standard deviation for calibrated sigmoid
-        let scale = 1.0 / libm::sqrt(self.pooled_var);
+        let scale = 1.0 / float::sqrt(self.pooled_var);
         Ok(sigmoid(d * scale))
     }
 
     /// Compute signed distance from decision boundary.
     ///
     /// Positive values indicate class 0, negative indicate class 1.
-    pub fn decision_function(&self, x: &[f64; C]) -> Result<f64, LdaError> {
+    pub fn decision_function(&self, x: &[Float; C]) -> Result<Float, LdaError> {
         if !self.fitted {
             return Err(LdaError::NotFitted);
         }
@@ -232,7 +233,7 @@ impl<const C: usize, const M: usize> Lda<C, M> {
     }
 
     /// Get the discriminant weights (unit norm direction).
-    pub fn weights(&self) -> Option<&[f64; C]> {
+    pub fn weights(&self) -> Option<&[Float; C]> {
         if self.fitted {
             Some(&self.weights)
         } else {
@@ -241,7 +242,7 @@ impl<const C: usize, const M: usize> Lda<C, M> {
     }
 
     /// Get the decision threshold.
-    pub fn threshold(&self) -> f64 {
+    pub fn threshold(&self) -> Float {
         self.threshold
     }
 
@@ -252,14 +253,14 @@ impl<const C: usize, const M: usize> Lda<C, M> {
 
     /// Internal: compute w^T * x - threshold
     #[inline]
-    fn decision_function_inner(&self, x: &[f64; C]) -> f64 {
+    fn decision_function_inner(&self, x: &[Float; C]) -> Float {
         dot::<C>(&self.weights, x) - self.threshold
     }
 }
 
 /// Dot product of two vectors.
 #[inline]
-fn dot<const C: usize>(a: &[f64; C], b: &[f64; C]) -> f64 {
+fn dot<const C: usize>(a: &[Float; C], b: &[Float; C]) -> Float {
     let mut sum = 0.0;
     for i in 0..C {
         sum += a[i] * b[i];
@@ -269,8 +270,8 @@ fn dot<const C: usize>(a: &[f64; C], b: &[f64; C]) -> f64 {
 
 /// Sigmoid function: 1 / (1 + exp(-x))
 #[inline]
-fn sigmoid(x: f64) -> f64 {
-    1.0 / (1.0 + libm::exp(-x))
+fn sigmoid(x: Float) -> Float {
+    1.0 / (1.0 + float::exp(-x))
 }
 
 #[cfg(test)]
@@ -291,21 +292,21 @@ mod tests {
             self.0 ^= self.0 << 17;
             self.0
         }
-        fn gaussian(&mut self, mean: f64, std: f64) -> f64 {
-            let u1 = (self.next_u64() % 1_000_000 + 1) as f64 / 1_000_001.0;
-            let u2 = (self.next_u64() % 1_000_000) as f64 / 1_000_000.0;
-            let z = libm::sqrt(-2.0 * libm::log(u1)) * libm::cos(2.0 * core::f64::consts::PI * u2);
+        fn gaussian(&mut self, mean: Float, std: Float) -> Float {
+            let u1 = (self.next_u64() % 1_000_000 + 1) as Float / 1_000_001.0;
+            let u2 = (self.next_u64() % 1_000_000) as Float / 1_000_000.0;
+            let z = float::sqrt(-2.0 * float::log(u1)) * float::cos(2.0 * float::PI * u2);
             mean + z * std
         }
     }
 
     fn make_gaussian_clusters(
         rng: &mut Rng,
-        mean0: &[f64],
-        mean1: &[f64],
-        std: f64,
+        mean0: &[Float],
+        mean1: &[Float],
+        std: Float,
         n_per_class: usize,
-    ) -> (Vec<[f64; 2]>, Vec<[f64; 2]>) {
+    ) -> (Vec<[Float; 2]>, Vec<[Float; 2]>) {
         let mut c0 = Vec::with_capacity(n_per_class);
         let mut c1 = Vec::with_capacity(n_per_class);
         for _ in 0..n_per_class {
@@ -336,7 +337,7 @@ mod tests {
                 correct += 1;
             }
         }
-        let accuracy = correct as f64 / 100.0;
+        let accuracy = correct as Float / 100.0;
         assert!(
             accuracy > 0.99,
             "Expected near-perfect accuracy, got {}",
@@ -363,7 +364,7 @@ mod tests {
                 correct += 1;
             }
         }
-        let accuracy = correct as f64 / 200.0;
+        let accuracy = correct as Float / 200.0;
         assert!(
             accuracy > 0.70,
             "Expected reasonable accuracy, got {}",
@@ -403,7 +404,7 @@ mod tests {
         let boundary = [w[0] * t, w[1] * t];
         let p_boundary = lda.predict_proba(&boundary).unwrap();
         assert!(
-            libm::fabs(p_boundary - 0.5) < 0.1,
+            float::abs(p_boundary - 0.5) < 0.1,
             "Boundary point should have P~0.5, got {}",
             p_boundary
         );
@@ -440,8 +441,8 @@ mod tests {
         // Magnitude should increase with distance from boundary
         let near = [2.5, 2.5]; // near midpoint
         let far = [-5.0, -5.0]; // far from boundary
-        let d_near = libm::fabs(lda.decision_function(&near).unwrap());
-        let d_far = libm::fabs(lda.decision_function(&far).unwrap());
+        let d_near = float::abs(lda.decision_function(&near).unwrap());
+        let d_far = float::abs(lda.decision_function(&far).unwrap());
         assert!(
             d_far > d_near,
             "Far point should have larger |d|: {} vs {}",
@@ -498,11 +499,11 @@ mod tests {
         let w = lda.weights().unwrap();
         // Expected direction: (m0-m1) normalized
         let diff = [-3.0, -4.0];
-        let diff_norm = libm::sqrt(diff[0] * diff[0] + diff[1] * diff[1]);
+        let diff_norm = float::sqrt(diff[0] * diff[0] + diff[1] * diff[1]);
         let expected = [diff[0] / diff_norm, diff[1] / diff_norm];
 
         // |cos(angle)| should be close to 1
-        let cos_angle = libm::fabs(w[0] * expected[0] + w[1] * expected[1]);
+        let cos_angle = float::abs(w[0] * expected[0] + w[1] * expected[1]);
         assert!(
             cos_angle > 0.9,
             "Weight direction should be parallel to mean diff, cos={}",

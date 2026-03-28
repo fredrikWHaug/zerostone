@@ -37,31 +37,32 @@
 //! # Example
 //!
 //! ```
-//! use zerostone::{BiquadCoeffs, IirFilter, hilbert::HilbertTransform};
+//! use zerostone::{BiquadCoeffs, IirFilter, Float, hilbert::HilbertTransform};
 //!
 //! // 1. Bandpass filter signal to alpha band (8-13 Hz)
 //! let coeffs = BiquadCoeffs::butterworth_bandpass(250.0, 8.0, 13.0);
 //! let mut filter: IirFilter<2> = IirFilter::new([coeffs, coeffs]);
 //!
 //! // Simulate some EEG data (in practice, this comes from acquisition hardware)
-//! let raw_eeg = [0.0f32; 256];
+//! let raw_eeg = [0.0 as Float; 256];
 //!
-//! let mut signal = [0.0f32; 256];
+//! let mut signal = [0.0 as Float; 256];
 //! for i in 0..256 {
 //!     signal[i] = filter.process_sample(raw_eeg[i]);
 //! }
 //!
 //! // 2. Extract instantaneous amplitude (alpha power envelope)
 //! let hilbert = HilbertTransform::<256>::new();
-//! let mut amplitude = [0.0f32; 256];
+//! let mut amplitude = [0.0 as Float; 256];
 //! hilbert.instantaneous_amplitude(&signal, &mut amplitude);
 //!
 //! // 3. Extract phase for PAC analysis
-//! let mut phase = [0.0f32; 256];
+//! let mut phase = [0.0 as Float; 256];
 //! hilbert.instantaneous_phase(&signal, &mut phase);
 //! ```
 
 use crate::fft::{Complex, Fft};
+use crate::float::{self, Float};
 
 /// Hilbert Transform processor for analytic signal computation.
 ///
@@ -89,9 +90,10 @@ use crate::fft::{Complex, Fft};
 ///
 /// ```
 /// use zerostone::hilbert::HilbertTransform;
+/// use zerostone::float::Float;
 ///
-/// let signal = [1.0f32, 2.0, 3.0, 2.0, 1.0, 0.0, -1.0, 0.0];
-/// let mut amplitude = [0.0f32; 8];
+/// let signal: [Float; 8] = [1.0, 2.0, 3.0, 2.0, 1.0, 0.0, -1.0, 0.0];
+/// let mut amplitude = [0.0 as Float; 8];
 ///
 /// let hilbert = HilbertTransform::<8>::new();
 /// hilbert.instantaneous_amplitude(&signal, &mut amplitude);
@@ -137,8 +139,9 @@ impl<const N: usize> HilbertTransform<N> {
     ///
     /// ```
     /// use zerostone::{Complex, hilbert::HilbertTransform};
+    /// use zerostone::float::Float;
     ///
-    /// let signal = [1.0f32, 0.0, -1.0, 0.0];
+    /// let signal: [Float; 4] = [1.0, 0.0, -1.0, 0.0];
     /// let mut analytic = [Complex::new(0.0, 0.0); 4];
     ///
     /// let hilbert = HilbertTransform::<4>::new();
@@ -148,7 +151,7 @@ impl<const N: usize> HilbertTransform<N> {
     /// assert!((analytic[0].re - 1.0).abs() < 1e-6);
     /// ```
     #[allow(clippy::needless_range_loop)] // Need to modify both re and im fields
-    pub fn analytic_signal(&self, signal: &[f32; N], output: &mut [Complex; N]) {
+    pub fn analytic_signal(&self, signal: &[Float; N], output: &mut [Complex; N]) {
         // 1. Convert real signal to complex
         for (i, &sample) in signal.iter().enumerate() {
             output[i] = Complex::from_real(sample);
@@ -210,10 +213,11 @@ impl<const N: usize> HilbertTransform<N> {
     ///
     /// ```
     /// use zerostone::hilbert::HilbertTransform;
+    /// use zerostone::float::Float;
     ///
     /// // Hilbert transform of constant is zero
-    /// let signal = [5.0f32; 64];
-    /// let mut hilbert_out = [0.0f32; 64];
+    /// let signal = [5.0 as Float; 64];
+    /// let mut hilbert_out = [0.0 as Float; 64];
     ///
     /// let hilbert = HilbertTransform::<64>::new();
     /// hilbert.transform(&signal, &mut hilbert_out);
@@ -222,7 +226,7 @@ impl<const N: usize> HilbertTransform<N> {
     ///     assert!(val.abs() < 1e-3);
     /// }
     /// ```
-    pub fn transform(&self, signal: &[f32; N], output: &mut [f32; N]) {
+    pub fn transform(&self, signal: &[Float; N], output: &mut [Float; N]) {
         let mut analytic = [Complex::new(0.0, 0.0); N];
         self.analytic_signal(signal, &mut analytic);
 
@@ -251,24 +255,24 @@ impl<const N: usize> HilbertTransform<N> {
     ///
     /// ```
     /// use zerostone::hilbert::HilbertTransform;
-    /// use core::f32::consts::PI;
+    /// use zerostone::float::{self, Float, PI};
     ///
     /// // Amplitude-modulated signal: A(t) = (1 + 0.5·cos(ωₘt))·cos(ωₓt)
-    /// let mut signal = [0.0f32; 128];
+    /// let mut signal = [0.0 as Float; 128];
     /// for (i, sample) in signal.iter_mut().enumerate() {
-    ///     let t = i as f32 / 128.0;
-    ///     let modulation = 1.0 + 0.5 * (2.0 * PI * 2.0 * t).cos();
-    ///     *sample = modulation * (2.0 * PI * 10.0 * t).cos();
+    ///     let t = i as Float / 128.0;
+    ///     let modulation = 1.0 + 0.5 * float::cos(2.0 * PI * 2.0 * t);
+    ///     *sample = modulation * float::cos(2.0 * PI * 10.0 * t);
     /// }
     ///
-    /// let mut amplitude = [0.0f32; 128];
+    /// let mut amplitude = [0.0 as Float; 128];
     /// let hilbert = HilbertTransform::<128>::new();
     /// hilbert.instantaneous_amplitude(&signal, &mut amplitude);
     ///
     /// // Amplitude should follow modulation envelope
     /// assert!(amplitude[0] > 0.5);  // Rough check
     /// ```
-    pub fn instantaneous_amplitude(&self, signal: &[f32; N], output: &mut [f32; N]) {
+    pub fn instantaneous_amplitude(&self, signal: &[Float; N], output: &mut [Float; N]) {
         let mut analytic = [Complex::new(0.0, 0.0); N];
         self.analytic_signal(signal, &mut analytic);
 
@@ -296,28 +300,28 @@ impl<const N: usize> HilbertTransform<N> {
     ///
     /// ```
     /// use zerostone::hilbert::HilbertTransform;
-    /// use core::f32::consts::PI;
+    /// use zerostone::float::{self, Float, PI};
     ///
     /// // Pure sine wave at 10 Hz
-    /// let mut signal = [0.0f32; 64];
+    /// let mut signal = [0.0 as Float; 64];
     /// for (i, sample) in signal.iter_mut().enumerate() {
-    ///     let t = i as f32 / 64.0;
-    ///     *sample = (2.0 * PI * 10.0 * t).sin();
+    ///     let t = i as Float / 64.0;
+    ///     *sample = float::sin(2.0 * PI * 10.0 * t);
     /// }
     ///
-    /// let mut phase = [0.0f32; 64];
+    /// let mut phase = [0.0 as Float; 64];
     /// let hilbert = HilbertTransform::<64>::new();
     /// hilbert.instantaneous_phase(&signal, &mut phase);
     ///
     /// // Phase should be approximately -π/2 at t=0 for sine
     /// assert!((phase[0] + PI / 2.0).abs() < 0.2);
     /// ```
-    pub fn instantaneous_phase(&self, signal: &[f32; N], output: &mut [f32; N]) {
+    pub fn instantaneous_phase(&self, signal: &[Float; N], output: &mut [Float; N]) {
         let mut analytic = [Complex::new(0.0, 0.0); N];
         self.analytic_signal(signal, &mut analytic);
 
         for (i, &z) in analytic.iter().enumerate() {
-            output[i] = libm::atan2f(z.im, z.re); // phase in radians [-π, π]
+            output[i] = float::atan2(z.im, z.re); // phase in radians [-π, π]
         }
     }
 
@@ -345,46 +349,46 @@ impl<const N: usize> HilbertTransform<N> {
     ///
     /// ```
     /// use zerostone::hilbert::HilbertTransform;
-    /// use core::f32::consts::PI;
+    /// use zerostone::float::{self, Float, PI};
     ///
     /// // Pure sine at 15 Hz
-    /// let sample_rate = 256.0;
-    /// let mut signal = [0.0f32; 128];
+    /// let sample_rate: Float = 256.0;
+    /// let mut signal = [0.0 as Float; 128];
     /// for (i, sample) in signal.iter_mut().enumerate() {
-    ///     let t = i as f32 / sample_rate;
-    ///     *sample = (2.0 * PI * 15.0 * t).sin();
+    ///     let t = i as Float / sample_rate;
+    ///     *sample = float::sin(2.0 * PI * 15.0 * t);
     /// }
     ///
-    /// let mut freq = [0.0f32; 127];
+    /// let mut freq = [0.0 as Float; 127];
     /// let hilbert = HilbertTransform::<128>::new();
     /// let n = hilbert.instantaneous_frequency(&signal, &mut freq, sample_rate);
     ///
     /// assert_eq!(n, 127);
     /// // Frequency should be close to 15 Hz (with edge effects)
-    /// let mean_freq: f32 = freq[10..117].iter().sum::<f32>() / 107.0;
+    /// let mean_freq: Float = freq[10..117].iter().sum::<Float>() / 107.0;
     /// assert!((mean_freq - 15.0).abs() < 1.0);
     /// ```
     pub fn instantaneous_frequency(
         &self,
-        signal: &[f32; N],
-        output: &mut [f32],
-        sample_rate: f32,
+        signal: &[Float; N],
+        output: &mut [Float],
+        sample_rate: Float,
     ) -> usize {
-        let mut phase = [0.0f32; N];
+        let mut phase = [0.0 as Float; N];
         self.instantaneous_phase(signal, &mut phase);
 
         // Unwrap phase (handle 2π discontinuities)
-        let mut unwrapped = [0.0f32; N];
+        let mut unwrapped = [0.0 as Float; N];
         unwrapped[0] = phase[0];
-        let mut cumulative = 0.0f32;
+        let mut cumulative: Float = 0.0;
 
         for i in 1..N {
             let diff = phase[i] - phase[i - 1];
             // Detect and correct for phase wraps
-            let corrected = if diff > core::f32::consts::PI {
-                diff - 2.0 * core::f32::consts::PI
-            } else if diff < -core::f32::consts::PI {
-                diff + 2.0 * core::f32::consts::PI
+            let corrected = if diff > float::PI {
+                diff - 2.0 * float::PI
+            } else if diff < -float::PI {
+                diff + 2.0 * float::PI
             } else {
                 diff
             };
@@ -396,7 +400,7 @@ impl<const N: usize> HilbertTransform<N> {
         let n_out = (N - 1).min(output.len());
         for i in 0..n_out {
             let dphase_dt = (unwrapped[i + 1] - unwrapped[i]) * sample_rate;
-            output[i] = dphase_dt / (2.0 * core::f32::consts::PI);
+            output[i] = dphase_dt / (2.0 * float::PI);
         }
 
         n_out
@@ -431,7 +435,8 @@ impl<const N: usize> Default for HilbertTransform<N> {
 /// use zerostone::{Complex, hilbert::hilbert_batch};
 ///
 /// // 3 channels, 64 samples each
-/// let signals: [[f32; 64]; 3] = [
+/// use zerostone::float::Float;
+/// let signals: [[Float; 64]; 3] = [
 ///     [1.0; 64],
 ///     [2.0; 64],
 ///     [3.0; 64],
@@ -446,7 +451,7 @@ impl<const N: usize> Default for HilbertTransform<N> {
 /// }
 /// ```
 pub fn hilbert_batch<const N: usize, const C: usize>(
-    signals: &[[f32; N]; C],
+    signals: &[[Float; N]; C],
     output: &mut [[Complex; N]; C],
 ) {
     let hilbert = HilbertTransform::<N>::new();
@@ -458,13 +463,13 @@ pub fn hilbert_batch<const N: usize, const C: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::f32::consts::PI;
+    use crate::float::{Float, PI};
 
     #[test]
     fn test_hilbert_dc_is_zero() {
         // Hilbert transform of constant signal should be zero
-        let signal = [5.0f32; 64];
-        let mut output = [0.0f32; 64];
+        let signal = [5.0 as Float; 64];
+        let mut output = [0.0 as Float; 64];
 
         let hilbert = HilbertTransform::<64>::new();
         hilbert.transform(&signal, &mut output);
@@ -482,20 +487,20 @@ mod tests {
         let freq = 4.0; // 4 Hz - exactly periodic in window (bin 2)
         let sample_rate = 256.0;
 
-        let mut signal = [0.0f32; 128];
+        let mut signal = [0.0 as Float; 128];
         for (i, sample) in signal.iter_mut().enumerate() {
-            let t = i as f32 / sample_rate;
-            *sample = libm::cosf(2.0 * PI * freq * t);
+            let t = i as Float / sample_rate;
+            *sample = float::cos(2.0 * PI * freq * t);
         }
 
-        let mut hilbert_out = [0.0f32; 128];
+        let mut hilbert_out = [0.0 as Float; 128];
         let hilbert = HilbertTransform::<128>::new();
         hilbert.transform(&signal, &mut hilbert_out);
 
         // Check against expected sine (skip edges due to FFT artifacts)
         for i in 10..n - 10 {
-            let t = i as f32 / sample_rate;
-            let expected = libm::sinf(2.0 * PI * freq * t);
+            let t = i as Float / sample_rate;
+            let expected = float::sin(2.0 * PI * freq * t);
             assert!(
                 (hilbert_out[i] - expected).abs() < 0.15,
                 "At i={}: expected {}, got {}",
@@ -514,20 +519,20 @@ mod tests {
         let freq = 4.0; // 4 Hz - exactly periodic in window (bin 2)
         let sample_rate = 256.0;
 
-        let mut signal = [0.0f32; 128];
+        let mut signal = [0.0 as Float; 128];
         for (i, sample) in signal.iter_mut().enumerate() {
-            let t = i as f32 / sample_rate;
-            *sample = libm::sinf(2.0 * PI * freq * t);
+            let t = i as Float / sample_rate;
+            *sample = float::sin(2.0 * PI * freq * t);
         }
 
-        let mut hilbert_out = [0.0f32; 128];
+        let mut hilbert_out = [0.0 as Float; 128];
         let hilbert = HilbertTransform::<128>::new();
         hilbert.transform(&signal, &mut hilbert_out);
 
         // Check against expected -cos (skip edges)
         for i in 10..n - 10 {
-            let t = i as f32 / sample_rate;
-            let expected = -libm::cosf(2.0 * PI * freq * t);
+            let t = i as Float / sample_rate;
+            let expected = -float::cos(2.0 * PI * freq * t);
             assert!(
                 (hilbert_out[i] - expected).abs() < 0.15,
                 "At i={}: expected {}, got {}",
@@ -542,9 +547,9 @@ mod tests {
     fn test_hilbert_inverse_property() {
         // H[H[x]] = -x (applying Hilbert transform twice negates the signal)
         // Note: This property only holds for zero-mean signals (DC is zeroed by Hilbert)
-        let signal = [1.0f32, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0]; // Zero-mean
-        let mut h1 = [0.0f32; 8];
-        let mut h2 = [0.0f32; 8];
+        let signal: [Float; 8] = [1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0]; // Zero-mean
+        let mut h1 = [0.0 as Float; 8];
+        let mut h2 = [0.0 as Float; 8];
 
         let hilbert = HilbertTransform::<8>::new();
         hilbert.transform(&signal, &mut h1);
@@ -568,13 +573,13 @@ mod tests {
         let freq = 10.0;
         let sample_rate = 256.0;
 
-        let mut signal = [0.0f32; 128];
+        let mut signal = [0.0 as Float; 128];
         for (i, sample) in signal.iter_mut().enumerate() {
-            let t = i as f32 / sample_rate;
-            *sample = 2.0 * libm::sinf(2.0 * PI * freq * t);
+            let t = i as Float / sample_rate;
+            *sample = 2.0 * float::sin(2.0 * PI * freq * t);
         }
 
-        let mut amplitude = [0.0f32; 128];
+        let mut amplitude = [0.0 as Float; 128];
         let hilbert = HilbertTransform::<128>::new();
         hilbert.instantaneous_amplitude(&signal, &mut amplitude);
 
@@ -595,13 +600,13 @@ mod tests {
         let freq = 8.0;
         let sample_rate = 256.0;
 
-        let mut signal = [0.0f32; 256];
+        let mut signal = [0.0 as Float; 256];
         for (i, sample) in signal.iter_mut().enumerate() {
-            let t = i as f32 / sample_rate;
-            *sample = libm::sinf(2.0 * PI * freq * t);
+            let t = i as Float / sample_rate;
+            *sample = float::sin(2.0 * PI * freq * t);
         }
 
-        let mut phase = [0.0f32; 256];
+        let mut phase = [0.0 as Float; 256];
         let hilbert = HilbertTransform::<256>::new();
         hilbert.instantaneous_phase(&signal, &mut phase);
 
@@ -625,7 +630,7 @@ mod tests {
     #[test]
     fn test_analytic_signal_real_part_matches_input() {
         // Real part of analytic signal should match original signal
-        let signal = [1.0f32, 2.0, 3.0, 2.0, 1.0, 0.0, -1.0, 0.0];
+        let signal: [Float; 8] = [1.0, 2.0, 3.0, 2.0, 1.0, 0.0, -1.0, 0.0];
         let mut analytic = [Complex::new(0.0, 0.0); 8];
 
         let hilbert = HilbertTransform::<8>::new();
@@ -644,7 +649,7 @@ mod tests {
 
     #[test]
     fn test_batch_processing() {
-        let signals: [[f32; 64]; 3] = [[1.0; 64], [2.0; 64], [3.0; 64]];
+        let signals: [[Float; 64]; 3] = [[1.0; 64], [2.0; 64], [3.0; 64]];
         let mut output = [[Complex::new(0.0, 0.0); 64]; 3];
 
         hilbert_batch(&signals, &mut output);
@@ -668,20 +673,20 @@ mod tests {
         let freq = 15.0;
         let sample_rate = 256.0;
 
-        let mut signal = [0.0f32; 256];
+        let mut signal = [0.0 as Float; 256];
         for (i, sample) in signal.iter_mut().enumerate() {
-            let t = i as f32 / sample_rate;
-            *sample = libm::sinf(2.0 * PI * freq * t);
+            let t = i as Float / sample_rate;
+            *sample = float::sin(2.0 * PI * freq * t);
         }
 
-        let mut inst_freq = [0.0f32; 255];
+        let mut inst_freq = [0.0 as Float; 255];
         let hilbert = HilbertTransform::<256>::new();
         let n = hilbert.instantaneous_frequency(&signal, &mut inst_freq, sample_rate);
 
         assert_eq!(n, 255);
 
         // Check middle section (skip edges)
-        let mean_freq: f32 = inst_freq[30..225].iter().sum::<f32>() / 195.0;
+        let mean_freq: Float = inst_freq[30..225].iter().sum::<Float>() / 195.0;
         assert!(
             (mean_freq - freq).abs() < 1.5,
             "Mean frequency should be ~{} Hz, got {} Hz",
@@ -699,19 +704,19 @@ mod tests {
     #[test]
     fn test_analytic_signal_power_preservation() {
         // Energy should be roughly preserved (doubled due to one-sided spectrum)
-        let mut signal = [0.0f32; 64];
+        let mut signal = [0.0 as Float; 64];
         for (i, sample) in signal.iter_mut().enumerate() {
-            let t = i as f32 / 64.0;
+            let t = i as Float / 64.0;
             *sample = (2.0 * PI * 5.0 * t).sin();
         }
 
-        let signal_energy: f32 = signal.iter().map(|&x| x * x).sum();
+        let signal_energy: Float = signal.iter().map(|&x| x * x).sum();
 
         let mut analytic = [Complex::new(0.0, 0.0); 64];
         let hilbert = HilbertTransform::<64>::new();
         hilbert.analytic_signal(&signal, &mut analytic);
 
-        let analytic_energy: f32 = analytic.iter().map(|z| z.magnitude_squared()).sum();
+        let analytic_energy: Float = analytic.iter().map(|z| z.magnitude_squared()).sum();
 
         // Analytic signal energy should be roughly 2x original (one-sided spectrum)
         let ratio = analytic_energy / signal_energy;
@@ -729,20 +734,23 @@ mod tests {
         let mod_freq = 2.0;
         let sample_rate = 256.0;
 
-        let mut signal = [0.0f32; 256];
+        let mut signal = [0.0 as Float; 256];
         for (i, sample) in signal.iter_mut().enumerate() {
-            let t = i as f32 / sample_rate;
-            let modulation = 1.0 + 0.5 * libm::cosf(2.0 * PI * mod_freq * t);
-            *sample = modulation * libm::sinf(2.0 * PI * carrier_freq * t);
+            let t = i as Float / sample_rate;
+            let modulation = 1.0 + 0.5 * float::cos(2.0 * PI * mod_freq * t);
+            *sample = modulation * float::sin(2.0 * PI * carrier_freq * t);
         }
 
-        let mut amplitude = [0.0f32; 256];
+        let mut amplitude = [0.0 as Float; 256];
         let hilbert = HilbertTransform::<256>::new();
         hilbert.instantaneous_amplitude(&signal, &mut amplitude);
 
         // Amplitude should vary between 0.5 and 1.5 (modulation envelope)
-        let max_amp = amplitude.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-        let min_amp = amplitude.iter().copied().fold(f32::INFINITY, f32::min);
+        let max_amp = amplitude
+            .iter()
+            .copied()
+            .fold(Float::NEG_INFINITY, Float::max);
+        let min_amp = amplitude.iter().copied().fold(float::INFINITY, Float::min);
 
         assert!(
             max_amp > 1.2,

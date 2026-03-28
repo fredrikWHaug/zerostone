@@ -16,13 +16,13 @@
 //! # Example
 //!
 //! ```
-//! use zerostone::{MultiBandPower, FrequencyBand, IntegrationMethod};
+//! use zerostone::{MultiBandPower, FrequencyBand, IntegrationMethod, Float};
 //!
 //! // Create band power extractor for 256-point FFT, 4 channels, 250 Hz sample rate
 //! let mut bp: MultiBandPower<256, 4> = MultiBandPower::new(250.0);
 //!
 //! // Compute PSD for all channels
-//! let signals: [[f32; 256]; 4] = [[0.0; 256]; 4];
+//! let signals: [[Float; 256]; 4] = [[0.0; 256]; 4];
 //! bp.compute(&signals);
 //!
 //! // Query multiple bands efficiently (no re-computation)
@@ -51,6 +51,7 @@
 //! comparison across different window functions and FFT sizes.
 
 use crate::fft::{Complex, Fft};
+use crate::float::{self, Float};
 use crate::window::{window_coefficient, WindowType};
 
 /// A frequency band defined by lower and upper bounds in Hz.
@@ -73,9 +74,9 @@ use crate::window::{window_coefficient, WindowType};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FrequencyBand {
     /// Lower frequency bound in Hz (inclusive).
-    pub low_hz: f32,
+    pub low_hz: Float,
     /// Upper frequency bound in Hz (inclusive).
-    pub high_hz: f32,
+    pub high_hz: Float,
 }
 
 impl FrequencyBand {
@@ -192,7 +193,7 @@ impl FrequencyBand {
     /// assert_eq!(band.low_hz, 18.0);
     /// assert_eq!(band.high_hz, 22.0);
     /// ```
-    pub fn new(low_hz: f32, high_hz: f32) -> Self {
+    pub fn new(low_hz: Float, high_hz: Float) -> Self {
         assert!(low_hz >= 0.0, "Lower frequency bound must be non-negative");
         assert!(
             high_hz > low_hz,
@@ -210,7 +211,7 @@ impl FrequencyBand {
     ///
     /// assert_eq!(FrequencyBand::ALPHA.center_hz(), 10.0);
     /// ```
-    pub fn center_hz(&self) -> f32 {
+    pub fn center_hz(&self) -> Float {
         (self.low_hz + self.high_hz) / 2.0
     }
 
@@ -223,7 +224,7 @@ impl FrequencyBand {
     ///
     /// assert_eq!(FrequencyBand::ALPHA.bandwidth_hz(), 4.0);
     /// ```
-    pub fn bandwidth_hz(&self) -> f32 {
+    pub fn bandwidth_hz(&self) -> Float {
         self.high_hz - self.low_hz
     }
 }
@@ -268,7 +269,7 @@ pub enum IntegrationMethod {
 /// # Example
 ///
 /// ```
-/// use zerostone::{MultiBandPower, FrequencyBand, IntegrationMethod, WindowType};
+/// use zerostone::{MultiBandPower, FrequencyBand, IntegrationMethod, WindowType, Float};
 ///
 /// // 256-point FFT, 8 channels, 500 Hz sample rate
 /// let mut bp: MultiBandPower<256, 8> = MultiBandPower::new(500.0);
@@ -281,7 +282,7 @@ pub enum IntegrationMethod {
 /// );
 ///
 /// // Process signals
-/// let signals: [[f32; 256]; 8] = [[0.0; 256]; 8];
+/// let signals: [[Float; 256]; 8] = [[0.0; 256]; 8];
 /// bp.compute(&signals);
 ///
 /// // Get band power for all channels
@@ -296,7 +297,7 @@ pub enum IntegrationMethod {
 /// ```
 pub struct MultiBandPower<const N: usize, const C: usize> {
     /// Sample rate in Hz.
-    sample_rate: f32,
+    sample_rate: Float,
     /// Window function type.
     window: WindowType,
     /// Integration method for band power.
@@ -304,14 +305,14 @@ pub struct MultiBandPower<const N: usize, const C: usize> {
     /// FFT processor.
     fft: Fft<N>,
     /// Frequency resolution (Hz per bin).
-    freq_resolution: f32,
+    freq_resolution: Float,
     /// Stored PSD for each channel (one-sided, N/2+1 bins).
     /// Indexed as psd[channel][bin].
-    psd: [[f32; N]; C],
+    psd: [[Float; N]; C],
     /// Whether PSD has been computed.
     has_psd: bool,
     /// Window power sum (S2 = sum of squared window coefficients).
-    window_s2: f32,
+    window_s2: Float,
 }
 
 impl<const N: usize, const C: usize> MultiBandPower<N, C> {
@@ -334,7 +335,7 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
     ///
     /// let bp: MultiBandPower<256, 4> = MultiBandPower::new(250.0);
     /// ```
-    pub fn new(sample_rate: f32) -> Self {
+    pub fn new(sample_rate: Float) -> Self {
         Self::with_config(
             sample_rate,
             WindowType::Hann,
@@ -366,12 +367,12 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
     /// );
     /// ```
     pub fn with_config(
-        sample_rate: f32,
+        sample_rate: Float,
         window: WindowType,
         integration: IntegrationMethod,
     ) -> Self {
         // Compute window power sum S2 = sum(w[n]^2)
-        let window_s2: f32 = (0..N)
+        let window_s2: Float = (0..N)
             .map(|i| {
                 let w = window_coefficient(window, i, N);
                 w * w
@@ -383,7 +384,7 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
             window,
             integration,
             fft: Fft::new(),
-            freq_resolution: sample_rate / N as f32,
+            freq_resolution: sample_rate / N as Float,
             psd: [[0.0; N]; C],
             has_psd: false,
             window_s2,
@@ -408,14 +409,14 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
     /// # Example
     ///
     /// ```
-    /// use zerostone::MultiBandPower;
+    /// use zerostone::{MultiBandPower, Float};
     ///
     /// let mut bp: MultiBandPower<128, 2> = MultiBandPower::new(256.0);
     ///
-    /// let signals = [[0.5f32; 128], [-0.5f32; 128]];
+    /// let signals: [[Float; 128]; 2] = [[0.5; 128], [-0.5; 128]];
     /// bp.compute(&signals);
     /// ```
-    pub fn compute(&mut self, signals: &[[f32; N]; C]) {
+    pub fn compute(&mut self, signals: &[[Float; N]; C]) {
         // Normalization factor: 2 / (fs * S2)
         // Factor of 2 for one-sided spectrum
         let norm_factor = 2.0 / (self.sample_rate * self.window_s2);
@@ -468,22 +469,22 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
     /// # Example
     ///
     /// ```
-    /// use zerostone::{MultiBandPower, FrequencyBand};
+    /// use zerostone::{MultiBandPower, FrequencyBand, Float};
     ///
     /// let mut bp: MultiBandPower<256, 4> = MultiBandPower::new(250.0);
-    /// let signals = [[0.0f32; 256]; 4];
+    /// let signals: [[Float; 256]; 4] = [[0.0; 256]; 4];
     /// bp.compute(&signals);
     ///
     /// let alpha_power = bp.band_power(FrequencyBand::ALPHA);
     /// ```
-    pub fn band_power(&self, band: FrequencyBand) -> [f32; C] {
+    pub fn band_power(&self, band: FrequencyBand) -> [Float; C] {
         assert!(
             self.has_psd,
             "Must call compute() before querying band power"
         );
 
         let (low_bin, high_bin) = self.band_to_bins(band);
-        let mut power = [0.0f32; C];
+        let mut power = [0.0 as Float; C];
 
         for (ch, pwr) in power.iter_mut().enumerate() {
             *pwr = self.integrate_band(ch, low_bin, high_bin);
@@ -515,10 +516,10 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
     /// # Example
     ///
     /// ```
-    /// use zerostone::{MultiBandPower, FrequencyBand};
+    /// use zerostone::{MultiBandPower, FrequencyBand, Float};
     ///
     /// let mut bp: MultiBandPower<256, 4> = MultiBandPower::new(250.0);
-    /// let signals = [[0.0f32; 256]; 4];
+    /// let signals: [[Float; 256]; 4] = [[0.0; 256]; 4];
     /// bp.compute(&signals);
     ///
     /// // Alpha power relative to 1-40 Hz range
@@ -527,9 +528,9 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
     pub fn band_power_relative(
         &self,
         band: FrequencyBand,
-        ref_low_hz: f32,
-        ref_high_hz: f32,
-    ) -> [f32; C] {
+        ref_low_hz: Float,
+        ref_high_hz: Float,
+    ) -> [Float; C] {
         assert!(
             self.has_psd,
             "Must call compute() before querying band power"
@@ -539,7 +540,7 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
         let ref_band = FrequencyBand::new(ref_low_hz, ref_high_hz);
         let ref_power = self.band_power(ref_band);
 
-        let mut relative = [0.0f32; C];
+        let mut relative = [0.0 as Float; C];
         for ch in 0..C {
             if ref_power[ch] > 0.0 {
                 relative[ch] = target_power[ch] / ref_power[ch];
@@ -569,16 +570,16 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
     /// # Example
     ///
     /// ```
-    /// use zerostone::{MultiBandPower, FrequencyBand};
+    /// use zerostone::{MultiBandPower, FrequencyBand, Float};
     ///
     /// let mut bp: MultiBandPower<256, 4> = MultiBandPower::new(250.0);
-    /// let signals = [[0.0f32; 256]; 4];
+    /// let signals: [[Float; 256]; 4] = [[0.0; 256]; 4];
     /// bp.compute(&signals);
     ///
     /// let norm_alpha = bp.band_power_normalized(FrequencyBand::ALPHA);
     /// // norm_alpha[ch] is in range [0, 1]
     /// ```
-    pub fn band_power_normalized(&self, band: FrequencyBand) -> [f32; C] {
+    pub fn band_power_normalized(&self, band: FrequencyBand) -> [Float; C] {
         assert!(
             self.has_psd,
             "Must call compute() before querying band power"
@@ -588,7 +589,7 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
         let total_band = FrequencyBand::new(0.0, self.sample_rate / 2.0);
         let total_power = self.band_power(total_band);
 
-        let mut normalized = [0.0f32; C];
+        let mut normalized = [0.0 as Float; C];
         for ch in 0..C {
             if total_power[ch] > 0.0 {
                 normalized[ch] = target_power[ch] / total_power[ch];
@@ -619,16 +620,16 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
     /// # Example
     ///
     /// ```
-    /// use zerostone::MultiBandPower;
+    /// use zerostone::{MultiBandPower, Float};
     ///
     /// let mut bp: MultiBandPower<256, 2> = MultiBandPower::new(250.0);
-    /// let signals = [[0.0f32; 256]; 2];
+    /// let signals: [[Float; 256]; 2] = [[0.0; 256]; 2];
     /// bp.compute(&signals);
     ///
     /// let psd_ch0 = bp.psd(0);
     /// // psd_ch0[0] is DC, psd_ch0[128] is Nyquist (125 Hz)
     /// ```
-    pub fn psd(&self, channel: usize) -> &[f32] {
+    pub fn psd(&self, channel: usize) -> &[Float] {
         assert!(self.has_psd, "Must call compute() before accessing PSD");
         assert!(channel < C, "Channel index out of bounds");
         &self.psd[channel][..=N / 2]
@@ -644,12 +645,12 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
     }
 
     /// Returns the sample rate in Hz.
-    pub fn sample_rate(&self) -> f32 {
+    pub fn sample_rate(&self) -> Float {
         self.sample_rate
     }
 
     /// Returns the frequency resolution in Hz (frequency per bin).
-    pub fn freq_resolution(&self) -> f32 {
+    pub fn freq_resolution(&self) -> Float {
         self.freq_resolution
     }
 
@@ -672,14 +673,14 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
     /// # Returns
     ///
     /// Frequency in Hz corresponding to the bin.
-    pub fn bin_to_freq(&self, bin: usize) -> f32 {
-        bin as f32 * self.freq_resolution
+    pub fn bin_to_freq(&self, bin: usize) -> Float {
+        bin as Float * self.freq_resolution
     }
 
     /// Converts a frequency band to bin indices.
     fn band_to_bins(&self, band: FrequencyBand) -> (usize, usize) {
-        let low_bin = libm::floorf(band.low_hz / self.freq_resolution) as usize;
-        let high_bin = libm::ceilf(band.high_hz / self.freq_resolution) as usize;
+        let low_bin = float::floor(band.low_hz / self.freq_resolution) as usize;
+        let high_bin = float::ceil(band.high_hz / self.freq_resolution) as usize;
 
         // Clamp to valid range
         let low_bin = low_bin.min(N / 2);
@@ -689,7 +690,7 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
     }
 
     /// Integrates PSD over a bin range using the configured method.
-    fn integrate_band(&self, channel: usize, low_bin: usize, high_bin: usize) -> f32 {
+    fn integrate_band(&self, channel: usize, low_bin: usize, high_bin: usize) -> Float {
         if low_bin >= high_bin {
             return 0.0;
         }
@@ -697,7 +698,7 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
         match self.integration {
             IntegrationMethod::Rectangular => {
                 // Left Riemann sum: sum(PSD[k] * df) for k in [low, high)
-                let sum: f32 = self.psd[channel][low_bin..high_bin].iter().sum();
+                let sum: Float = self.psd[channel][low_bin..high_bin].iter().sum();
                 sum * self.freq_resolution
             }
             IntegrationMethod::Trapezoidal => {
@@ -706,7 +707,7 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
                     return 0.0;
                 }
 
-                let mut sum = 0.0f32;
+                let mut sum: Float = 0.0;
 
                 // First term (half weight)
                 sum += self.psd[channel][low_bin] / 2.0;
@@ -728,7 +729,7 @@ impl<const N: usize, const C: usize> MultiBandPower<N, C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::f32::consts::PI as PI32;
+    use crate::float::{Float, PI as PI32};
 
     /// Test that DC signal has all power in DC bin.
     #[test]
@@ -741,13 +742,13 @@ mod tests {
         );
 
         // Constant signal (DC)
-        let signals = [[1.0f32; 64]];
+        let signals = [[1.0 as Float; 64]];
         bp.compute(&signals);
 
         // DC power should dominate
         let psd = bp.psd(0);
         let dc_power = psd[0];
-        let other_power: f32 = psd[1..].iter().sum();
+        let other_power: Float = psd[1..].iter().sum();
 
         // DC should have much more power than other bins
         assert!(
@@ -764,10 +765,10 @@ mod tests {
         let mut bp: MultiBandPower<256, 1> = MultiBandPower::new(256.0);
 
         // 10 Hz sine wave (exactly on bin 10)
-        let mut signal = [0.0f32; 256];
+        let mut signal = [0.0 as Float; 256];
         for (i, s) in signal.iter_mut().enumerate() {
-            let t = i as f32 / 256.0;
-            *s = libm::sinf(2.0 * PI32 * 10.0 * t);
+            let t = i as Float / 256.0;
+            *s = float::sin(2.0 * PI32 * 10.0 * t);
         }
         let signals = [signal];
         bp.compute(&signals);
@@ -799,13 +800,13 @@ mod tests {
         );
 
         // Create a signal with known power
-        let mut signal = [0.0f32; 256];
+        let mut signal = [0.0 as Float; 256];
         for (i, s) in signal.iter_mut().enumerate() {
-            *s = libm::sinf(2.0 * PI32 * 20.0 * i as f32 / 256.0);
+            *s = float::sin(2.0 * PI32 * 20.0 * i as Float / 256.0);
         }
 
         // Time-domain power (mean squared)
-        let time_power: f32 = signal.iter().map(|x| x * x).sum::<f32>() / 256.0;
+        let time_power: Float = signal.iter().map(|x| x * x).sum::<Float>() / 256.0;
 
         let signals = [signal];
         bp.compute(&signals);
@@ -829,12 +830,12 @@ mod tests {
         let mut bp: MultiBandPower<256, 1> = MultiBandPower::new(256.0);
 
         // White-ish noise (pseudo-random)
-        let mut signal = [0.0f32; 256];
+        let mut signal = [0.0 as Float; 256];
         for (i, s) in signal.iter_mut().enumerate() {
             // Simple deterministic "noise"
-            *s = libm::sinf(i as f32 * 0.1)
-                + libm::cosf(i as f32 * 0.37)
-                + libm::sinf(i as f32 * 0.73);
+            *s = float::sin(i as Float * 0.1)
+                + float::cos(i as Float * 0.37)
+                + float::sin(i as Float * 0.73);
         }
         let signals = [signal];
         bp.compute(&signals);
@@ -859,9 +860,9 @@ mod tests {
 
         // Channel 0: 5 Hz (theta band)
         // Channel 1: 10 Hz (alpha band)
-        let signals: [[f32; 128]; 2] = [
-            core::array::from_fn(|i| libm::sinf(2.0 * PI32 * 5.0 * i as f32 / 128.0)),
-            core::array::from_fn(|i| libm::sinf(2.0 * PI32 * 10.0 * i as f32 / 128.0)),
+        let signals: [[Float; 128]; 2] = [
+            core::array::from_fn(|i| float::sin(2.0 * PI32 * 5.0 * i as Float / 128.0)),
+            core::array::from_fn(|i| float::sin(2.0 * PI32 * 10.0 * i as Float / 128.0)),
         ];
         bp.compute(&signals);
 
@@ -889,9 +890,9 @@ mod tests {
         let mut bp_trap: MultiBandPower<256, 1> =
             MultiBandPower::with_config(256.0, WindowType::Hann, IntegrationMethod::Trapezoidal);
 
-        let mut signal = [0.0f32; 256];
+        let mut signal = [0.0 as Float; 256];
         for (i, s) in signal.iter_mut().enumerate() {
-            *s = libm::sinf(2.0 * PI32 * 10.0 * i as f32 / 256.0);
+            *s = float::sin(2.0 * PI32 * 10.0 * i as Float / 256.0);
         }
         let signals = [signal];
 
@@ -948,7 +949,7 @@ mod tests {
     #[should_panic(expected = "Must call compute()")]
     fn test_reset_clears_state() {
         let mut bp: MultiBandPower<64, 1> = MultiBandPower::new(100.0);
-        let signals = [[1.0f32; 64]];
+        let signals = [[1.0 as Float; 64]];
         bp.compute(&signals);
 
         // This should work
@@ -993,10 +994,10 @@ mod tests {
             IntegrationMethod::Trapezoidal,
         );
 
-        let mut signal = [0.0f32; 256];
+        let mut signal = [0.0 as Float; 256];
         for (i, s) in signal.iter_mut().enumerate() {
             // Non-integer frequency causes spectral leakage
-            *s = libm::sinf(2.0 * PI32 * 10.5 * i as f32 / 256.0);
+            *s = float::sin(2.0 * PI32 * 10.5 * i as Float / 256.0);
         }
         let signals = [signal];
 
@@ -1018,7 +1019,7 @@ mod tests {
     #[test]
     fn test_edge_case_bands() {
         let mut bp: MultiBandPower<64, 1> = MultiBandPower::new(64.0);
-        let signals = [[1.0f32; 64]];
+        let signals = [[1.0 as Float; 64]];
         bp.compute(&signals);
 
         // Very narrow band

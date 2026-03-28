@@ -29,6 +29,8 @@
 //! assert!(est.slope() > 0.0); // positive drift
 //! ```
 
+use crate::float::{self, Float};
+
 /// Drift estimator using binned spike positions and linear regression.
 ///
 /// Accumulates spike positions over time bins, then fits a linear model
@@ -54,12 +56,12 @@
 /// assert!((corrected - 50.0f64).abs() < (60.0f64 - 50.0).abs());
 /// ```
 pub struct DriftEstimator<const MAX_BINS: usize> {
-    bin_sum_y: [f64; MAX_BINS],
+    bin_sum_y: [Float; MAX_BINS],
     bin_counts: [usize; MAX_BINS],
     bin_duration: usize,
     n_bins: usize,
-    slope: f64,
-    intercept: f64,
+    slope: Float,
+    intercept: Float,
     fitted: bool,
 }
 
@@ -86,7 +88,7 @@ impl<const MAX_BINS: usize> DriftEstimator<MAX_BINS> {
     ///
     /// The spike is assigned to a bin based on `sample_index / bin_duration`.
     /// If the bin index exceeds `MAX_BINS`, the spike is ignored.
-    pub fn add_spike(&mut self, sample_index: usize, position_y: f64) {
+    pub fn add_spike(&mut self, sample_index: usize, position_y: Float) {
         let bin = sample_index / self.bin_duration;
         if bin >= MAX_BINS {
             return;
@@ -105,16 +107,16 @@ impl<const MAX_BINS: usize> DriftEstimator<MAX_BINS> {
     /// remain at 0.0 and `fitted` stays false.
     pub fn fit(&mut self) {
         // Collect bins that have data
-        let mut xs = [0.0f64; MAX_BINS];
-        let mut ys = [0.0f64; MAX_BINS];
+        let mut xs = [0.0 as Float; MAX_BINS];
+        let mut ys = [0.0 as Float; MAX_BINS];
         let mut n = 0usize;
 
         let mut bin = 0;
         while bin < self.n_bins && bin < MAX_BINS {
             if self.bin_counts[bin] > 0 {
                 // Use bin center time in sample units
-                xs[n] = (bin as f64 + 0.5) * self.bin_duration as f64;
-                ys[n] = self.bin_sum_y[bin] / self.bin_counts[bin] as f64;
+                xs[n] = (bin as Float + 0.5) * self.bin_duration as Float;
+                ys[n] = self.bin_sum_y[bin] / self.bin_counts[bin] as Float;
                 n += 1;
             }
             bin += 1;
@@ -142,9 +144,9 @@ impl<const MAX_BINS: usize> DriftEstimator<MAX_BINS> {
             i += 1;
         }
 
-        let nf = n as f64;
+        let nf = n as Float;
         let denom = nf * sum_x2 - sum_x * sum_x;
-        if libm::fabs(denom) < 1e-30 {
+        if float::abs(denom) < 1e-30 {
             self.slope = 0.0;
             self.intercept = sum_y / nf;
             self.fitted = true;
@@ -160,11 +162,11 @@ impl<const MAX_BINS: usize> DriftEstimator<MAX_BINS> {
     ///
     /// Returns the estimated position offset relative to time zero.
     /// If the model has not been fitted, returns 0.0.
-    pub fn estimate_drift(&self, sample_index: usize) -> f64 {
+    pub fn estimate_drift(&self, sample_index: usize) -> Float {
         if !self.fitted {
             return 0.0;
         }
-        let t = sample_index as f64;
+        let t = sample_index as Float;
         // Drift = (predicted position at t) - (predicted position at t=0)
         // predicted(t) = slope * t + intercept
         // predicted(0) = intercept
@@ -175,17 +177,17 @@ impl<const MAX_BINS: usize> DriftEstimator<MAX_BINS> {
     /// Correct a spike's position by removing estimated drift.
     ///
     /// Returns `position_y - estimate_drift(sample_index)`.
-    pub fn correct_position(&self, sample_index: usize, position_y: f64) -> f64 {
+    pub fn correct_position(&self, sample_index: usize, position_y: Float) -> Float {
         position_y - self.estimate_drift(sample_index)
     }
 
     /// The fitted drift rate (position units per sample).
-    pub fn slope(&self) -> f64 {
+    pub fn slope(&self) -> Float {
         self.slope
     }
 
     /// The fitted intercept (position at time zero).
-    pub fn intercept(&self) -> f64 {
+    pub fn intercept(&self) -> Float {
         self.intercept
     }
 
@@ -263,10 +265,10 @@ impl<const MAX_BINS: usize> Default for DriftEstimator<MAX_BINS> {
 /// ```
 pub fn estimate_drift_from_positions(
     sample_indices: &[usize],
-    positions_y: &[f64],
+    positions_y: &[Float],
     bin_duration_samples: usize,
     max_bins: usize,
-) -> Option<(f64, f64)> {
+) -> Option<(Float, Float)> {
     if sample_indices.is_empty() || positions_y.is_empty() || bin_duration_samples == 0 {
         return None;
     }
@@ -285,7 +287,7 @@ pub fn estimate_drift_from_positions(
         STACK_BINS
     };
 
-    let mut bin_sum = [0.0f64; STACK_BINS];
+    let mut bin_sum = [0.0 as Float; STACK_BINS];
     let mut bin_count = [0usize; STACK_BINS];
 
     let mut i = 0;
@@ -299,17 +301,17 @@ pub fn estimate_drift_from_positions(
     }
 
     // Collect bins with data and fit OLS
-    let mut sum_x = 0.0;
-    let mut sum_y = 0.0;
-    let mut sum_xy = 0.0;
-    let mut sum_x2 = 0.0;
+    let mut sum_x: Float = 0.0;
+    let mut sum_y: Float = 0.0;
+    let mut sum_xy: Float = 0.0;
+    let mut sum_x2: Float = 0.0;
     let mut count = 0usize;
 
     let mut bin = 0;
     while bin < effective_max {
         if bin_count[bin] > 0 {
-            let x = (bin as f64 + 0.5) * bin_duration_samples as f64;
-            let y = bin_sum[bin] / bin_count[bin] as f64;
+            let x = (bin as Float + 0.5) * bin_duration_samples as Float;
+            let y = bin_sum[bin] / bin_count[bin] as Float;
             sum_x += x;
             sum_y += y;
             sum_xy += x * y;
@@ -323,9 +325,9 @@ pub fn estimate_drift_from_positions(
         return None;
     }
 
-    let nf = count as f64;
+    let nf = count as Float;
     let denom = nf * sum_x2 - sum_x * sum_x;
-    if libm::fabs(denom) < 1e-30 {
+    if float::abs(denom) < 1e-30 {
         return Some((0.0, sum_y / nf));
     }
 
@@ -339,11 +341,11 @@ pub fn estimate_drift_from_positions(
 /// Each depth bin independently tracks spike times and positions,
 /// fitting its own slope and intercept via OLS.
 struct BinDrift<const MAX_TIME_BINS: usize> {
-    bin_sum_y: [f64; MAX_TIME_BINS],
+    bin_sum_y: [Float; MAX_TIME_BINS],
     bin_counts: [usize; MAX_TIME_BINS],
     n_bins: usize,
-    slope: f64,
-    intercept: f64,
+    slope: Float,
+    intercept: Float,
     fitted: bool,
 }
 
@@ -359,7 +361,7 @@ impl<const MAX_TIME_BINS: usize> BinDrift<MAX_TIME_BINS> {
         }
     }
 
-    fn add_sample(&mut self, time_bin: usize, position_y: f64) {
+    fn add_sample(&mut self, time_bin: usize, position_y: Float) {
         if time_bin >= MAX_TIME_BINS {
             return;
         }
@@ -371,15 +373,15 @@ impl<const MAX_TIME_BINS: usize> BinDrift<MAX_TIME_BINS> {
     }
 
     fn fit(&mut self, bin_duration: usize) {
-        let mut xs = [0.0f64; MAX_TIME_BINS];
-        let mut ys = [0.0f64; MAX_TIME_BINS];
+        let mut xs = [0.0 as Float; MAX_TIME_BINS];
+        let mut ys = [0.0 as Float; MAX_TIME_BINS];
         let mut n = 0usize;
 
         let mut bin = 0;
         while bin < self.n_bins && bin < MAX_TIME_BINS {
             if self.bin_counts[bin] > 0 {
-                xs[n] = (bin as f64 + 0.5) * bin_duration as f64;
-                ys[n] = self.bin_sum_y[bin] / self.bin_counts[bin] as f64;
+                xs[n] = (bin as Float + 0.5) * bin_duration as Float;
+                ys[n] = self.bin_sum_y[bin] / self.bin_counts[bin] as Float;
                 n += 1;
             }
             bin += 1;
@@ -392,10 +394,10 @@ impl<const MAX_TIME_BINS: usize> BinDrift<MAX_TIME_BINS> {
             return;
         }
 
-        let mut sum_x = 0.0;
-        let mut sum_y = 0.0;
-        let mut sum_xy = 0.0;
-        let mut sum_x2 = 0.0;
+        let mut sum_x: Float = 0.0;
+        let mut sum_y: Float = 0.0;
+        let mut sum_xy: Float = 0.0;
+        let mut sum_x2: Float = 0.0;
 
         let mut i = 0;
         while i < n {
@@ -406,9 +408,9 @@ impl<const MAX_TIME_BINS: usize> BinDrift<MAX_TIME_BINS> {
             i += 1;
         }
 
-        let nf = n as f64;
+        let nf = n as Float;
         let denom = nf * sum_x2 - sum_x * sum_x;
-        if libm::fabs(denom) < 1e-30 {
+        if float::abs(denom) < 1e-30 {
             self.slope = 0.0;
             self.intercept = sum_y / nf;
             self.fitted = true;
@@ -420,11 +422,11 @@ impl<const MAX_TIME_BINS: usize> BinDrift<MAX_TIME_BINS> {
         self.fitted = true;
     }
 
-    fn estimate_drift(&self, sample_index: usize) -> f64 {
+    fn estimate_drift(&self, sample_index: usize) -> Float {
         if !self.fitted {
             return 0.0;
         }
-        self.slope * sample_index as f64
+        self.slope * sample_index as Float
     }
 
     fn reset(&mut self) {
@@ -471,9 +473,9 @@ impl<const MAX_TIME_BINS: usize> BinDrift<MAX_TIME_BINS> {
 /// ```
 pub struct NonRigidDrift<const K: usize, const MAX_TIME_BINS: usize> {
     bins: [BinDrift<MAX_TIME_BINS>; K],
-    bin_centers: [f64; K],
-    y_min: f64,
-    y_max: f64,
+    bin_centers: [Float; K],
+    y_min: Float,
+    y_max: Float,
     bin_duration: usize,
     fitted: bool,
 }
@@ -499,16 +501,16 @@ impl<const K: usize, const MAX_TIME_BINS: usize> NonRigidDrift<K, MAX_TIME_BINS>
     /// let nr = NonRigidDrift::<4, 16>::new(0.0, 400.0, 1000);
     /// assert!(!nr.is_fitted());
     /// ```
-    pub fn new(y_min: f64, y_max: f64, bin_duration_samples: usize) -> Self {
+    pub fn new(y_min: Float, y_max: Float, bin_duration_samples: usize) -> Self {
         assert!(K > 0, "K must be > 0");
         assert!(y_max > y_min, "y_max must be > y_min");
         assert!(bin_duration_samples > 0, "bin_duration_samples must be > 0");
 
-        let mut bin_centers = [0.0f64; K];
-        let bin_width = (y_max - y_min) / K as f64;
+        let mut bin_centers = [0.0 as Float; K];
+        let bin_width = (y_max - y_min) / K as Float;
         let mut i = 0;
         while i < K {
-            bin_centers[i] = y_min + (i as f64 + 0.5) * bin_width;
+            bin_centers[i] = y_min + (i as Float + 0.5) * bin_width;
             i += 1;
         }
 
@@ -538,14 +540,14 @@ impl<const K: usize, const MAX_TIME_BINS: usize> NonRigidDrift<K, MAX_TIME_BINS>
     /// Assign a y-position to a depth bin index.
     ///
     /// Clamps to `[0, K-1]`.
-    fn depth_bin(&self, y_position: f64) -> usize {
+    fn depth_bin(&self, y_position: Float) -> usize {
         let frac = (y_position - self.y_min) / (self.y_max - self.y_min);
-        let idx = libm::floor(frac * K as f64);
+        let idx = float::floor(frac * K as Float);
         // Clamp to valid range
         let clamped = if idx < 0.0 {
             0.0
-        } else if idx >= K as f64 {
-            (K - 1) as f64
+        } else if idx >= K as Float {
+            (K - 1) as Float
         } else {
             idx
         };
@@ -564,7 +566,7 @@ impl<const K: usize, const MAX_TIME_BINS: usize> NonRigidDrift<K, MAX_TIME_BINS>
     /// * `sample_index` -- time of the spike in samples
     /// * `y_position` -- depth on the probe (for bin assignment)
     /// * `position_y` -- tracked position value (for drift regression)
-    pub fn add_spike(&mut self, sample_index: usize, y_position: f64, position_y: f64) {
+    pub fn add_spike(&mut self, sample_index: usize, y_position: Float, position_y: Float) {
         let dbin = self.depth_bin(y_position);
         let tbin = sample_index / self.bin_duration;
         self.bins[dbin].add_sample(tbin, position_y);
@@ -595,7 +597,7 @@ impl<const K: usize, const MAX_TIME_BINS: usize> NonRigidDrift<K, MAX_TIME_BINS>
     /// center range, clamps to the nearest bin's estimate.
     ///
     /// Returns 0.0 if the model has not been fitted.
-    pub fn estimate_drift(&self, sample_index: usize, y_position: f64) -> f64 {
+    pub fn estimate_drift(&self, sample_index: usize, y_position: Float) -> Float {
         if !self.fitted {
             return 0.0;
         }
@@ -605,7 +607,7 @@ impl<const K: usize, const MAX_TIME_BINS: usize> NonRigidDrift<K, MAX_TIME_BINS>
     /// Correct a spike's position by removing estimated drift.
     ///
     /// Returns `position_y - estimate_drift(sample_index, y_position)`.
-    pub fn correct_position(&self, sample_index: usize, y_position: f64) -> f64 {
+    pub fn correct_position(&self, sample_index: usize, y_position: Float) -> Float {
         y_position - self.estimate_drift(sample_index, y_position)
     }
 
@@ -627,8 +629,8 @@ impl<const K: usize, const MAX_TIME_BINS: usize> NonRigidDrift<K, MAX_TIME_BINS>
     /// The per-bin drift slopes (position units per sample).
     ///
     /// Returns an array of K slopes.
-    pub fn slopes(&self) -> [f64; K] {
-        let mut out = [0.0f64; K];
+    pub fn slopes(&self) -> [Float; K] {
+        let mut out = [0.0 as Float; K];
         let mut i = 0;
         while i < K {
             out[i] = self.bins[i].slope;
@@ -638,12 +640,12 @@ impl<const K: usize, const MAX_TIME_BINS: usize> NonRigidDrift<K, MAX_TIME_BINS>
     }
 
     /// The bin centers along the depth axis.
-    pub fn bin_centers(&self) -> &[f64; K] {
+    pub fn bin_centers(&self) -> &[Float; K] {
         &self.bin_centers
     }
 
     /// Interpolate drift between bin centers.
-    fn interpolate_drift(&self, sample_index: usize, y_position: f64) -> f64 {
+    fn interpolate_drift(&self, sample_index: usize, y_position: Float) -> Float {
         // If K == 1, just use that bin
         if K == 1 {
             return self.bins[0].estimate_drift(sample_index);
@@ -674,7 +676,7 @@ impl<const K: usize, const MAX_TIME_BINS: usize> NonRigidDrift<K, MAX_TIME_BINS>
 
         // Linear interpolation
         let span = self.bin_centers[hi] - self.bin_centers[lo];
-        if libm::fabs(span) < 1e-30 {
+        if float::abs(span) < 1e-30 {
             return d_lo;
         }
         let alpha = (y_position - self.bin_centers[lo]) / span;
@@ -695,7 +697,7 @@ mod kani_proofs {
         let pos: f64 = kani::any();
         kani::assume(sample < 1000);
         kani::assume(pos.is_finite() && pos >= -1e4 && pos <= 1e4);
-        est.add_spike(sample, pos);
+        est.add_spike(sample, pos as Float);
         est.fit();
         let d = est.estimate_drift(sample);
         assert!(d.is_finite());
@@ -713,7 +715,7 @@ mod kani_proofs {
         kani::assume(p0.is_finite() && p0 >= -1e4 && p0 <= 1e4);
         kani::assume(p1.is_finite() && p1 >= -1e4 && p1 <= 1e4);
         let samples = [s0, s1];
-        let positions = [p0, p1];
+        let positions = [p0 as Float, p1 as Float];
         let bin_dur: usize = kani::any();
         kani::assume(bin_dur >= 1 && bin_dur <= 5000);
         let result = estimate_drift_from_positions(&samples, &positions, bin_dur, 4);
@@ -737,8 +739,8 @@ mod kani_proofs {
         kani::assume(s0 < 20000 && s1 < 20000);
         kani::assume(p0.is_finite() && p0 >= -1e4 && p0 <= 1e4);
         kani::assume(p1.is_finite() && p1 >= -1e4 && p1 <= 1e4);
-        est.add_spike(s0, p0);
-        est.add_spike(s1, p1);
+        est.add_spike(s0, p0 as Float);
+        est.add_spike(s1, p1 as Float);
         assert!(est.n_bins_used() <= 3);
     }
 
@@ -752,8 +754,8 @@ mod kani_proofs {
         kani::assume(p0.is_finite() && p0 >= -1e4 && p0 <= 1e4);
         kani::assume(p1.is_finite() && p1 >= -1e4 && p1 <= 1e4);
         // Place in distinct bins to guarantee fit succeeds
-        est.add_spike(50, p0);
-        est.add_spike(150, p1);
+        est.add_spike(50, p0 as Float);
+        est.add_spike(150, p1 as Float);
         est.fit();
         assert!(est.slope().is_finite());
         assert!(est.intercept().is_finite());
@@ -777,7 +779,7 @@ mod tests {
         est.fit();
         assert!(est.is_fitted());
         assert!(
-            libm::fabs(est.slope()) < 1e-10,
+            float::abs(est.slope()) < 1e-10,
             "Slope should be ~0, got {}",
             est.slope()
         );
@@ -789,14 +791,14 @@ mod tests {
         // Position increases by 10um per 1000 samples
         let mut i = 0;
         while i < 8 {
-            est.add_spike(i * 1000 + 500, 100.0 + i as f64 * 10.0);
+            est.add_spike(i * 1000 + 500, 100.0 + i as Float * 10.0);
             i += 1;
         }
         est.fit();
         assert!(est.is_fitted());
         // slope should be ~10/1000 = 0.01
         assert!(
-            libm::fabs(est.slope() - 0.01) < 0.002,
+            float::abs(est.slope() - 0.01) < 0.002,
             "Slope should be ~0.01, got {}",
             est.slope()
         );
@@ -807,7 +809,7 @@ mod tests {
         let mut est = DriftEstimator::<16>::new(1000);
         let mut i = 0;
         while i < 8 {
-            est.add_spike(i * 1000 + 500, 100.0 + i as f64 * 10.0);
+            est.add_spike(i * 1000 + 500, 100.0 + i as Float * 10.0);
             i += 1;
         }
         est.fit();
@@ -816,9 +818,9 @@ mod tests {
         let base = est.correct_position(500, 100.0);
         i = 1;
         while i < 8 {
-            let corrected = est.correct_position(i * 1000 + 500, 100.0 + i as f64 * 10.0);
+            let corrected = est.correct_position(i * 1000 + 500, 100.0 + i as Float * 10.0);
             assert!(
-                libm::fabs(corrected - base) < 2.0,
+                float::abs(corrected - base) < 2.0,
                 "Corrected position at bin {} = {}, expected ~{}",
                 i,
                 corrected,
@@ -861,13 +863,13 @@ mod tests {
     #[test]
     fn test_batch_function() {
         let samples = [100, 1100, 2100, 3100];
-        let positions = [50.0, 60.0, 70.0, 80.0];
+        let positions: [Float; 4] = [50.0, 60.0, 70.0, 80.0];
         let result = estimate_drift_from_positions(&samples, &positions, 1000, 8);
         assert!(result.is_some());
         let (slope, _intercept) = result.unwrap();
         // 10um per 1000 samples = 0.01
         assert!(
-            libm::fabs(slope - 0.01) < 0.002,
+            float::abs(slope - 0.01) < 0.002,
             "Slope should be ~0.01, got {}",
             slope
         );
@@ -882,7 +884,7 @@ mod tests {
     #[test]
     fn test_batch_single_bin_returns_none() {
         let samples = [100, 200, 300];
-        let positions = [50.0, 55.0, 60.0];
+        let positions: [Float; 3] = [50.0, 55.0, 60.0];
         // All in bin 0, so only 1 bin -> None
         let result = estimate_drift_from_positions(&samples, &positions, 1000, 8);
         assert!(result.is_none());
@@ -917,7 +919,7 @@ mod tests {
         let mut i = 0;
         while i < 8 {
             let t = i * 1000 + 500;
-            let drift = i as f64 * 10.0;
+            let drift = i as Float * 10.0;
             // Add spikes at four different depths, all drifting the same
             nr.add_spike(t, 50.0, 50.0 + drift);
             nr.add_spike(t, 150.0, 150.0 + drift);
@@ -937,7 +939,7 @@ mod tests {
         let mut k = 0;
         while k < 4 {
             assert!(
-                libm::fabs(slopes[k] - 0.01) < 0.002,
+                float::abs(slopes[k] - 0.01) < 0.002,
                 "Bin {} slope should be ~0.01, got {}",
                 k,
                 slopes[k]
@@ -949,7 +951,7 @@ mod tests {
         let nr_drift = nr.estimate_drift(4000, 200.0);
         let rigid_drift = rigid.estimate_drift(4000);
         assert!(
-            libm::fabs(nr_drift - rigid_drift) < 2.0,
+            float::abs(nr_drift - rigid_drift) < 2.0,
             "Non-rigid drift {} should match rigid {}",
             nr_drift,
             rigid_drift
@@ -965,9 +967,9 @@ mod tests {
         while i < 8 {
             let t = i * 1000 + 500;
             // Bottom bin (y=50): drifts down (positive)
-            nr.add_spike(t, 50.0, 50.0 + i as f64 * 10.0);
+            nr.add_spike(t, 50.0, 50.0 + i as Float * 10.0);
             // Top bin (y=150): drifts up (negative)
-            nr.add_spike(t, 150.0, 150.0 - i as f64 * 10.0);
+            nr.add_spike(t, 150.0, 150.0 - i as Float * 10.0);
             i += 1;
         }
         nr.fit();
@@ -1003,7 +1005,7 @@ mod tests {
         while i < 8 {
             let t = i * 1000 + 500;
             // Bottom bin (center=50): drift rate = +20um per 1000 samples
-            nr.add_spike(t, 50.0, 50.0 + i as f64 * 20.0);
+            nr.add_spike(t, 50.0, 50.0 + i as Float * 20.0);
             // Top bin (center=150): drift rate = 0 (no drift)
             nr.add_spike(t, 150.0, 150.0);
             i += 1;
@@ -1016,7 +1018,7 @@ mod tests {
         // Drift at bottom bin center (y=50): should be ~0.02 * 4000 = 80
         let d_bottom = nr.estimate_drift(t_test, 50.0);
         assert!(
-            libm::fabs(d_bottom - 80.0) < 5.0,
+            float::abs(d_bottom - 80.0) < 5.0,
             "Bottom drift should be ~80, got {}",
             d_bottom
         );
@@ -1024,7 +1026,7 @@ mod tests {
         // Drift at top bin center (y=150): should be ~0
         let d_top = nr.estimate_drift(t_test, 150.0);
         assert!(
-            libm::fabs(d_top) < 5.0,
+            float::abs(d_top) < 5.0,
             "Top drift should be ~0, got {}",
             d_top
         );
@@ -1032,7 +1034,7 @@ mod tests {
         // Drift at midpoint (y=100): should interpolate to ~40
         let d_mid = nr.estimate_drift(t_test, 100.0);
         assert!(
-            libm::fabs(d_mid - 40.0) < 5.0,
+            float::abs(d_mid - 40.0) < 5.0,
             "Midpoint drift should be ~40 (interpolated), got {}",
             d_mid
         );
@@ -1041,7 +1043,7 @@ mod tests {
         let corrected = nr.correct_position(t_test, 100.0);
         let expected = 100.0 - d_mid;
         assert!(
-            libm::fabs(corrected - expected) < 1e-10,
+            float::abs(corrected - expected) < 1e-10,
             "Corrected {} should equal 100.0 - {} = {}",
             corrected,
             d_mid,
@@ -1064,7 +1066,7 @@ mod tests {
         assert!(!nr.is_fitted());
         // After reset, drift should be zero everywhere
         assert!(
-            libm::fabs(nr.estimate_drift(1000, 50.0)) < 1e-15,
+            float::abs(nr.estimate_drift(1000, 50.0)) < 1e-15,
             "Drift should be 0 after reset"
         );
     }
@@ -1077,8 +1079,8 @@ mod tests {
         let mut i = 0;
         while i < 8 {
             let t = i * 1000 + 500;
-            nr.add_spike(t, 50.0, 50.0 + i as f64 * 10.0);
-            nr.add_spike(t, 150.0, 150.0 + i as f64 * 5.0);
+            nr.add_spike(t, 50.0, 50.0 + i as Float * 10.0);
+            nr.add_spike(t, 150.0, 150.0 + i as Float * 5.0);
             i += 1;
         }
         nr.fit();
@@ -1087,7 +1089,7 @@ mod tests {
         let d_below = nr.estimate_drift(4000, -50.0);
         let d_bin0 = nr.estimate_drift(4000, 50.0);
         assert!(
-            libm::fabs(d_below - d_bin0) < 1e-10,
+            float::abs(d_below - d_bin0) < 1e-10,
             "Below-range should clamp to bin 0"
         );
 
@@ -1095,7 +1097,7 @@ mod tests {
         let d_above = nr.estimate_drift(4000, 300.0);
         let d_binlast = nr.estimate_drift(4000, 150.0);
         assert!(
-            libm::fabs(d_above - d_binlast) < 1e-10,
+            float::abs(d_above - d_binlast) < 1e-10,
             "Above-range should clamp to last bin"
         );
     }

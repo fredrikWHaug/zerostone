@@ -10,6 +10,7 @@
 //! - Spatial deduplication of detected events using probe geometry
 //! - Fine peak alignment within a local window
 
+use crate::float::{self, Float};
 use crate::linalg::Matrix;
 use crate::probe::ProbeLayout;
 
@@ -60,7 +61,12 @@ impl<const C: usize, const W: usize> WaveformExtractor<C, W> {
     ///
     /// Spikes too close to the start or end of the data are skipped.
     /// Returns the number of waveforms successfully extracted.
-    pub fn extract(&self, data: &[f64], spike_times: &[usize], output: &mut [[f64; W]]) -> usize {
+    pub fn extract(
+        &self,
+        data: &[Float],
+        spike_times: &[usize],
+        output: &mut [[Float; W]],
+    ) -> usize {
         let n = data.len();
         let mut count = 0;
         for &t in spike_times {
@@ -85,7 +91,7 @@ impl<const C: usize, const W: usize> WaveformExtractor<C, W> {
     ///
     /// Operates on `n` waveforms in-place. For multi-channel data, `channel` selects
     /// which channel to use for peak finding (ignored for single-channel).
-    pub fn align_to_peak(&self, waveforms: &mut [[f64; W]], n: usize, _channel: usize) {
+    pub fn align_to_peak(&self, waveforms: &mut [[Float; W]], n: usize, _channel: usize) {
         for wf in waveforms.iter_mut().take(n) {
             // Find index of minimum value (negative peak)
             let mut min_idx = 0;
@@ -109,7 +115,7 @@ impl<const C: usize, const W: usize> WaveformExtractor<C, W> {
                 if shift >= W {
                     continue;
                 }
-                let mut temp = [0.0f64; W];
+                let mut temp = [0.0; W];
                 let copyable = W - shift;
                 temp[..copyable].copy_from_slice(&wf[shift..]);
                 *wf = temp;
@@ -119,7 +125,7 @@ impl<const C: usize, const W: usize> WaveformExtractor<C, W> {
                 if shift >= W {
                     continue;
                 }
-                let mut temp = [0.0f64; W];
+                let mut temp = [0.0; W];
                 let copyable = W - shift;
                 temp[shift..shift + copyable].copy_from_slice(&wf[..copyable]);
                 *wf = temp;
@@ -146,10 +152,10 @@ impl<const C: usize, const W: usize> WaveformExtractor<C, W> {
 /// * `K` - Number of principal components to retain
 /// * `WM` - Must equal W*W (for the covariance matrix)
 pub struct WaveformPca<const W: usize, const K: usize, const WM: usize> {
-    mean: [f64; W],
-    components: [[f64; W]; K],
-    explained_variance: [f64; K],
-    total_variance: f64,
+    mean: [Float; W],
+    components: [[Float; W]; K],
+    explained_variance: [Float; K],
+    total_variance: Float,
     fitted: bool,
 }
 
@@ -176,20 +182,20 @@ impl<const W: usize, const K: usize, const WM: usize> WaveformPca<W, K, WM> {
     /// Fit PCA on a set of waveforms.
     ///
     /// Computes the mean, covariance matrix, and top K eigenvectors.
-    pub fn fit(&mut self, waveforms: &[[f64; W]]) -> Result<(), SortError> {
+    pub fn fit(&mut self, waveforms: &[[Float; W]]) -> Result<(), SortError> {
         let n = waveforms.len();
         if n < 2 {
             return Err(SortError::InsufficientData);
         }
 
         // Compute mean
-        let mut mean = [0.0f64; W];
+        let mut mean = [0.0; W];
         for wf in waveforms.iter() {
             for (j, &val) in wf.iter().enumerate() {
                 mean[j] += val;
             }
         }
-        let inv_n = 1.0 / n as f64;
+        let inv_n = 1.0 / n as Float;
         for m in mean.iter_mut() {
             *m *= inv_n;
         }
@@ -197,7 +203,7 @@ impl<const W: usize, const K: usize, const WM: usize> WaveformPca<W, K, WM> {
         // Build covariance matrix
         let mut cov = Matrix::<W, WM>::zeros();
         for wf in waveforms.iter() {
-            let mut centered = [0.0f64; W];
+            let mut centered = [0.0; W];
             for (j, (&val, &m)) in wf.iter().zip(mean.iter()).enumerate() {
                 centered[j] = val - m;
             }
@@ -212,7 +218,7 @@ impl<const W: usize, const K: usize, const WM: usize> WaveformPca<W, K, WM> {
             }
         }
         // Normalize by n-1
-        let inv_nm1 = 1.0 / (n - 1) as f64;
+        let inv_nm1 = 1.0 / (n - 1) as Float;
         for val in cov.data_mut().iter_mut() {
             *val *= inv_nm1;
         }
@@ -223,7 +229,7 @@ impl<const W: usize, const K: usize, const WM: usize> WaveformPca<W, K, WM> {
             .map_err(|_| SortError::EigenFailed)?;
 
         // Total variance = sum of all eigenvalues
-        let total: f64 = eigen.eigenvalues.iter().sum();
+        let total: Float = eigen.eigenvalues.iter().sum();
         self.total_variance = total;
 
         // Extract top K components
@@ -240,7 +246,11 @@ impl<const W: usize, const K: usize, const WM: usize> WaveformPca<W, K, WM> {
     }
 
     /// Project a waveform onto the K principal components.
-    pub fn transform(&self, waveform: &[f64; W], output: &mut [f64; K]) -> Result<(), SortError> {
+    pub fn transform(
+        &self,
+        waveform: &[Float; W],
+        output: &mut [Float; K],
+    ) -> Result<(), SortError> {
         if !self.fitted {
             return Err(SortError::NotFitted);
         }
@@ -259,7 +269,7 @@ impl<const W: usize, const K: usize, const WM: usize> WaveformPca<W, K, WM> {
     }
 
     /// Fraction of variance explained by each component.
-    pub fn explained_variance_ratio(&self) -> [f64; K] {
+    pub fn explained_variance_ratio(&self) -> [Float; K] {
         let mut ratios = [0.0; K];
         if self.total_variance > 0.0 {
             for (r, &ev) in ratios.iter_mut().zip(self.explained_variance.iter()) {
@@ -275,12 +285,12 @@ impl<const W: usize, const K: usize, const WM: usize> WaveformPca<W, K, WM> {
     }
 
     /// The principal components (K vectors of length W).
-    pub fn components(&self) -> &[[f64; W]; K] {
+    pub fn components(&self) -> &[[Float; W]; K] {
         &self.components
     }
 
     /// The mean waveform.
-    pub fn mean(&self) -> &[f64; W] {
+    pub fn mean(&self) -> &[Float; W] {
         &self.mean
     }
 }
@@ -293,7 +303,7 @@ impl<const W: usize, const K: usize, const WM: usize> WaveformPca<W, K, WM> {
 /// * `W` - Window length in samples
 /// * `N` - Maximum number of templates
 pub struct TemplateMatch<const C: usize, const W: usize, const N: usize> {
-    templates: [[f64; W]; N],
+    templates: [[Float; W]; N],
     counts: [usize; N],
     n_templates: usize,
 }
@@ -315,7 +325,7 @@ impl<const C: usize, const W: usize, const N: usize> TemplateMatch<C, W, N> {
     }
 
     /// Add a template waveform. Returns the template index.
-    pub fn add_template(&mut self, template: &[f64; W]) -> Result<usize, SortError> {
+    pub fn add_template(&mut self, template: &[Float; W]) -> Result<usize, SortError> {
         if self.n_templates >= N {
             return Err(SortError::TemplateFull);
         }
@@ -329,19 +339,19 @@ impl<const C: usize, const W: usize, const N: usize> TemplateMatch<C, W, N> {
     /// Match a waveform to the best template using Euclidean distance.
     ///
     /// Returns `(best_template_index, distance)` or `None` if no templates exist.
-    pub fn match_waveform(&self, waveform: &[f64; W]) -> Option<(usize, f64)> {
+    pub fn match_waveform(&self, waveform: &[Float; W]) -> Option<(usize, Float)> {
         if self.n_templates == 0 {
             return None;
         }
         let mut best_idx = 0;
-        let mut best_dist = f64::MAX;
+        let mut best_dist = float::MAX;
         for i in 0..self.n_templates {
             let mut dist = 0.0;
             for (&wv, &tv) in waveform.iter().zip(self.templates[i].iter()) {
                 let d = wv - tv;
                 dist += d * d;
             }
-            dist = libm::sqrt(dist);
+            dist = float::sqrt(dist);
             if dist < best_dist {
                 best_dist = dist;
                 best_idx = i;
@@ -354,7 +364,7 @@ impl<const C: usize, const W: usize, const N: usize> TemplateMatch<C, W, N> {
     ///
     /// Returns `(best_template_index, ncc)` or `None` if no templates exist.
     /// NCC ranges from -1 to 1, where 1 is a perfect match.
-    pub fn match_waveform_ncc(&self, waveform: &[f64; W]) -> Option<(usize, f64)> {
+    pub fn match_waveform_ncc(&self, waveform: &[Float; W]) -> Option<(usize, Float)> {
         if self.n_templates == 0 {
             return None;
         }
@@ -364,13 +374,13 @@ impl<const C: usize, const W: usize, const N: usize> TemplateMatch<C, W, N> {
         for &val in waveform.iter() {
             wf_norm_sq += val * val;
         }
-        let wf_norm = libm::sqrt(wf_norm_sq);
+        let wf_norm = float::sqrt(wf_norm_sq);
         if wf_norm < 1e-15 {
             return Some((0, 0.0));
         }
 
         let mut best_idx = 0;
-        let mut best_ncc = f64::MIN;
+        let mut best_ncc = Float::MIN;
         for i in 0..self.n_templates {
             let mut dot = 0.0;
             let mut t_norm_sq = 0.0;
@@ -378,7 +388,7 @@ impl<const C: usize, const W: usize, const N: usize> TemplateMatch<C, W, N> {
                 dot += wv * tv;
                 t_norm_sq += tv * tv;
             }
-            let t_norm = libm::sqrt(t_norm_sq);
+            let t_norm = float::sqrt(t_norm_sq);
             let ncc = if t_norm < 1e-15 {
                 0.0
             } else {
@@ -393,12 +403,12 @@ impl<const C: usize, const W: usize, const N: usize> TemplateMatch<C, W, N> {
     }
 
     /// Update a template with a running average of a new waveform.
-    pub fn update_template(&mut self, idx: usize, waveform: &[f64; W]) {
+    pub fn update_template(&mut self, idx: usize, waveform: &[Float; W]) {
         if idx >= self.n_templates {
             return;
         }
         self.counts[idx] += 1;
-        let n = self.counts[idx] as f64;
+        let n = self.counts[idx] as Float;
         let alpha = 1.0 / n;
         for (tv, &wv) in self.templates[idx].iter_mut().zip(waveform.iter()) {
             *tv = *tv * (1.0 - alpha) + wv * alpha;
@@ -411,7 +421,7 @@ impl<const C: usize, const W: usize, const N: usize> TemplateMatch<C, W, N> {
     }
 
     /// Get a reference to a template by index.
-    pub fn template(&self, idx: usize) -> Option<&[f64; W]> {
+    pub fn template(&self, idx: usize) -> Option<&[Float; W]> {
         if idx < self.n_templates {
             Some(&self.templates[idx])
         } else {
@@ -432,7 +442,7 @@ impl<const C: usize, const W: usize, const N: usize> TemplateMatch<C, W, N> {
 /// Summary of a spike cluster.
 pub struct SpikeCluster<const C: usize, const W: usize> {
     /// Mean waveform for this cluster
-    pub mean_waveform: [f64; W],
+    pub mean_waveform: [Float; W],
     /// Number of spikes assigned to this cluster
     pub count: usize,
 }
@@ -448,7 +458,7 @@ pub struct SpikeCluster<const C: usize, const W: usize> {
 ///
 /// Returns the number of output samples written. Returns 0 if
 /// `signal.len() < 3` or `output` is too small.
-pub fn neo_transform(signal: &[f64], output: &mut [f64]) -> usize {
+pub fn neo_transform(signal: &[Float], output: &mut [Float]) -> usize {
     let n = signal.len();
     if n < 3 {
         return 0;
@@ -477,19 +487,19 @@ pub fn neo_transform(signal: &[f64], output: &mut [f64]) -> usize {
 /// Returns the number of output samples written (same as NEO:
 /// `signal.len() - 2`). Returns 0 if `signal.len() < 3` or `output`
 /// is too small.
-pub fn sneo_transform(signal: &[f64], output: &mut [f64], smooth_window: usize) -> usize {
+pub fn sneo_transform(signal: &[Float], output: &mut [Float], smooth_window: usize) -> usize {
     let n = neo_transform(signal, output);
     if n == 0 || smooth_window == 0 {
         return n;
     }
 
     // Compute normalisation factor for the triangular window.
-    let denom = (smooth_window + 1) as f64;
+    let denom = (smooth_window + 1) as Float;
     let mut norm = 0.0;
     {
         let mut k = -(smooth_window as i64);
         while k <= smooth_window as i64 {
-            let w = 1.0 - libm::fabs(k as f64) / denom;
+            let w = 1.0 - float::abs(k as Float) / denom;
             norm += w;
             k += 1;
         }
@@ -539,7 +549,7 @@ pub fn sneo_transform(signal: &[f64], output: &mut [f64], smooth_window: usize) 
         while k <= smooth_window as i64 {
             let j = i as i64 + k;
             if j >= 0 && (j as usize) < n {
-                let w = 1.0 - libm::fabs(k as f64) / denom;
+                let w = 1.0 - float::abs(k as Float) / denom;
                 // Recompute NEO[j] from signal to avoid in-place aliasing.
                 let jj = j as usize;
                 let neo_j = signal[jj + 1] * signal[jj + 1] - signal[jj] * signal[jj + 2];
@@ -580,8 +590,8 @@ pub fn sneo_transform(signal: &[f64], output: &mut [f64], smooth_window: usize) 
 /// assert!((sneo_thresh - 5.0 / 1.41421356).abs() < 0.01);
 /// assert!(sneo_thresh < amp_thresh); // SNEO threshold is lower
 /// ```
-pub fn sneo_calibrated_threshold(amplitude_threshold: f64) -> f64 {
-    amplitude_threshold / libm::sqrt(2.0)
+pub fn sneo_calibrated_threshold(amplitude_threshold: Float) -> Float {
+    amplitude_threshold / float::sqrt(2.0)
 }
 
 /// Estimate noise standard deviation using the Median Absolute Deviation.
@@ -590,14 +600,14 @@ pub fn sneo_calibrated_threshold(amplitude_threshold: f64) -> f64 {
 ///
 /// This is robust to spike contamination since spikes are rare events.
 /// `scratch` must be at least as large as `data`.
-pub fn estimate_noise_mad(data: &[f64], scratch: &mut [f64]) -> f64 {
+pub fn estimate_noise_mad(data: &[Float], scratch: &mut [Float]) -> Float {
     let n = data.len();
     if n == 0 {
         return 0.0;
     }
     assert!(scratch.len() >= n);
     for (s, &d) in scratch.iter_mut().zip(data.iter()) {
-        *s = libm::fabs(d);
+        *s = float::abs(d);
     }
     let s = &mut scratch[..n];
     s.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
@@ -617,8 +627,8 @@ pub fn estimate_noise_mad(data: &[f64], scratch: &mut [f64]) -> f64 {
 ///
 /// Returns the number of spikes detected. Spike times are written to `spike_times`.
 pub fn detect_spikes(
-    data: &[f64],
-    threshold: f64,
+    data: &[Float],
+    threshold: Float,
     refractory: usize,
     spike_times: &mut [usize],
 ) -> usize {
@@ -678,7 +688,7 @@ pub struct MultiChannelEvent {
     /// Channel on which the spike was detected.
     pub channel: usize,
     /// Absolute amplitude at the peak (always positive).
-    pub amplitude: f64,
+    pub amplitude: Float,
 }
 
 /// Detect spikes across multiple channels with per-channel noise thresholds.
@@ -698,7 +708,7 @@ pub struct MultiChannelEvent {
 ///
 /// # Arguments
 ///
-/// * `data` - Multi-channel data as a slice of `[f64; C]` (one array per time step)
+/// * `data` - Multi-channel data as a slice of `[Float; C]` (one array per time step)
 /// * `threshold_multiplier` - Scalar multiplied by per-channel noise to get thresholds
 /// * `noise_estimates` - Per-channel noise standard deviation (e.g., from MAD)
 /// * `refractory` - Minimum samples between detections on the same channel
@@ -710,7 +720,7 @@ pub struct MultiChannelEvent {
 /// use zerostone::spike_sort::{detect_spikes_multichannel, MultiChannelEvent};
 ///
 /// // 2 channels, 20 time steps
-/// let mut data = [[0.0f64; 2]; 20];
+/// let mut data = [[0.0; 2]; 20];
 /// data[5][0] = -6.0; // spike on channel 0
 /// data[15][1] = -8.0; // spike on channel 1
 ///
@@ -724,9 +734,9 @@ pub struct MultiChannelEvent {
 /// assert_eq!(events[1].sample, 15);
 /// ```
 pub fn detect_spikes_multichannel<const C: usize>(
-    data: &[[f64; C]],
-    threshold_multiplier: f64,
-    noise_estimates: &[f64; C],
+    data: &[[Float; C]],
+    threshold_multiplier: Float,
+    noise_estimates: &[Float; C],
     refractory: usize,
     output: &mut [MultiChannelEvent],
 ) -> usize {
@@ -770,7 +780,7 @@ pub fn detect_spikes_multichannel<const C: usize>(
                     output[total] = MultiChannelEvent {
                         sample: min_idx,
                         channel: ch,
-                        amplitude: libm::fabs(min_val),
+                        amplitude: float::abs(min_val),
                     };
                     total += 1;
                 }
@@ -830,7 +840,7 @@ pub fn detect_spikes_multichannel<const C: usize>(
 ///     [0.3, 0.0], [-0.5, 0.0], [0.1, 0.0], [0.4, 0.0],
 ///     [-0.2, 0.0], [0.6, 0.0], [-0.3, 0.0], [0.2, 0.0],
 /// ];
-/// let mut scratch = [0.0f64; 8];
+/// let mut scratch = [0.0; 8];
 /// let thresholds = compute_adaptive_thresholds::<2>(
 ///     &data, 4.0, 0.5, 100.0, 30000.0, &mut scratch,
 /// );
@@ -840,15 +850,15 @@ pub fn detect_spikes_multichannel<const C: usize>(
 /// assert!((thresholds[1] - 0.5).abs() < 1e-12);
 /// ```
 pub fn compute_adaptive_thresholds<const C: usize>(
-    data: &[[f64; C]],
-    base_multiplier: f64,
-    min_threshold: f64,
-    max_rate_hz: f64,
-    sample_rate: f64,
-    scratch: &mut [f64],
-) -> [f64; C] {
+    data: &[[Float; C]],
+    base_multiplier: Float,
+    min_threshold: Float,
+    max_rate_hz: Float,
+    sample_rate: Float,
+    scratch: &mut [Float],
+) -> [Float; C] {
     let t_len = data.len();
-    let mut thresholds = [0.0f64; C];
+    let mut thresholds = [0.0; C];
 
     // Handle empty data: return min_threshold for all channels.
     if t_len == 0 {
@@ -873,7 +883,7 @@ pub fn compute_adaptive_thresholds<const C: usize>(
         // Copy absolute values of channel data into scratch.
         let mut t = 0;
         while t < t_len {
-            scratch[t] = libm::fabs(data[t][ch]);
+            scratch[t] = float::abs(data[t][ch]);
             t += 1;
         }
         let s = &mut scratch[..t_len];
@@ -899,7 +909,7 @@ pub fn compute_adaptive_thresholds<const C: usize>(
 
     // Step 4: Activity check -- count crossings and raise threshold on
     // overactive channels.
-    let duration_s = t_len as f64 / sample_rate;
+    let duration_s = t_len as Float / sample_rate;
     if duration_s > 0.0 && max_rate_hz > 0.0 {
         let mut ch = 0;
         while ch < C {
@@ -915,9 +925,9 @@ pub fn compute_adaptive_thresholds<const C: usize>(
                 t += 1;
             }
 
-            let rate = crossings as f64 / duration_s;
+            let rate = crossings as Float / duration_s;
             if rate > max_rate_hz {
-                let scale = libm::sqrt(rate / max_rate_hz);
+                let scale = float::sqrt(rate / max_rate_hz);
                 thresholds[ch] *= scale;
                 // Re-apply floor after scaling (should always be >=, but be safe).
                 if thresholds[ch] < min_threshold {
@@ -984,7 +994,7 @@ pub fn deduplicate_events<const C: usize>(
     events: &mut [MultiChannelEvent],
     n_events: usize,
     probe: &ProbeLayout<C>,
-    spatial_radius_um: f64,
+    spatial_radius_um: Float,
     temporal_radius: usize,
 ) -> usize {
     let n = if n_events < events.len() {
@@ -1073,7 +1083,7 @@ pub fn deduplicate_events<const C: usize>(
 ///
 /// # Arguments
 ///
-/// * `data` - Multi-channel data `&[[f64; C]]` (time x channels)
+/// * `data` - Multi-channel data `&[[Float; C]]` (time x channels)
 /// * `events` - Mutable slice of detected events
 /// * `n_events` - Number of valid events in `events`
 /// * `half_window` - Search radius in samples (e.g., 5 for +/- 5 samples)
@@ -1083,7 +1093,7 @@ pub fn deduplicate_events<const C: usize>(
 /// ```
 /// use zerostone::spike_sort::{align_to_peak, MultiChannelEvent};
 ///
-/// let mut data = [[0.0f64; 2]; 20];
+/// let mut data = [[0.0; 2]; 20];
 /// data[9][0] = -3.0;
 /// data[10][0] = -8.0; // true peak, 1 sample after detection
 /// data[11][0] = -2.0;
@@ -1094,7 +1104,7 @@ pub fn deduplicate_events<const C: usize>(
 /// assert!((events[0].amplitude - 8.0).abs() < 1e-12);
 /// ```
 pub fn align_to_peak<const C: usize>(
-    data: &[[f64; C]],
+    data: &[[Float; C]],
     events: &mut [MultiChannelEvent],
     n_events: usize,
     half_window: usize,
@@ -1139,7 +1149,7 @@ pub fn align_to_peak<const C: usize>(
         }
 
         events[i].sample = best_idx;
-        events[i].amplitude = libm::fabs(best_val);
+        events[i].amplitude = float::abs(best_val);
         i += 1;
     }
 }
@@ -1156,11 +1166,11 @@ pub fn align_to_peak<const C: usize>(
 ///
 /// # Arguments
 ///
-/// * `data` - Multi-channel data as `&[[f64; C]]` (time x channels)
+/// * `data` - Multi-channel data as `&[[Float; C]]` (time x channels)
 /// * `events` - Detected multi-channel events
 /// * `n_events` - Number of valid events in `events`
 /// * `pre_samples` - Samples before the event's sample index
-/// * `output` - Buffer for extracted waveforms, `[[[f64; W]; C]]`
+/// * `output` - Buffer for extracted waveforms, `[[[Float; W]; C]]`
 ///
 /// # Returns
 ///
@@ -1171,23 +1181,23 @@ pub fn align_to_peak<const C: usize>(
 /// ```
 /// use zerostone::spike_sort::{extract_multichannel, MultiChannelEvent};
 ///
-/// let mut data = [[0.0f64; 2]; 20];
+/// let mut data = [[0.0; 2]; 20];
 /// data[10][0] = -5.0;
 /// data[10][1] = -3.0;
 ///
 /// let events = [MultiChannelEvent { sample: 10, channel: 0, amplitude: 5.0 }];
-/// let mut output = [[[0.0f64; 4]; 2]; 4];
+/// let mut output = [[[0.0; 4]; 2]; 4];
 /// let n = extract_multichannel::<2, 4>(&data, &events, 1, 1, &mut output);
 /// assert_eq!(n, 1);
 /// assert!((output[0][0][1] - (-5.0)).abs() < 1e-12); // channel 0, sample at peak
 /// assert!((output[0][1][1] - (-3.0)).abs() < 1e-12); // channel 1, same time
 /// ```
 pub fn extract_multichannel<const C: usize, const W: usize>(
-    data: &[[f64; C]],
+    data: &[[Float; C]],
     events: &[MultiChannelEvent],
     n_events: usize,
     pre_samples: usize,
-    output: &mut [[[f64; W]; C]],
+    output: &mut [[[Float; W]; C]],
 ) -> usize {
     let t_len = data.len();
     let n = if n_events < events.len() {
@@ -1242,7 +1252,7 @@ pub fn extract_multichannel<const C: usize, const W: usize>(
 ///
 /// # Arguments
 ///
-/// * `data` - Multi-channel data as `&[[f64; C]]` (time x channels)
+/// * `data` - Multi-channel data as `&[[Float; C]]` (time x channels)
 /// * `events` - Detected multi-channel events (each has a `.channel` field)
 /// * `n_events` - Number of valid events in `events`
 /// * `pre_samples` - Samples before the event's sample index
@@ -1257,23 +1267,23 @@ pub fn extract_multichannel<const C: usize, const W: usize>(
 /// ```
 /// use zerostone::spike_sort::{extract_peak_channel, MultiChannelEvent};
 ///
-/// let mut data = [[0.0f64; 3]; 20];
+/// let mut data = [[0.0; 3]; 20];
 /// data[8][1] = -7.0;
 /// data[9][1] = -10.0;
 /// data[10][1] = -6.0;
 ///
 /// let events = [MultiChannelEvent { sample: 9, channel: 1, amplitude: 10.0 }];
-/// let mut output = [[0.0f64; 4]; 4];
+/// let mut output = [[0.0; 4]; 4];
 /// let n = extract_peak_channel::<3, 4>(&data, &events, 1, 1, &mut output);
 /// assert_eq!(n, 1);
 /// assert!((output[0][1] - (-10.0)).abs() < 1e-12); // peak at pre_samples offset
 /// ```
 pub fn extract_peak_channel<const C: usize, const W: usize>(
-    data: &[[f64; C]],
+    data: &[[Float; C]],
     events: &[MultiChannelEvent],
     n_events: usize,
     pre_samples: usize,
-    output: &mut [[f64; W]],
+    output: &mut [[Float; W]],
 ) -> usize {
     let t_len = data.len();
     let n = if n_events < events.len() {
@@ -1334,7 +1344,7 @@ pub fn extract_peak_channel<const C: usize, const W: usize>(
 ///
 /// let pca = [[1.0, 2.0], [-0.5, 0.3]];
 /// let spatial = [[10.0, 50.0], [20.0, 60.0]];
-/// let mut output = [[0.0f64; 4]; 2];
+/// let mut output = [[0.0; 4]; 2];
 /// combine_features::<2, 2, 4>(&pca, &spatial, 0.5, &mut output, 2);
 /// assert!((output[0][0] - 1.0).abs() < 1e-12);
 /// assert!((output[0][1] - 2.0).abs() < 1e-12);
@@ -1342,10 +1352,10 @@ pub fn extract_peak_channel<const C: usize, const W: usize>(
 /// assert!((output[0][3] - 25.0).abs() < 1e-12); // 50.0 * 0.5
 /// ```
 pub fn combine_features<const K: usize, const S: usize, const T: usize>(
-    pca_features: &[[f64; K]],
-    spatial_features: &[[f64; S]],
-    spatial_weight: f64,
-    output: &mut [[f64; T]],
+    pca_features: &[[Float; K]],
+    spatial_features: &[[Float; S]],
+    spatial_weight: Float,
+    output: &mut [[Float; T]],
     n: usize,
 ) {
     // Runtime assertion (const generics checked at monomorphization)
@@ -1385,25 +1395,25 @@ pub fn combine_features<const K: usize, const S: usize, const T: usize>(
 /// use zerostone::spike_sort::{extract_spatial_features, MultiChannelEvent};
 ///
 /// // 4-channel data, 20 time steps
-/// let mut data = [[0.0f64; 4]; 20];
+/// let mut data = [[0.0; 4]; 20];
 /// // Spike on channel 2 at sample 10
 /// data[10][2] = -10.0;
 /// data[10][1] = -3.0;
 ///
 /// let positions = [[0.0, 0.0], [0.0, 25.0], [0.0, 50.0], [0.0, 75.0]];
 /// let events = [MultiChannelEvent { sample: 10, channel: 2, amplitude: 10.0 }];
-/// let mut output = [[0.0f64; 2]; 4];
+/// let mut output = [[0.0; 2]; 4];
 /// let n = extract_spatial_features::<4>(&data, &events, 1, &positions, &mut output);
 /// assert_eq!(n, 1);
 /// // Dominated by channel 2 (amplitude 10 at y=50) with some pull from ch1 (amplitude 3 at y=25)
 /// assert!(output[0][1] > 40.0);
 /// ```
 pub fn extract_spatial_features<const C: usize>(
-    data: &[[f64; C]],
+    data: &[[Float; C]],
     events: &[MultiChannelEvent],
     n_events: usize,
-    positions: &[[f64; 2]; C],
-    output: &mut [[f64; 2]],
+    positions: &[[Float; 2]; C],
+    output: &mut [[Float; 2]],
 ) -> usize {
     let t_len = data.len();
     let max_out = if n_events < output.len() {
@@ -1423,7 +1433,7 @@ pub fn extract_spatial_features<const C: usize>(
 
         // Extract peak absolute amplitude on each channel in a small window
         // around the event sample (use a +-2 sample window for robustness)
-        let mut amps = [0.0f64; C];
+        let mut amps = [0.0; C];
         let mut ch = 0;
         while ch < C {
             let start = sample.saturating_sub(2);
@@ -1435,7 +1445,7 @@ pub fn extract_spatial_features<const C: usize>(
             let mut max_abs = 0.0;
             let mut t = start;
             while t < end {
-                let a = libm::fabs(data[t][ch]);
+                let a = float::abs(data[t][ch]);
                 if a > max_abs {
                     max_abs = a;
                 }
@@ -1459,11 +1469,11 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(8)]
     fn detect_spikes_no_panic() {
-        let d0: f64 = kani::any();
-        let d1: f64 = kani::any();
-        let d2: f64 = kani::any();
-        let d3: f64 = kani::any();
-        let threshold: f64 = kani::any();
+        let d0: Float = kani::any();
+        let d1: Float = kani::any();
+        let d2: Float = kani::any();
+        let d3: Float = kani::any();
+        let threshold: Float = kani::any();
         let refractory: usize = kani::any();
 
         kani::assume(d0.is_finite() && d0 >= -1e6 && d0 <= 1e6);
@@ -1482,16 +1492,16 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(10)]
     fn mad_noise_finite() {
-        let a: f64 = kani::any();
-        let b: f64 = kani::any();
-        let c: f64 = kani::any();
+        let a: Float = kani::any();
+        let b: Float = kani::any();
+        let c: Float = kani::any();
 
         kani::assume(a.is_finite() && a >= -1e6 && a <= 1e6);
         kani::assume(b.is_finite() && b >= -1e6 && b <= 1e6);
         kani::assume(c.is_finite() && c >= -1e6 && c <= 1e6);
 
         let data = [a, b, c];
-        let mut scratch = [0.0f64; 3];
+        let mut scratch = [0.0; 3];
         let result = estimate_noise_mad(&data, &mut scratch);
         assert!(result.is_finite(), "MAD result must be finite");
     }
@@ -1506,8 +1516,8 @@ mod kani_proofs {
         let s1: usize = kani::any();
         let c0: usize = kani::any();
         let c1: usize = kani::any();
-        let a0: f64 = kani::any();
-        let a1: f64 = kani::any();
+        let a0: Float = kani::any();
+        let a1: Float = kani::any();
         let tr: usize = kani::any();
 
         kani::assume(s0 <= 100 && s1 <= 100);
@@ -1536,10 +1546,10 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(8)]
     fn multichannel_detect_valid_channels() {
-        let d0: f64 = kani::any();
-        let d1: f64 = kani::any();
-        let d2: f64 = kani::any();
-        let d3: f64 = kani::any();
+        let d0: Float = kani::any();
+        let d1: Float = kani::any();
+        let d2: Float = kani::any();
+        let d3: Float = kani::any();
 
         kani::assume(d0.is_finite() && d0 >= -1e6 && d0 <= 1e6);
         kani::assume(d1.is_finite() && d1 >= -1e6 && d1 <= 1e6);
@@ -1568,10 +1578,10 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(8)]
     fn align_to_peak_no_panic() {
-        let d0: f64 = kani::any();
-        let d1: f64 = kani::any();
-        let d2: f64 = kani::any();
-        let d3: f64 = kani::any();
+        let d0: Float = kani::any();
+        let d1: Float = kani::any();
+        let d2: Float = kani::any();
+        let d3: Float = kani::any();
 
         kani::assume(d0.is_finite() && d0 >= -1e6 && d0 <= 1e6);
         kani::assume(d1.is_finite() && d1 >= -1e6 && d1 <= 1e6);
@@ -1596,14 +1606,14 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(8)]
     fn extract_peak_channel_bounded() {
-        let d0: f64 = kani::any();
-        let d1: f64 = kani::any();
-        let d2: f64 = kani::any();
-        let d3: f64 = kani::any();
-        let d4: f64 = kani::any();
-        let d5: f64 = kani::any();
-        let d6: f64 = kani::any();
-        let d7: f64 = kani::any();
+        let d0: Float = kani::any();
+        let d1: Float = kani::any();
+        let d2: Float = kani::any();
+        let d3: Float = kani::any();
+        let d4: Float = kani::any();
+        let d5: Float = kani::any();
+        let d6: Float = kani::any();
+        let d7: Float = kani::any();
 
         kani::assume(d0.is_finite() && d0 >= -1e6 && d0 <= 1e6);
         kani::assume(d1.is_finite() && d1 >= -1e6 && d1 <= 1e6);
@@ -1623,7 +1633,7 @@ mod kani_proofs {
             channel: 0,
             amplitude: 5.0,
         }];
-        let mut output = [[0.0f64; 4]; 2];
+        let mut output = [[0.0; 4]; 2];
         let n = extract_peak_channel::<2, 4>(&data, &events, 1, pre, &mut output);
         assert!(n <= 2, "extracted count must not exceed output buffer");
     }
@@ -1633,14 +1643,14 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(10)]
     fn adaptive_threshold_no_panic() {
-        let d0: f64 = kani::any();
-        let d1: f64 = kani::any();
-        let d2: f64 = kani::any();
-        let d3: f64 = kani::any();
-        let d4: f64 = kani::any();
-        let d5: f64 = kani::any();
-        let d6: f64 = kani::any();
-        let d7: f64 = kani::any();
+        let d0: Float = kani::any();
+        let d1: Float = kani::any();
+        let d2: Float = kani::any();
+        let d3: Float = kani::any();
+        let d4: Float = kani::any();
+        let d5: Float = kani::any();
+        let d6: Float = kani::any();
+        let d7: Float = kani::any();
 
         kani::assume(d0.is_finite() && d0 >= -1e6 && d0 <= 1e6);
         kani::assume(d1.is_finite() && d1 >= -1e6 && d1 <= 1e6);
@@ -1652,7 +1662,7 @@ mod kani_proofs {
         kani::assume(d7.is_finite() && d7 >= -1e6 && d7 <= 1e6);
 
         let data = [[d0, d1], [d2, d3], [d4, d5], [d6, d7]];
-        let mut scratch = [0.0f64; 4];
+        let mut scratch = [0.0; 4];
         let result =
             compute_adaptive_thresholds::<2>(&data, 4.0, 0.5, 100.0, 30000.0, &mut scratch);
         let mut ch = 0;
@@ -1667,11 +1677,11 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(6)]
     fn combine_features_no_panic() {
-        let p0: f64 = kani::any();
-        let p1: f64 = kani::any();
-        let s0: f64 = kani::any();
-        let s1: f64 = kani::any();
-        let w: f64 = kani::any();
+        let p0: Float = kani::any();
+        let p1: Float = kani::any();
+        let s0: Float = kani::any();
+        let s1: Float = kani::any();
+        let w: Float = kani::any();
 
         kani::assume(p0.is_finite() && p0 >= -1e6 && p0 <= 1e6);
         kani::assume(p1.is_finite() && p1 >= -1e6 && p1 <= 1e6);
@@ -1681,7 +1691,7 @@ mod kani_proofs {
 
         let pca = [[p0, p1]];
         let spatial = [[s0, s1]];
-        let mut output = [[0.0f64; 4]; 1];
+        let mut output = [[0.0; 4]; 1];
         combine_features::<2, 2, 4>(&pca, &spatial, w, &mut output, 1);
 
         // All outputs must be finite
@@ -1702,8 +1712,8 @@ mod neo_proofs {
     fn verify_neo_transform_no_panic() {
         let len: usize = kani::any();
         kani::assume(len <= 8);
-        let signal = [0.0f64; 8];
-        let mut output = [0.0f64; 8];
+        let signal = [0.0; 8];
+        let mut output = [0.0; 8];
         let n = neo_transform(&signal[..len], &mut output);
         assert!(n <= len);
         if len >= 3 {
@@ -1718,16 +1728,16 @@ mod neo_proofs {
     fn verify_neo_output_finite() {
         let len: usize = kani::any();
         kani::assume(len >= 3 && len <= 6);
-        let mut signal = [0.0f64; 6];
+        let mut signal: [Float; 6] = [0.0; 6];
         for i in 0..len {
             signal[i] = kani::any();
-            kani::assume(signal[i].is_finite());
-            kani::assume(signal[i].abs() < 1e6);
+            kani::assume(float::is_finite(signal[i]));
+            kani::assume(float::abs(signal[i]) < 1e6);
         }
-        let mut output = [0.0f64; 6];
+        let mut output: [Float; 6] = [0.0; 6];
         let n = neo_transform(&signal[..len], &mut output);
         for i in 0..n {
-            assert!(output[i].is_finite());
+            assert!(float::is_finite(output[i]));
         }
     }
 }
@@ -1752,20 +1762,20 @@ mod tests {
             self.0 ^= self.0 << 17;
             self.0
         }
-        fn gaussian(&mut self, mean: f64, std: f64) -> f64 {
-            let u1 = (self.next_u64() % 1_000_000 + 1) as f64 / 1_000_001.0;
-            let u2 = (self.next_u64() % 1_000_000) as f64 / 1_000_000.0;
-            let z = libm::sqrt(-2.0 * libm::log(u1)) * libm::cos(2.0 * core::f64::consts::PI * u2);
+        fn gaussian(&mut self, mean: Float, std: Float) -> Float {
+            let u1 = (self.next_u64() % 1_000_000 + 1) as Float / 1_000_001.0;
+            let u2 = (self.next_u64() % 1_000_000) as Float / 1_000_000.0;
+            let z = float::sqrt(-2.0 * float::log(u1)) * float::cos(2.0 * float::PI * u2);
             mean + z * std
         }
     }
 
     /// Generate a synthetic spike waveform: a negative gaussian peak
-    fn make_spike(amplitude: f64, peak_sample: usize, width: f64, window: usize) -> Vec<f64> {
+    fn make_spike(amplitude: Float, peak_sample: usize, width: Float, window: usize) -> Vec<Float> {
         (0..window)
             .map(|i| {
-                let x = (i as f64 - peak_sample as f64) / width;
-                -amplitude * libm::exp(-0.5 * x * x)
+                let x = (i as Float - peak_sample as Float) / width;
+                -amplitude * float::exp(-0.5 * x * x)
             })
             .collect()
     }
@@ -1773,9 +1783,9 @@ mod tests {
     #[test]
     fn test_extract_known_positions() {
         let ext = WaveformExtractor::<1, 8>::new(); // pre_samples = 2
-        let data: Vec<f64> = (0..100).map(|i| i as f64).collect();
+        let data: Vec<Float> = (0..100).map(|i| i as Float).collect();
         let spike_times = [10, 50, 90];
-        let mut output = [[0.0f64; 8]; 3];
+        let mut output = [[0.0; 8]; 3];
         let count = ext.extract(&data, &spike_times, &mut output);
         assert_eq!(count, 3);
         assert_eq!(output[0], [8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
@@ -1787,7 +1797,7 @@ mod tests {
         let ext = WaveformExtractor::<1, 8>::new();
         let data = vec![0.0; 20];
         let spike_times = [0, 1, 15, 19];
-        let mut output = [[0.0f64; 8]; 4];
+        let mut output = [[0.0; 8]; 4];
         let count = ext.extract(&data, &spike_times, &mut output);
         assert_eq!(count, 0);
     }
@@ -1795,7 +1805,7 @@ mod tests {
     #[test]
     fn test_peak_alignment() {
         let ext = WaveformExtractor::<1, 16>::with_pre_samples(4);
-        let mut waveforms = [[1.0f64; 16]; 1];
+        let mut waveforms = [[1.0; 16]; 1];
         waveforms[0][6] = -5.0; // minimum at index 6
 
         ext.align_to_peak(&mut waveforms, 1, 0);
@@ -1817,7 +1827,7 @@ mod tests {
 
         let mut waveforms = Vec::new();
         for _ in 0..50 {
-            let mut wf = [0.0f64; 8];
+            let mut wf = [0.0; 8];
             let a = rng.gaussian(0.0, 5.0);
             let b = rng.gaussian(0.0, 3.0);
             let c = rng.gaussian(0.0, 1.0);
@@ -1834,9 +1844,9 @@ mod tests {
 
         pca.fit(&waveforms).unwrap();
 
-        let mut output = [0.0f64; 3];
+        let mut output = [0.0; 3];
         pca.transform(&waveforms[0], &mut output).unwrap();
-        let energy: f64 = output.iter().map(|x| x * x).sum();
+        let energy: Float = output.iter().map(|x| x * x).sum();
         assert!(energy > 0.0, "PCA projection should be non-zero");
     }
 
@@ -1865,7 +1875,7 @@ mod tests {
 
         pca.fit(&waveforms).unwrap();
         let ratios = pca.explained_variance_ratio();
-        let total: f64 = ratios.iter().sum();
+        let total: Float = ratios.iter().sum();
         assert!(
             total > 0.90,
             "3 components should explain >90% variance, got {}",
@@ -1876,8 +1886,8 @@ mod tests {
     #[test]
     fn test_pca_not_fitted() {
         let pca = WaveformPca::<8, 3, 64>::new();
-        let wf = [0.0f64; 8];
-        let mut out = [0.0f64; 3];
+        let wf = [0.0; 8];
+        let mut out = [0.0; 3];
         assert_eq!(pca.transform(&wf, &mut out), Err(SortError::NotFitted));
         assert!(!pca.is_fitted());
     }
@@ -1885,7 +1895,7 @@ mod tests {
     #[test]
     fn test_pca_insufficient_data() {
         let mut pca = WaveformPca::<8, 3, 64>::new();
-        let waveforms = [[0.0f64; 8]; 1];
+        let waveforms = [[0.0; 8]; 1];
         assert_eq!(pca.fit(&waveforms), Err(SortError::InsufficientData));
     }
 
@@ -1913,7 +1923,7 @@ mod tests {
         tm.add_template(&t1).unwrap();
         tm.add_template(&t2).unwrap();
 
-        let wf: [f64; 8] = [2.0, 0.0, -2.0, -4.0, -2.0, 0.0, 2.0, 1.0];
+        let wf: [Float; 8] = [2.0, 0.0, -2.0, -4.0, -2.0, 0.0, 2.0, 1.0];
         let (idx, ncc) = tm.match_waveform_ncc(&wf).unwrap();
         assert_eq!(idx, 0, "Scaled t1 should match template 0 via NCC");
         assert!(ncc > 0.99, "NCC should be ~1.0, got {}", ncc);
@@ -1930,7 +1940,7 @@ mod tests {
         let tmpl = tm.template(0).unwrap();
         for (tv, &expected) in tmpl.iter().zip(t.iter()) {
             assert!(
-                libm::fabs(*tv - expected) < 1e-10,
+                float::abs(*tv - expected) < 1e-10,
                 "Template should be unchanged after update with same values"
             );
         }
@@ -1957,8 +1967,8 @@ mod tests {
         let mut rng = Rng::new(42);
         let n = 10000;
         let true_std = 3.0;
-        let mut data: Vec<f64> = (0..n).map(|_| rng.gaussian(0.0, true_std)).collect();
-        let mut scratch = vec![0.0f64; n];
+        let mut data: Vec<Float> = (0..n).map(|_| rng.gaussian(0.0, true_std)).collect();
+        let mut scratch = vec![0.0; n];
         let estimated = estimate_noise_mad(&data, &mut scratch);
         let ratio = estimated / true_std;
         assert!(
@@ -1974,7 +1984,7 @@ mod tests {
 
     #[test]
     fn test_detect_spikes_refractory() {
-        let mut data = vec![0.0f64; 100];
+        let mut data = vec![0.0; 100];
         data[20] = -5.0;
         data[21] = -3.0;
         data[50] = -4.0;
@@ -1994,7 +2004,7 @@ mod tests {
         let n_samples = 10000;
         let noise_std = 1.0;
 
-        let mut data: Vec<f64> = (0..n_samples)
+        let mut data: Vec<Float> = (0..n_samples)
             .map(|_| rng.gaussian(0.0, noise_std))
             .collect();
 
@@ -2043,7 +2053,7 @@ mod tests {
 
         // Step 3: Extract waveforms
         let ext = WaveformExtractor::<1, 8>::new();
-        let mut waveforms = vec![[0.0f64; 8]; n_spikes];
+        let mut waveforms = vec![[0.0; 8]; n_spikes];
         let n_extracted = ext.extract(&data, &spike_times[..n_spikes], &mut waveforms);
         assert!(n_extracted > 0, "Should extract some waveforms");
 
@@ -2052,7 +2062,7 @@ mod tests {
         pca.fit(&waveforms[..n_extracted]).unwrap();
 
         for wf in waveforms.iter().take(n_extracted) {
-            let mut f = [0.0f64; 3];
+            let mut f = [0.0; 3];
             pca.transform(wf, &mut f).unwrap();
         }
 
@@ -2077,7 +2087,7 @@ mod tests {
     #[test]
     fn test_multichannel_detect_known_locations() {
         // 4 channels, 100 time steps
-        let mut data = [[0.0f64; 4]; 100];
+        let mut data = [[0.0; 4]; 100];
         // Place spikes at known locations on different channels
         data[20][0] = -6.0;
         data[50][1] = -8.0;
@@ -2100,7 +2110,7 @@ mod tests {
     #[test]
     fn test_multichannel_detect_no_spikes() {
         // All noise below threshold
-        let data = [[0.5f64; 2]; 50];
+        let data = [[0.5; 2]; 50];
         let noise = [1.0, 1.0];
         let mut events = [make_empty_event(); 8];
         let n = detect_spikes_multichannel::<2>(&data, 4.0, &noise, 5, &mut events);
@@ -2109,7 +2119,7 @@ mod tests {
 
     #[test]
     fn test_multichannel_detect_single_channel() {
-        let mut data = [[0.0f64; 1]; 50];
+        let mut data = [[0.0; 1]; 50];
         data[10][0] = -7.0;
         data[30][0] = -5.0;
 
@@ -2125,7 +2135,7 @@ mod tests {
     #[test]
     fn test_multichannel_detect_simultaneous_all_channels() {
         // Same spike appears on all channels at the same time
-        let mut data = [[0.0f64; 4]; 50];
+        let mut data = [[0.0; 4]; 50];
         for ch in 0..4 {
             data[25][ch] = -10.0;
         }
@@ -2143,7 +2153,7 @@ mod tests {
 
     #[test]
     fn test_multichannel_detect_amplitude_correct() {
-        let mut data = [[0.0f64; 2]; 20];
+        let mut data = [[0.0; 2]; 20];
         data[10][0] = -7.5;
 
         let noise = [1.0, 1.0];
@@ -2156,7 +2166,7 @@ mod tests {
 
     #[test]
     fn test_multichannel_detect_empty_data() {
-        let data: &[[f64; 2]] = &[];
+        let data: &[[Float; 2]] = &[];
         let noise = [1.0, 1.0];
         let mut events = [make_empty_event(); 4];
         let n = detect_spikes_multichannel::<2>(data, 4.0, &noise, 5, &mut events);
@@ -2322,7 +2332,7 @@ mod tests {
     #[test]
     fn test_align_to_peak_improves_timing() {
         // The spike's true peak is at sample 12 but was detected at 10
-        let mut data = [[0.0f64; 2]; 30];
+        let mut data = [[0.0; 2]; 30];
         data[10][0] = -5.0;
         data[11][0] = -7.0;
         data[12][0] = -9.0; // true peak
@@ -2341,7 +2351,7 @@ mod tests {
 
     #[test]
     fn test_align_to_peak_already_aligned() {
-        let mut data = [[0.0f64; 1]; 20];
+        let mut data = [[0.0; 1]; 20];
         data[10][0] = -8.0; // already the peak
 
         let mut events = [MultiChannelEvent {
@@ -2357,7 +2367,7 @@ mod tests {
     #[test]
     fn test_align_to_peak_boundary_start() {
         // Event near the start of data
-        let mut data = [[0.0f64; 1]; 20];
+        let mut data = [[0.0; 1]; 20];
         data[0][0] = -10.0;
         data[2][0] = -3.0;
 
@@ -2375,7 +2385,7 @@ mod tests {
     #[test]
     fn test_align_to_peak_boundary_end() {
         // Event near the end of data
-        let mut data = [[0.0f64; 1]; 20];
+        let mut data = [[0.0; 1]; 20];
         data[18][0] = -4.0;
         data[19][0] = -9.0; // peak at last sample
 
@@ -2392,7 +2402,7 @@ mod tests {
 
     #[test]
     fn test_align_no_events() {
-        let data = [[0.0f64; 2]; 20];
+        let data = [[0.0; 2]; 20];
         let mut events = [make_empty_event(); 4];
         align_to_peak::<2>(&data, &mut events, 0, 5);
         // Should be a no-op; no panic
@@ -2401,7 +2411,7 @@ mod tests {
     #[test]
     fn test_align_multichannel_correct_channel() {
         // Spikes on different channels should align to peaks on their own channel
-        let mut data = [[0.0f64; 2]; 30];
+        let mut data = [[0.0; 2]; 30];
         data[10][0] = -3.0;
         data[12][0] = -8.0; // true peak ch0
         data[10][1] = -2.0;
@@ -2437,7 +2447,7 @@ mod tests {
         // Generate 1000-sample recording with noise and 2 distinct spikes
         let mut rng = Rng::new(77);
         let n_samples = 1000;
-        let mut data = vec![[0.0f64; 4]; n_samples];
+        let mut data = vec![[0.0; 4]; n_samples];
 
         // Add noise
         for t in 0..n_samples {
@@ -2456,7 +2466,7 @@ mod tests {
         data[600][3] += -9.0; // peak channel
 
         // Step 1: estimate per-channel noise
-        let noise = [1.0f64; 4]; // We know it's unit gaussian
+        let noise = [1.0; 4]; // We know it's unit gaussian
 
         // Step 2: detect multi-channel
         let mut events = [make_empty_event(); 64];
@@ -2505,10 +2515,10 @@ mod tests {
     #[test]
     fn test_extract_multichannel_basic() {
         // 2-channel data, known values
-        let mut data = [[0.0f64; 2]; 20];
+        let mut data = [[0.0; 2]; 20];
         for t in 0..20 {
-            data[t][0] = t as f64;
-            data[t][1] = -(t as f64);
+            data[t][0] = t as Float;
+            data[t][1] = -(t as Float);
         }
 
         let events = [MultiChannelEvent {
@@ -2516,7 +2526,7 @@ mod tests {
             channel: 0,
             amplitude: 10.0,
         }];
-        let mut output = [[[0.0f64; 4]; 2]; 4];
+        let mut output = [[[0.0; 4]; 2]; 4];
         let n = extract_multichannel::<2, 4>(&data, &events, 1, 1, &mut output);
         assert_eq!(n, 1);
         // Window starts at 10-1=9, ends at 9+4=13
@@ -2531,7 +2541,7 @@ mod tests {
 
     #[test]
     fn test_extract_multichannel_boundary_skip() {
-        let data = [[1.0f64; 2]; 20];
+        let data = [[1.0; 2]; 20];
         let events = [
             MultiChannelEvent {
                 sample: 0,
@@ -2549,14 +2559,14 @@ mod tests {
                 amplitude: 1.0,
             }, // valid (10-2=8, 8+8=16 <= 20)
         ];
-        let mut output = [[[0.0f64; 8]; 2]; 4];
+        let mut output = [[[0.0; 8]; 2]; 4];
         let n = extract_multichannel::<2, 8>(&data, &events, 3, 2, &mut output);
         assert_eq!(n, 1, "Only middle event should be extractable");
     }
 
     #[test]
     fn test_extract_peak_channel_basic() {
-        let mut data = [[0.0f64; 3]; 20];
+        let mut data = [[0.0; 3]; 20];
         // Put a spike on channel 1
         data[8][1] = -7.0;
         data[9][1] = -10.0;
@@ -2570,7 +2580,7 @@ mod tests {
             channel: 1,
             amplitude: 10.0,
         }];
-        let mut output = [[0.0f64; 4]; 4];
+        let mut output = [[0.0; 4]; 4];
         let n = extract_peak_channel::<3, 4>(&data, &events, 1, 1, &mut output);
         assert_eq!(n, 1);
         // Window: [8..12] on channel 1
@@ -2582,7 +2592,7 @@ mod tests {
 
     #[test]
     fn test_extract_peak_channel_boundary_skip() {
-        let data = [[0.0f64; 2]; 10];
+        let data = [[0.0; 2]; 10];
         let events = [
             MultiChannelEvent {
                 sample: 1,
@@ -2595,7 +2605,7 @@ mod tests {
                 amplitude: 1.0,
             }, // valid: 5-2=3, 3+8=11 > 10, skip for W=8
         ];
-        let mut output = [[0.0f64; 8]; 4];
+        let mut output = [[0.0; 8]; 4];
         let n = extract_peak_channel::<2, 8>(&data, &events, 2, 2, &mut output);
         assert_eq!(n, 0, "Both events should be out of bounds");
     }
@@ -2603,10 +2613,10 @@ mod tests {
     #[test]
     fn test_extract_multichannel_vs_peak_consistency() {
         // Extract both ways and verify peak channel extraction matches
-        let mut data = [[0.0f64; 2]; 20];
+        let mut data = [[0.0; 2]; 20];
         for t in 0..20 {
-            data[t][0] = t as f64;
-            data[t][1] = 100.0 + t as f64;
+            data[t][0] = t as Float;
+            data[t][1] = 100.0 + t as Float;
         }
 
         let events = [MultiChannelEvent {
@@ -2614,8 +2624,8 @@ mod tests {
             channel: 1,
             amplitude: 110.0,
         }];
-        let mut mc_output = [[[0.0f64; 4]; 2]; 2];
-        let mut pc_output = [[0.0f64; 4]; 2];
+        let mut mc_output = [[[0.0; 4]; 2]; 2];
+        let mut pc_output = [[0.0; 4]; 2];
         let n_mc = extract_multichannel::<2, 4>(&data, &events, 1, 1, &mut mc_output);
         let n_pc = extract_peak_channel::<2, 4>(&data, &events, 1, 1, &mut pc_output);
         assert_eq!(n_mc, 1);
@@ -2635,9 +2645,9 @@ mod tests {
 
     #[test]
     fn test_extract_empty_events() {
-        let data = [[0.0f64; 2]; 20];
-        let mut mc_output = [[[0.0f64; 4]; 2]; 4];
-        let mut pc_output = [[0.0f64; 4]; 4];
+        let data = [[0.0; 2]; 20];
+        let mut mc_output = [[[0.0; 4]; 2]; 4];
+        let mut pc_output = [[0.0; 4]; 4];
         let n_mc = extract_multichannel::<2, 4>(&data, &[], 0, 1, &mut mc_output);
         let n_pc = extract_peak_channel::<2, 4>(&data, &[], 0, 1, &mut pc_output);
         assert_eq!(n_mc, 0);
@@ -2652,7 +2662,7 @@ mod tests {
     fn test_combine_features_basic() {
         let pca = [[1.0, 2.0], [-0.5, 0.3]];
         let spatial = [[10.0, 50.0], [20.0, 60.0]];
-        let mut output = [[0.0f64; 4]; 2];
+        let mut output = [[0.0; 4]; 2];
         combine_features::<2, 2, 4>(&pca, &spatial, 0.5, &mut output, 2);
 
         // First spike
@@ -2672,7 +2682,7 @@ mod tests {
     fn test_combine_features_zero_weight() {
         let pca = [[3.0, 4.0]];
         let spatial = [[100.0, 200.0]];
-        let mut output = [[0.0f64; 4]; 1];
+        let mut output = [[0.0; 4]; 1];
         combine_features::<2, 2, 4>(&pca, &spatial, 0.0, &mut output, 1);
 
         assert!((output[0][0] - 3.0).abs() < 1e-12);
@@ -2685,7 +2695,7 @@ mod tests {
     fn test_combine_features_unit_weight() {
         let pca = [[1.0]];
         let spatial = [[5.0, 10.0, 15.0]];
-        let mut output = [[0.0f64; 4]; 1];
+        let mut output = [[0.0; 4]; 1];
         combine_features::<1, 3, 4>(&pca, &spatial, 1.0, &mut output, 1);
 
         assert!((output[0][0] - 1.0).abs() < 1e-12);
@@ -2698,7 +2708,7 @@ mod tests {
     fn test_combine_features_partial_n() {
         let pca = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
         let spatial = [[10.0], [20.0], [30.0]];
-        let mut output = [[0.0f64; 3]; 3];
+        let mut output = [[0.0; 3]; 3];
         // Only process first 2 of 3
         combine_features::<2, 1, 3>(&pca, &spatial, 0.1, &mut output, 2);
 
@@ -2710,7 +2720,7 @@ mod tests {
 
     #[test]
     fn test_extract_spatial_features_basic() {
-        let mut data = [[0.0f64; 4]; 20];
+        let mut data = [[0.0; 4]; 20];
         // Spike at sample 10: dominant on channel 2, some on channel 1
         data[10][2] = -10.0;
         data[10][1] = -3.0;
@@ -2721,7 +2731,7 @@ mod tests {
             channel: 2,
             amplitude: 10.0,
         }];
-        let mut output = [[0.0f64; 2]; 4];
+        let mut output = [[0.0; 2]; 4];
         let n = extract_spatial_features::<4>(&data, &events, 1, &positions, &mut output);
         assert_eq!(n, 1);
         // Weighted: (3*25 + 10*50)/(3+10) = 575/13 ~ 44.23
@@ -2736,30 +2746,30 @@ mod tests {
 
     #[test]
     fn test_extract_spatial_features_empty() {
-        let data = [[0.0f64; 2]; 20];
+        let data = [[0.0; 2]; 20];
         let positions = [[0.0, 0.0], [0.0, 25.0]];
-        let mut output = [[0.0f64; 2]; 4];
+        let mut output = [[0.0; 2]; 4];
         let n = extract_spatial_features::<2>(&data, &[], 0, &positions, &mut output);
         assert_eq!(n, 0);
     }
 
     #[test]
     fn test_extract_spatial_features_out_of_bounds_sample() {
-        let data = [[0.0f64; 2]; 10];
+        let data = [[0.0; 2]; 10];
         let positions = [[0.0, 0.0], [0.0, 25.0]];
         let events = [MultiChannelEvent {
             sample: 100, // out of bounds
             channel: 0,
             amplitude: 5.0,
         }];
-        let mut output = [[0.0f64; 2]; 4];
+        let mut output = [[0.0; 2]; 4];
         let n = extract_spatial_features::<2>(&data, &events, 1, &positions, &mut output);
         assert_eq!(n, 0);
     }
 
     #[test]
     fn test_extract_spatial_features_multiple_events() {
-        let mut data = [[0.0f64; 2]; 30];
+        let mut data = [[0.0; 2]; 30];
         // Event 1 at sample 5: dominant on channel 0
         data[5][0] = -8.0;
         // Event 2 at sample 20: dominant on channel 1
@@ -2778,7 +2788,7 @@ mod tests {
                 amplitude: 6.0,
             },
         ];
-        let mut output = [[0.0f64; 2]; 4];
+        let mut output = [[0.0; 2]; 4];
         let n = extract_spatial_features::<2>(&data, &events, 2, &positions, &mut output);
         assert_eq!(n, 2);
         // Event 1: dominated by ch0 at y=0
@@ -2790,7 +2800,7 @@ mod tests {
     #[test]
     fn test_combine_and_extract_end_to_end() {
         // Simulate a simple pipeline: detect -> extract spatial -> combine with PCA
-        let mut data = [[0.0f64; 4]; 30];
+        let mut data = [[0.0; 4]; 30];
         data[15][1] = -10.0;
         data[15][2] = -4.0;
 
@@ -2802,7 +2812,7 @@ mod tests {
         }];
 
         // Extract spatial features
-        let mut spatial = [[0.0f64; 2]; 1];
+        let mut spatial = [[0.0; 2]; 1];
         let n = extract_spatial_features::<4>(&data, &events, 1, &positions, &mut spatial);
         assert_eq!(n, 1);
 
@@ -2810,7 +2820,7 @@ mod tests {
         let pca = [[0.5, -0.3, 1.2]];
 
         // Combine
-        let mut combined = [[0.0f64; 5]; 1];
+        let mut combined = [[0.0; 5]; 1];
         combine_features::<3, 2, 5>(&pca, &spatial, 0.2, &mut combined, 1);
 
         // PCA part unchanged
@@ -2826,7 +2836,7 @@ mod tests {
     fn test_adaptive_threshold_basic() {
         // 4 channels with different noise levels.
         let mut rng = Rng::new(99);
-        let mut data = [[0.0f64; 4]; 500];
+        let mut data = [[0.0; 4]; 500];
         // Channel 0: noise std=1.0, Channel 1: std=3.0,
         // Channel 2: std=0.5, Channel 3: std=2.0
         let stds = [1.0, 3.0, 0.5, 2.0];
@@ -2835,7 +2845,7 @@ mod tests {
                 data[t][ch] = rng.gaussian(0.0, stds[ch]);
             }
         }
-        let mut scratch = [0.0f64; 500];
+        let mut scratch = [0.0; 500];
         let thresholds =
             compute_adaptive_thresholds::<4>(&data, 4.0, 0.1, 200.0, 30000.0, &mut scratch);
 
@@ -2857,13 +2867,13 @@ mod tests {
     #[test]
     fn test_adaptive_threshold_dead_channel() {
         // Channel 0 has noise, channel 1 is dead (all zeros).
-        let mut data = [[0.0f64; 2]; 200];
+        let mut data = [[0.0; 2]; 200];
         let mut rng = Rng::new(42);
         for t in 0..200 {
             data[t][0] = rng.gaussian(0.0, 2.0);
             // Channel 1 stays zero.
         }
-        let mut scratch = [0.0f64; 200];
+        let mut scratch = [0.0; 200];
         let thresholds =
             compute_adaptive_thresholds::<2>(&data, 4.0, 0.5, 100.0, 30000.0, &mut scratch);
 
@@ -2885,17 +2895,17 @@ mod tests {
     fn test_adaptive_threshold_overactive() {
         // Create a channel that crosses threshold very frequently.
         // Use a fast oscillation that will produce many crossings.
-        let mut data = [[0.0f64; 2]; 1000];
+        let mut data = [[0.0; 2]; 1000];
         let mut rng = Rng::new(77);
         for t in 0..1000 {
             // Channel 0: moderate noise
             data[t][0] = rng.gaussian(0.0, 1.0);
             // Channel 1: same noise plus a fast oscillation that creates many crossings
             data[t][1] = rng.gaussian(0.0, 1.0)
-                + 5.0 * libm::sin(2.0 * core::f64::consts::PI * 500.0 * t as f64 / 30000.0);
+                + 5.0 * float::sin(2.0 * float::PI * 500.0 * t as Float / 30000.0);
         }
 
-        let mut scratch = [0.0f64; 1000];
+        let mut scratch = [0.0; 1000];
         // Use a very low max_rate_hz so channel 1's activity triggers scaling.
         let thresholds =
             compute_adaptive_thresholds::<2>(&data, 4.0, 0.1, 5.0, 30000.0, &mut scratch);
@@ -2909,8 +2919,8 @@ mod tests {
 
     #[test]
     fn test_adaptive_threshold_empty_data() {
-        let data: &[[f64; 3]] = &[];
-        let mut scratch = [0.0f64; 0];
+        let data: &[[Float; 3]] = &[];
+        let mut scratch = [0.0; 0];
         let thresholds =
             compute_adaptive_thresholds::<3>(data, 4.0, 0.75, 100.0, 30000.0, &mut scratch);
 
@@ -2970,7 +2980,7 @@ mod tests {
         // For a pure sinusoid, NEO output is non-negative (Teager-Kaiser property)
         let mut signal = [0.0; 100];
         for i in 0..100 {
-            signal[i] = libm::sin(2.0 * core::f64::consts::PI * 0.1 * i as f64);
+            signal[i] = float::sin(2.0 * float::PI * 0.1 * i as Float);
         }
         let mut output = [0.0; 100];
         let n = neo_transform(&signal, &mut output);

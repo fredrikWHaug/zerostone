@@ -32,12 +32,13 @@
 //!
 //! ```
 //! use zerostone::xcorr::{xcorr, autocorr, Normalization};
+//! use zerostone::Float;
 //!
 //! // Detect time delay between two signals
-//! let x = [0.0f32, 0.0, 1.0, 2.0, 1.0, 0.0, 0.0, 0.0];
-//! let y = [0.0f32, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0, 0.0];  // x delayed by 2
+//! let x: [Float; 8] = [0.0, 0.0, 1.0, 2.0, 1.0, 0.0, 0.0, 0.0];
+//! let y: [Float; 8] = [0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0, 0.0];  // x delayed by 2
 //!
-//! let mut output = [0.0f32; 15];  // N + M - 1 = 8 + 8 - 1
+//! let mut output = [0.0 as Float; 15];  // N + M - 1 = 8 + 8 - 1
 //! xcorr(&x, &y, &mut output, Normalization::None);
 //!
 //! // Find peak lag
@@ -52,9 +53,10 @@
 //!
 //! ```
 //! use zerostone::xcorr::{autocorr, Normalization};
+//! use zerostone::Float;
 //!
-//! let signal = [1.0f32, 2.0, 3.0, 2.0, 1.0];
-//! let mut output = [0.0f32; 9];  // 2*N - 1
+//! let signal: [Float; 5] = [1.0, 2.0, 3.0, 2.0, 1.0];
+//! let mut output = [0.0 as Float; 9];  // 2*N - 1
 //!
 //! autocorr(&signal, &mut output, Normalization::Coeff);
 //!
@@ -67,6 +69,8 @@
 //!     assert!((output[i] - output[output.len() - 1 - i]).abs() < 1e-6);
 //! }
 //! ```
+
+use crate::float::{self, Float};
 
 /// Normalization method for correlation output.
 ///
@@ -115,10 +119,11 @@ pub enum Normalization {
 ///
 /// ```
 /// use zerostone::xcorr::{xcorr, Normalization};
+/// use zerostone::Float;
 ///
-/// let x = [1.0f32, 2.0, 3.0];
-/// let y = [1.0f32, 0.5];
-/// let mut output = [0.0f32; 4];  // 3 + 2 - 1 = 4
+/// let x: [Float; 3] = [1.0, 2.0, 3.0];
+/// let y: [Float; 2] = [1.0, 0.5];
+/// let mut output = [0.0 as Float; 4];  // 3 + 2 - 1 = 4
 ///
 /// xcorr(&x, &y, &mut output, Normalization::None);
 ///
@@ -127,22 +132,22 @@ pub enum Normalization {
 /// assert!((output[1] - 2.0).abs() < 1e-6);
 /// ```
 pub fn xcorr<const N: usize, const M: usize, const OUT: usize>(
-    x: &[f32; N],
-    y: &[f32; M],
-    output: &mut [f32; OUT],
+    x: &[Float; N],
+    y: &[Float; M],
+    output: &mut [Float; OUT],
     norm: Normalization,
 ) {
     // Compute energy for coefficient normalization
     let (energy_x, energy_y) = if norm == Normalization::Coeff {
-        let ex: f32 = x.iter().map(|&v| v * v).sum();
-        let ey: f32 = y.iter().map(|&v| v * v).sum();
+        let ex: Float = x.iter().map(|&v| v * v).sum();
+        let ey: Float = y.iter().map(|&v| v * v).sum();
         (ex, ey)
     } else {
         (0.0, 0.0)
     };
 
     let norm_factor = if norm == Normalization::Coeff {
-        let denom = libm::sqrtf(energy_x * energy_y);
+        let denom = float::sqrt(energy_x * energy_y);
         if denom > 1e-10 {
             denom
         } else {
@@ -154,12 +159,12 @@ pub fn xcorr<const N: usize, const M: usize, const OUT: usize>(
 
     let n = N as i32;
     let m = M as i32;
-    let max_len = N.max(M) as f32;
+    let max_len = N.max(M) as Float;
 
     for (k, out_val) in output.iter_mut().enumerate() {
         let lag = k as i32 - (m - 1);
 
-        let mut sum = 0.0f32;
+        let mut sum: Float = 0.0;
         let mut count = 0usize;
 
         // Standard cross-correlation: (x ⋆ y)[lag] = Σ_n x[n] * y[n + lag]
@@ -182,7 +187,7 @@ pub fn xcorr<const N: usize, const M: usize, const OUT: usize>(
             Normalization::Biased => sum / max_len,
             Normalization::Unbiased => {
                 if count > 0 {
-                    sum / count as f32
+                    sum / count as Float
                 } else {
                     0.0
                 }
@@ -216,18 +221,19 @@ pub fn xcorr<const N: usize, const M: usize, const OUT: usize>(
 ///
 /// ```
 /// use zerostone::xcorr::{xcorr_into, Normalization};
+/// use zerostone::Float;
 ///
-/// let x = [1.0f32, 2.0, 3.0, 4.0];
-/// let y = [1.0f32, 1.0];
-/// let mut output = vec![0.0f32; 10];  // Oversized buffer
+/// let x: [Float; 4] = [1.0, 2.0, 3.0, 4.0];
+/// let y: [Float; 2] = [1.0, 1.0];
+/// let mut output = vec![0.0 as Float; 10];  // Oversized buffer
 ///
 /// let written = xcorr_into(&x, &y, &mut output, Normalization::None);
 /// assert_eq!(written, 5);  // 4 + 2 - 1 = 5
 /// ```
 pub fn xcorr_into<const N: usize, const M: usize>(
-    x: &[f32; N],
-    y: &[f32; M],
-    output: &mut [f32],
+    x: &[Float; N],
+    y: &[Float; M],
+    output: &mut [Float],
     norm: Normalization,
 ) -> usize {
     let out_len = N + M - 1;
@@ -240,15 +246,15 @@ pub fn xcorr_into<const N: usize, const M: usize>(
 
     // Compute energy for coefficient normalization
     let (energy_x, energy_y) = if norm == Normalization::Coeff {
-        let ex: f32 = x.iter().map(|&v| v * v).sum();
-        let ey: f32 = y.iter().map(|&v| v * v).sum();
+        let ex: Float = x.iter().map(|&v| v * v).sum();
+        let ey: Float = y.iter().map(|&v| v * v).sum();
         (ex, ey)
     } else {
         (0.0, 0.0)
     };
 
     let norm_factor = if norm == Normalization::Coeff {
-        let denom = libm::sqrtf(energy_x * energy_y);
+        let denom = float::sqrt(energy_x * energy_y);
         if denom > 1e-10 {
             denom
         } else {
@@ -260,12 +266,12 @@ pub fn xcorr_into<const N: usize, const M: usize>(
 
     let n = N as i32;
     let m = M as i32;
-    let max_len = N.max(M) as f32;
+    let max_len = N.max(M) as Float;
 
     for (k, out_val) in output.iter_mut().enumerate().take(out_len) {
         let lag = k as i32 - (m - 1);
 
-        let mut sum = 0.0f32;
+        let mut sum: Float = 0.0;
         let mut count = 0usize;
 
         // Standard cross-correlation: (x ⋆ y)[lag] = Σ_n x[n] * y[n + lag]
@@ -286,7 +292,7 @@ pub fn xcorr_into<const N: usize, const M: usize>(
             Normalization::Biased => sum / max_len,
             Normalization::Unbiased => {
                 if count > 0 {
-                    sum / count as f32
+                    sum / count as Float
                 } else {
                     0.0
                 }
@@ -317,15 +323,16 @@ pub fn xcorr_into<const N: usize, const M: usize>(
 ///
 /// ```
 /// use zerostone::xcorr::{autocorr, Normalization};
+/// use zerostone::float::{self, Float};
 ///
-/// let signal = [1.0f32, 2.0, 3.0, 2.0, 1.0];
-/// let mut output = [0.0f32; 9];  // 2*5 - 1 = 9
+/// let signal: [Float; 5] = [1.0, 2.0, 3.0, 2.0, 1.0];
+/// let mut output = [0.0 as Float; 9];  // 2*5 - 1 = 9
 ///
 /// autocorr(&signal, &mut output, Normalization::None);
 ///
 /// // Peak at center (lag 0)
 /// let center = 4;
-/// let max_val = output.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+/// let max_val = output.iter().copied().fold(-float::INFINITY, |a, b| if b > a { b } else { a });
 /// assert_eq!(output[center], max_val);
 ///
 /// // Symmetric
@@ -333,15 +340,15 @@ pub fn xcorr_into<const N: usize, const M: usize>(
 /// assert!((output[1] - output[7]).abs() < 1e-6);
 /// ```
 pub fn autocorr<const N: usize, const OUT: usize>(
-    x: &[f32; N],
-    output: &mut [f32; OUT],
+    x: &[Float; N],
+    output: &mut [Float; OUT],
     norm: Normalization,
 ) {
     let out_len = 2 * N - 1;
     let center = N - 1;
 
     // Compute energy at lag 0 (needed for all normalizations, and for symmetry optimization)
-    let energy: f32 = x.iter().map(|&v| v * v).sum();
+    let energy: Float = x.iter().map(|&v| v * v).sum();
 
     // For coefficient normalization
     let norm_factor = if norm == Normalization::Coeff {
@@ -357,7 +364,7 @@ pub fn autocorr<const N: usize, const OUT: usize>(
     // Compute only non-negative lags and mirror
     // Lag 0 is at index center
     for lag in 0..N {
-        let mut sum = 0.0f32;
+        let mut sum: Float = 0.0;
         let count = N - lag;
 
         for i in 0..count {
@@ -366,10 +373,10 @@ pub fn autocorr<const N: usize, const OUT: usize>(
 
         let normalized = match norm {
             Normalization::None => sum,
-            Normalization::Biased => sum / N as f32,
+            Normalization::Biased => sum / N as Float,
             Normalization::Unbiased => {
                 if count > 0 {
-                    sum / count as f32
+                    sum / count as Float
                 } else {
                     0.0
                 }
@@ -409,9 +416,10 @@ pub fn autocorr<const N: usize, const OUT: usize>(
 ///
 /// ```
 /// use zerostone::xcorr::{autocorr_into, Normalization};
+/// use zerostone::Float;
 ///
-/// let signal = [1.0f32, 2.0, 3.0];
-/// let mut output = vec![0.0f32; 10];
+/// let signal: [Float; 3] = [1.0, 2.0, 3.0];
+/// let mut output = vec![0.0 as Float; 10];
 ///
 /// let written = autocorr_into(&signal, &mut output, Normalization::Coeff);
 /// assert_eq!(written, 5);  // 2*3 - 1 = 5
@@ -420,8 +428,8 @@ pub fn autocorr<const N: usize, const OUT: usize>(
 /// assert!((output[2] - 1.0).abs() < 1e-6);
 /// ```
 pub fn autocorr_into<const N: usize>(
-    x: &[f32; N],
-    output: &mut [f32],
+    x: &[Float; N],
+    output: &mut [Float],
     norm: Normalization,
 ) -> usize {
     let out_len = 2 * N - 1;
@@ -433,7 +441,7 @@ pub fn autocorr_into<const N: usize>(
     );
 
     let center = N - 1;
-    let energy: f32 = x.iter().map(|&v| v * v).sum();
+    let energy: Float = x.iter().map(|&v| v * v).sum();
 
     let norm_factor = if norm == Normalization::Coeff {
         if energy > 1e-10 {
@@ -446,7 +454,7 @@ pub fn autocorr_into<const N: usize>(
     };
 
     for lag in 0..N {
-        let mut sum = 0.0f32;
+        let mut sum: Float = 0.0;
         let count = N - lag;
 
         for i in 0..count {
@@ -455,10 +463,10 @@ pub fn autocorr_into<const N: usize>(
 
         let normalized = match norm {
             Normalization::None => sum,
-            Normalization::Biased => sum / N as f32,
+            Normalization::Biased => sum / N as Float,
             Normalization::Unbiased => {
                 if count > 0 {
-                    sum / count as f32
+                    sum / count as Float
                 } else {
                     0.0
                 }
@@ -574,18 +582,19 @@ pub const fn lag_to_index<const N: usize, const M: usize>(lag: i32) -> usize {
 ///
 /// ```
 /// use zerostone::xcorr::{xcorr_batch, Normalization};
+/// use zerostone::Float;
 ///
-/// let x: [[f32; 4]; 2] = [[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]];
-/// let y: [[f32; 3]; 2] = [[1.0, 1.0, 1.0], [1.0, 0.0, 1.0]];
-/// let mut output = [[0.0f32; 6]; 2];  // 4 + 3 - 1 = 6
+/// let x: [[Float; 4]; 2] = [[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]];
+/// let y: [[Float; 3]; 2] = [[1.0, 1.0, 1.0], [1.0, 0.0, 1.0]];
+/// let mut output = [[0.0 as Float; 6]; 2];  // 4 + 3 - 1 = 6
 ///
 /// xcorr_batch(&x, &y, &mut output, Normalization::None);
 /// // Each channel processed independently
 /// ```
 pub fn xcorr_batch<const N: usize, const M: usize, const OUT: usize, const C: usize>(
-    x: &[[f32; N]; C],
-    y: &[[f32; M]; C],
-    output: &mut [[f32; OUT]; C],
+    x: &[[Float; N]; C],
+    y: &[[Float; M]; C],
+    output: &mut [[Float; OUT]; C],
     norm: Normalization,
 ) {
     for ch in 0..C {
@@ -607,13 +616,14 @@ pub fn xcorr_batch<const N: usize, const M: usize, const OUT: usize, const C: us
 ///
 /// ```
 /// use zerostone::xcorr::{autocorr_batch, Normalization};
+/// use zerostone::Float;
 ///
-/// let signals: [[f32; 4]; 3] = [
+/// let signals: [[Float; 4]; 3] = [
 ///     [1.0, 2.0, 2.0, 1.0],
 ///     [0.0, 1.0, 1.0, 0.0],
 ///     [1.0, 0.0, 0.0, 1.0],
 /// ];
-/// let mut output = [[0.0f32; 7]; 3];  // 2*4 - 1 = 7
+/// let mut output = [[0.0 as Float; 7]; 3];  // 2*4 - 1 = 7
 ///
 /// autocorr_batch(&signals, &mut output, Normalization::Coeff);
 ///
@@ -623,8 +633,8 @@ pub fn xcorr_batch<const N: usize, const M: usize, const OUT: usize, const C: us
 /// }
 /// ```
 pub fn autocorr_batch<const N: usize, const OUT: usize, const C: usize>(
-    x: &[[f32; N]; C],
-    output: &mut [[f32; OUT]; C],
+    x: &[[Float; N]; C],
+    output: &mut [[Float; OUT]; C],
     norm: Normalization,
 ) {
     for ch in 0..C {
@@ -649,21 +659,22 @@ pub fn autocorr_batch<const N: usize, const OUT: usize, const C: usize>(
 ///
 /// ```
 /// use zerostone::xcorr::{xcorr, find_peak, index_to_lag, Normalization};
+/// use zerostone::Float;
 ///
 /// // Signal delayed by 2 samples
-/// let x = [0.0f32, 0.0, 1.0, 2.0, 1.0, 0.0, 0.0, 0.0];
-/// let y = [0.0f32, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0, 0.0];
+/// let x: [Float; 8] = [0.0, 0.0, 1.0, 2.0, 1.0, 0.0, 0.0, 0.0];
+/// let y: [Float; 8] = [0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0, 0.0];
 ///
-/// let mut corr = [0.0f32; 15];
+/// let mut corr = [0.0 as Float; 15];
 /// xcorr(&x, &y, &mut corr, Normalization::None);
 ///
 /// let (peak_idx, _peak_val) = find_peak(&corr);
 /// let lag = index_to_lag::<8, 8>(peak_idx);
 /// assert_eq!(lag, 2);  // y is x delayed by 2
 /// ```
-pub fn find_peak(correlation: &[f32]) -> (usize, f32) {
+pub fn find_peak(correlation: &[Float]) -> (usize, Float) {
     let mut max_idx = 0;
-    let mut max_val = f32::NEG_INFINITY;
+    let mut max_val = -float::INFINITY;
 
     for (i, &val) in correlation.iter().enumerate() {
         if val > max_val {
@@ -684,24 +695,27 @@ mod tests {
 
     #[test]
     fn test_xcorr_identical_signals() {
-        let signal = [1.0f32, 2.0, 3.0, 2.0, 1.0];
-        let mut output = [0.0f32; 9];
+        let signal = [1.0 as Float, 2.0, 3.0, 2.0, 1.0];
+        let mut output = [0.0 as Float; 9];
         xcorr(&signal, &signal, &mut output, Normalization::None);
 
         // Peak should be at center (lag 0)
         let center = 4;
-        let max_val = output.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let max_val = output
+            .iter()
+            .copied()
+            .fold(-float::INFINITY, |a, b| if b > a { b } else { a });
         assert_eq!(output[center], max_val);
     }
 
     #[test]
     fn test_xcorr_delayed_signal() {
         // x has a peak at index 2
-        let x = [0.0f32, 0.0, 1.0, 2.0, 1.0, 0.0, 0.0, 0.0];
+        let x = [0.0 as Float, 0.0, 1.0, 2.0, 1.0, 0.0, 0.0, 0.0];
         // y is x shifted right by 2 (peak at index 4)
-        let y = [0.0f32, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0, 0.0];
+        let y = [0.0 as Float, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0, 0.0];
 
-        let mut output = [0.0f32; 15];
+        let mut output = [0.0 as Float; 15];
         xcorr(&x, &y, &mut output, Normalization::None);
 
         let (peak_idx, _) = find_peak(&output);
@@ -714,10 +728,10 @@ mod tests {
     #[test]
     fn test_xcorr_negative_delay() {
         // y leads x (negative lag should be peak)
-        let x = [0.0f32, 0.0, 0.0, 1.0, 2.0, 1.0, 0.0, 0.0];
-        let y = [0.0f32, 1.0, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0];
+        let x = [0.0 as Float, 0.0, 0.0, 1.0, 2.0, 1.0, 0.0, 0.0];
+        let y = [0.0 as Float, 1.0, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0];
 
-        let mut output = [0.0f32; 15];
+        let mut output = [0.0 as Float; 15];
         xcorr(&x, &y, &mut output, Normalization::None);
 
         let (peak_idx, _) = find_peak(&output);
@@ -728,8 +742,8 @@ mod tests {
 
     #[test]
     fn test_autocorr_symmetry() {
-        let signal = [1.0f32, 2.0, 3.0, 4.0, 5.0];
-        let mut output = [0.0f32; 9];
+        let signal = [1.0 as Float, 2.0, 3.0, 4.0, 5.0];
+        let mut output = [0.0 as Float; 9];
         autocorr(&signal, &mut output, Normalization::None);
 
         // Auto-correlation must be symmetric
@@ -746,20 +760,23 @@ mod tests {
 
     #[test]
     fn test_autocorr_peak_at_center() {
-        let signal = [1.0f32, 3.0, 2.0, 4.0, 1.0];
-        let mut output = [0.0f32; 9];
+        let signal = [1.0 as Float, 3.0, 2.0, 4.0, 1.0];
+        let mut output = [0.0 as Float; 9];
         autocorr(&signal, &mut output, Normalization::None);
 
         // Peak must be at center (lag 0)
         let center = 4;
-        let max_val = output.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let max_val = output
+            .iter()
+            .copied()
+            .fold(-float::INFINITY, |a, b| if b > a { b } else { a });
         assert_eq!(output[center], max_val);
     }
 
     #[test]
     fn test_normalization_coeff() {
-        let signal = [1.0f32, 2.0, 3.0, 4.0, 5.0];
-        let mut output = [0.0f32; 9];
+        let signal = [1.0 as Float, 2.0, 3.0, 4.0, 5.0];
+        let mut output = [0.0 as Float; 9];
         autocorr(&signal, &mut output, Normalization::Coeff);
 
         // With Coeff normalization, autocorr at lag 0 should be 1.0
@@ -773,8 +790,8 @@ mod tests {
 
     #[test]
     fn test_normalization_biased() {
-        let signal = [1.0f32, 1.0, 1.0, 1.0];
-        let mut output = [0.0f32; 7];
+        let signal = [1.0 as Float, 1.0, 1.0, 1.0];
+        let mut output = [0.0 as Float; 7];
         autocorr(&signal, &mut output, Normalization::Biased);
 
         // Lag 0: sum = 4, biased = 4/4 = 1.0
@@ -787,8 +804,8 @@ mod tests {
 
     #[test]
     fn test_normalization_unbiased() {
-        let signal = [1.0f32, 1.0, 1.0, 1.0];
-        let mut output = [0.0f32; 7];
+        let signal = [1.0 as Float, 1.0, 1.0, 1.0];
+        let mut output = [0.0 as Float; 7];
         autocorr(&signal, &mut output, Normalization::Unbiased);
 
         // Lag 0: sum = 4, count = 4, unbiased = 4/4 = 1.0
@@ -830,9 +847,9 @@ mod tests {
 
     #[test]
     fn test_xcorr_into() {
-        let x = [1.0f32, 2.0, 3.0, 4.0];
-        let y = [1.0f32, 1.0];
-        let mut output = vec![0.0f32; 10];
+        let x = [1.0 as Float, 2.0, 3.0, 4.0];
+        let y = [1.0 as Float, 1.0];
+        let mut output = vec![0.0 as Float; 10];
 
         let written = xcorr_into(&x, &y, &mut output, Normalization::None);
         assert_eq!(written, 5);
@@ -840,8 +857,8 @@ mod tests {
 
     #[test]
     fn test_autocorr_into() {
-        let signal = [1.0f32, 2.0, 3.0];
-        let mut output = vec![0.0f32; 10];
+        let signal = [1.0 as Float, 2.0, 3.0];
+        let mut output = vec![0.0 as Float; 10];
 
         let written = autocorr_into(&signal, &mut output, Normalization::Coeff);
         assert_eq!(written, 5);
@@ -850,9 +867,9 @@ mod tests {
 
     #[test]
     fn test_xcorr_batch() {
-        let x: [[f32; 4]; 2] = [[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]];
-        let y: [[f32; 3]; 2] = [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]];
-        let mut output = [[0.0f32; 6]; 2];
+        let x: [[Float; 4]; 2] = [[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]];
+        let y: [[Float; 3]; 2] = [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]];
+        let mut output = [[0.0 as Float; 6]; 2];
 
         xcorr_batch(&x, &y, &mut output, Normalization::None);
 
@@ -863,12 +880,12 @@ mod tests {
 
     #[test]
     fn test_autocorr_batch() {
-        let signals: [[f32; 4]; 3] = [
+        let signals: [[Float; 4]; 3] = [
             [1.0, 2.0, 2.0, 1.0],
             [0.0, 1.0, 1.0, 0.0],
             [1.0, 0.0, 0.0, 1.0],
         ];
-        let mut output = [[0.0f32; 7]; 3];
+        let mut output = [[0.0 as Float; 7]; 3];
 
         autocorr_batch(&signals, &mut output, Normalization::Coeff);
 
@@ -885,7 +902,7 @@ mod tests {
 
     #[test]
     fn test_find_peak() {
-        let corr = [1.0f32, 3.0, 7.0, 5.0, 2.0];
+        let corr = [1.0 as Float, 3.0, 7.0, 5.0, 2.0];
         let (idx, val) = find_peak(&corr);
         assert_eq!(idx, 2);
         assert_eq!(val, 7.0);
@@ -893,9 +910,9 @@ mod tests {
 
     #[test]
     fn test_different_length_signals() {
-        let x = [1.0f32, 2.0, 3.0, 4.0, 5.0];
-        let y = [1.0f32, 1.0];
-        let mut output = [0.0f32; 6]; // 5 + 2 - 1 = 6
+        let x = [1.0 as Float, 2.0, 3.0, 4.0, 5.0];
+        let y = [1.0 as Float, 1.0];
+        let mut output = [0.0 as Float; 6]; // 5 + 2 - 1 = 6
 
         xcorr(&x, &y, &mut output, Normalization::None);
 
@@ -907,9 +924,9 @@ mod tests {
 
     #[test]
     fn test_single_element_signals() {
-        let x = [5.0f32];
-        let y = [3.0f32];
-        let mut output = [0.0f32; 1];
+        let x = [5.0 as Float];
+        let y = [3.0 as Float];
+        let mut output = [0.0 as Float; 1];
 
         xcorr(&x, &y, &mut output, Normalization::None);
         assert!((output[0] - 15.0).abs() < 1e-6);
@@ -917,9 +934,9 @@ mod tests {
 
     #[test]
     fn test_zero_signal() {
-        let x = [0.0f32; 4];
-        let y = [1.0f32, 2.0, 3.0, 4.0];
-        let mut output = [0.0f32; 7];
+        let x = [0.0 as Float; 4];
+        let y = [1.0 as Float, 2.0, 3.0, 4.0];
+        let mut output = [0.0 as Float; 7];
 
         xcorr(&x, &y, &mut output, Normalization::None);
 
@@ -932,9 +949,9 @@ mod tests {
     #[test]
     fn test_impulse_response() {
         // Correlation with impulse gives shifted copy of signal
-        let x = [1.0f32, 2.0, 3.0, 2.0, 1.0];
-        let impulse = [0.0f32, 0.0, 1.0, 0.0, 0.0];
-        let mut output = [0.0f32; 9];
+        let x = [1.0 as Float, 2.0, 3.0, 2.0, 1.0];
+        let impulse = [0.0 as Float, 0.0, 1.0, 0.0, 0.0];
+        let mut output = [0.0 as Float; 9];
 
         xcorr(&x, &impulse, &mut output, Normalization::None);
 

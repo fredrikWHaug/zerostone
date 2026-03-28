@@ -27,6 +27,8 @@
 //! }
 //! ```
 
+use crate::float::Float;
+
 /// Non-linear median filter using sliding window.
 ///
 /// For each channel, maintains a circular buffer of the last `WINDOW` samples.
@@ -72,7 +74,7 @@
 #[derive(Clone, Debug)]
 pub struct MedianFilter<const C: usize, const WINDOW: usize> {
     /// Per-channel circular buffers holding sliding windows
-    delay_lines: [[f32; WINDOW]; C],
+    delay_lines: [[Float; WINDOW]; C],
     /// Current write position in each channel's circular buffer
     indices: [usize; C],
     /// Number of samples received per channel (0 to WINDOW)
@@ -131,7 +133,7 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
     /// // Third sample: median of [1.0, 2.0, 3.0] = 2.0 (steady state)
     /// let out3 = filter.process(&[3.0, 4.0]);
     /// ```
-    pub fn process(&mut self, input: &[f32; C]) -> [f32; C] {
+    pub fn process(&mut self, input: &[Float; C]) -> [Float; C] {
         let mut output = [0.0; C];
 
         for ch in 0..C {
@@ -217,7 +219,7 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
     }
 
     /// Compute median during zero-padding phase.
-    fn compute_median_padded(&self, ch: usize, valid_samples: usize) -> f32 {
+    fn compute_median_padded(&self, ch: usize, valid_samples: usize) -> Float {
         let mut window = [0.0; WINDOW];
 
         // Fill window: zeros followed by valid samples
@@ -231,7 +233,7 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
     }
 
     /// Compute median in steady state (full window available).
-    fn compute_median_full(&self, ch: usize) -> f32 {
+    fn compute_median_full(&self, ch: usize) -> Float {
         let mut window = [0.0; WINDOW];
 
         // Extract circular buffer into contiguous array
@@ -245,7 +247,7 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
 
     /// Dispatch to appropriate median algorithm based on window size.
     #[inline]
-    fn median(window: &mut [f32; WINDOW]) -> f32 {
+    fn median(window: &mut [Float; WINDOW]) -> Float {
         match WINDOW {
             1 => window[0],
             2 => Self::median2(window[0], window[1]),
@@ -264,7 +266,7 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
 
     /// 2-element median returns lower middle (minimum).
     #[inline]
-    fn median2(a: f32, b: f32) -> f32 {
+    fn median2(a: Float, b: Float) -> Float {
         if a < b {
             a
         } else {
@@ -274,7 +276,7 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
 
     /// Optimal 3-element sorting network (5 comparisons).
     #[inline]
-    fn median3(a: f32, b: f32, c: f32) -> f32 {
+    fn median3(a: Float, b: Float, c: Float) -> Float {
         let (min_ab, max_ab) = if a < b { (a, b) } else { (b, a) };
         let min_max_c = if max_ab < c { max_ab } else { c };
         if min_ab > min_max_c {
@@ -286,7 +288,7 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
 
     /// Sorting network for 4 elements, returns lower middle (index 1).
     #[inline]
-    fn median4(mut w: [f32; 4]) -> f32 {
+    fn median4(mut w: [Float; 4]) -> Float {
         macro_rules! cmp_swap {
             ($a:expr, $b:expr) => {
                 if w[$a] > w[$b] {
@@ -308,7 +310,7 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
     ///
     /// Based on Batcher's sorting network, returns middle element.
     #[inline]
-    fn median5(mut w: [f32; 5]) -> f32 {
+    fn median5(mut w: [Float; 5]) -> Float {
         // Compare-swap macro for clarity
         macro_rules! cmp_swap {
             ($a:expr, $b:expr) => {
@@ -334,7 +336,7 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
 
     /// Sorting network for 6 elements (12 comparisons), returns lower middle (index 2).
     #[inline]
-    fn median6(mut w: [f32; 6]) -> f32 {
+    fn median6(mut w: [Float; 6]) -> Float {
         macro_rules! cmp_swap {
             ($a:expr, $b:expr) => {
                 if w[$a] > w[$b] {
@@ -362,7 +364,7 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
 
     /// Optimal 7-element sorting network (16 comparisons).
     #[inline]
-    fn median7(mut w: [f32; 7]) -> f32 {
+    fn median7(mut w: [Float; 7]) -> Float {
         macro_rules! cmp_swap {
             ($a:expr, $b:expr) => {
                 if w[$a] > w[$b] {
@@ -397,7 +399,7 @@ impl<const C: usize, const WINDOW: usize> MedianFilter<C, WINDOW> {
     /// Only guarantees correct median position, doesn't fully sort.
     /// O(n) average case via partition-based selection.
     #[inline]
-    fn median_partial_sort(window: &mut [f32; WINDOW]) -> f32 {
+    fn median_partial_sort(window: &mut [Float; WINDOW]) -> Float {
         let mid = WINDOW / 2;
         let (_, median, _) = window.select_nth_unstable_by(mid, |a, b| {
             a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
@@ -415,9 +417,9 @@ impl<const C: usize, const WINDOW: usize> Default for MedianFilter<C, WINDOW> {
 impl<const C: usize, const WINDOW: usize> crate::pipeline::BlockProcessor<C>
     for MedianFilter<C, WINDOW>
 {
-    type Sample = f32;
+    type Sample = Float;
 
-    fn process_block_inplace(&mut self, block: &mut [[f32; C]]) {
+    fn process_block_inplace(&mut self, block: &mut [[Float; C]]) {
         for sample in block.iter_mut() {
             *sample = self.process(sample);
         }
@@ -436,9 +438,9 @@ impl<const C: usize, const WINDOW: usize> crate::pipeline::BlockProcessor<C>
 mod tests {
     use super::*;
 
-    const EPSILON: f32 = 1e-6;
+    const EPSILON: Float = 1e-6;
 
-    fn approx_eq(a: f32, b: f32) -> bool {
+    fn approx_eq(a: Float, b: Float) -> bool {
         (a - b).abs() < EPSILON
     }
 
@@ -646,7 +648,7 @@ mod tests {
         // Different value per channel
         let mut input = [0.0; 32];
         for (i, item) in input.iter_mut().enumerate() {
-            *item = i as f32;
+            *item = i as Float;
         }
 
         // Process several samples
@@ -832,7 +834,7 @@ mod tests {
     #[test]
     fn test_window6_all_permutations_of_small_set() {
         // Test several permutations to verify sorting network
-        let test_cases: [[f32; 6]; 4] = [
+        let test_cases: [[Float; 6]; 4] = [
             [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], // sorted
             [6.0, 5.0, 4.0, 3.0, 2.0, 1.0], // reverse
             [3.0, 1.0, 4.0, 1.0, 5.0, 9.0], // pi digits

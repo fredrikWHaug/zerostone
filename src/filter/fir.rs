@@ -1,3 +1,5 @@
+use crate::float::Float;
+
 /// Zero-allocation FIR (Finite Impulse Response) filter.
 ///
 /// Implements direct-form FIR filtering using a circular buffer for state storage.
@@ -17,8 +19,8 @@
 /// let output = filter.process_sample(1.0);
 /// ```
 pub struct FirFilter<const TAPS: usize> {
-    coeffs: [f32; TAPS],
-    delay_line: [f32; TAPS],
+    coeffs: [Float; TAPS],
+    delay_line: [Float; TAPS],
     index: usize,
 }
 
@@ -31,7 +33,7 @@ impl<const TAPS: usize> FirFilter<TAPS> {
     /// // 3-tap moving average
     /// let filter = FirFilter::new([1.0/3.0, 1.0/3.0, 1.0/3.0]);
     /// ```
-    pub fn new(coeffs: [f32; TAPS]) -> Self {
+    pub fn new(coeffs: [Float; TAPS]) -> Self {
         Self {
             coeffs,
             delay_line: [0.0; TAPS],
@@ -43,7 +45,7 @@ impl<const TAPS: usize> FirFilter<TAPS> {
     ///
     /// Implements: `y[n] = sum(b[k] * x[n-k])` for k = 0 to TAPS-1
     #[inline]
-    pub fn process_sample(&mut self, input: f32) -> f32 {
+    pub fn process_sample(&mut self, input: Float) -> Float {
         // Store new sample in delay line
         self.delay_line[self.index] = input;
 
@@ -69,7 +71,7 @@ impl<const TAPS: usize> FirFilter<TAPS> {
     }
 
     /// Processes multiple samples in place.
-    pub fn process_block(&mut self, samples: &mut [f32]) {
+    pub fn process_block(&mut self, samples: &mut [Float]) {
         for sample in samples.iter_mut() {
             *sample = self.process_sample(*sample);
         }
@@ -82,12 +84,12 @@ impl<const TAPS: usize> FirFilter<TAPS> {
     }
 
     /// Returns a reference to the filter coefficients.
-    pub fn coefficients(&self) -> &[f32; TAPS] {
+    pub fn coefficients(&self) -> &[Float; TAPS] {
         &self.coeffs
     }
 
     /// Updates filter coefficients.
-    pub fn set_coefficients(&mut self, coeffs: [f32; TAPS]) {
+    pub fn set_coefficients(&mut self, coeffs: [Float; TAPS]) {
         self.coeffs = coeffs;
     }
 
@@ -99,15 +101,15 @@ impl<const TAPS: usize> FirFilter<TAPS> {
     /// let mut filter: FirFilter<5> = FirFilter::moving_average();
     /// ```
     pub fn moving_average() -> Self {
-        let weight = 1.0 / TAPS as f32;
+        let weight = 1.0 / TAPS as Float;
         Self::new([weight; TAPS])
     }
 }
 
 impl<const TAPS: usize> crate::pipeline::BlockProcessor<1> for FirFilter<TAPS> {
-    type Sample = f32;
+    type Sample = Float;
 
-    fn process_block_inplace(&mut self, block: &mut [[f32; 1]]) {
+    fn process_block_inplace(&mut self, block: &mut [[Float; 1]]) {
         for sample in block.iter_mut() {
             sample[0] = self.process_sample(sample[0]);
         }
@@ -181,7 +183,7 @@ mod tests {
 
         // Process some samples
         for i in 0..5 {
-            filter.process_sample(i as f32);
+            filter.process_sample(i as Float);
         }
 
         // Reset

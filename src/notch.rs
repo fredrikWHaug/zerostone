@@ -5,6 +5,7 @@
 //! state is per-channel for complete independence.
 
 use crate::filter::BiquadCoeffs;
+use crate::float::Float;
 
 /// Multi-channel, multi-section notch filter bank for powerline noise removal.
 ///
@@ -19,11 +20,12 @@ use crate::filter::BiquadCoeffs;
 /// # Example
 /// ```
 /// use zerostone::NotchFilter;
+/// use zerostone::float::Float;
 ///
 /// // 8-channel, 4-section filter targeting 60/120/180/240 Hz at 1000 Hz fs
 /// let mut filter = NotchFilter::<8, 4>::powerline_60hz(1000.0);
 ///
-/// let input = [0.0f32; 8];
+/// let input: [Float; 8] = [0.0; 8];
 /// let output = filter.process_sample(&input);
 /// assert_eq!(output.len(), 8);
 /// ```
@@ -31,7 +33,7 @@ pub struct NotchFilter<const C: usize, const SECTIONS: usize> {
     /// Biquad coefficients shared across all channels
     coeffs: [BiquadCoeffs; SECTIONS],
     /// Per-channel, per-section state: [x1, x2, y1, y2]
-    state: [[[f32; 4]; SECTIONS]; C],
+    state: [[[Float; 4]; SECTIONS]; C],
 }
 
 impl<const C: usize, const SECTIONS: usize> NotchFilter<C, SECTIONS> {
@@ -40,14 +42,14 @@ impl<const C: usize, const SECTIONS: usize> NotchFilter<C, SECTIONS> {
 
     /// Internal constructor: fills sections with notch at each harmonic;
     /// passthrough for harmonics at or above Nyquist.
-    fn from_powerline(sample_rate: f32, fundamental: f32, q: f32) -> Self {
+    fn from_powerline(sample_rate: Float, fundamental: Float, q: Float) -> Self {
         let () = Self::_ASSERT_C;
         let () = Self::_ASSERT_S;
 
         let nyquist = sample_rate / 2.0;
         let mut coeffs = [BiquadCoeffs::passthrough(); SECTIONS];
         for (i, coeff) in coeffs.iter_mut().enumerate() {
-            let freq = fundamental * (i + 1) as f32;
+            let freq = fundamental * (i + 1) as Float;
             if freq > 0.0 && freq < nyquist {
                 *coeff = BiquadCoeffs::notch(sample_rate, freq, q);
             }
@@ -75,7 +77,7 @@ impl<const C: usize, const SECTIONS: usize> NotchFilter<C, SECTIONS> {
     /// let out = f.process_sample(&[0.0; 8]);
     /// assert_eq!(out, [0.0; 8]);
     /// ```
-    pub fn powerline_60hz(sample_rate: f32) -> Self {
+    pub fn powerline_60hz(sample_rate: Float) -> Self {
         Self::from_powerline(sample_rate, 60.0, 30.0)
     }
 
@@ -94,7 +96,7 @@ impl<const C: usize, const SECTIONS: usize> NotchFilter<C, SECTIONS> {
     /// let out = f.process_sample(&[0.0; 4]);
     /// assert_eq!(out, [0.0; 4]);
     /// ```
-    pub fn powerline_50hz(sample_rate: f32) -> Self {
+    pub fn powerline_50hz(sample_rate: Float) -> Self {
         Self::from_powerline(sample_rate, 50.0, 30.0)
     }
 
@@ -110,7 +112,7 @@ impl<const C: usize, const SECTIONS: usize> NotchFilter<C, SECTIONS> {
     ///
     /// # Panics
     /// Panics if `sample_rate <= 0.0`.
-    pub fn custom(sample_rate: f32, freqs: [f32; SECTIONS], q: f32) -> Self {
+    pub fn custom(sample_rate: Float, freqs: [Float; SECTIONS], q: Float) -> Self {
         let () = Self::_ASSERT_C;
         let () = Self::_ASSERT_S;
 
@@ -135,8 +137,8 @@ impl<const C: usize, const SECTIONS: usize> NotchFilter<C, SECTIONS> {
     /// Each channel is filtered independently through all `SECTIONS` biquad
     /// stages in series using Direct Form I.
     #[inline]
-    pub fn process_sample(&mut self, input: &[f32; C]) -> [f32; C] {
-        let mut output = [0.0f32; C];
+    pub fn process_sample(&mut self, input: &[Float; C]) -> [Float; C] {
+        let mut output = [0.0; C];
 
         for ch in 0..C {
             let mut x = input[ch];
@@ -164,7 +166,7 @@ impl<const C: usize, const SECTIONS: usize> NotchFilter<C, SECTIONS> {
     }
 
     /// Processes a block of multi-channel samples in place.
-    pub fn process_block(&mut self, block: &mut [[f32; C]]) {
+    pub fn process_block(&mut self, block: &mut [[Float; C]]) {
         for sample in block.iter_mut() {
             *sample = self.process_sample(sample);
         }
@@ -180,27 +182,28 @@ impl<const C: usize, const SECTIONS: usize> NotchFilter<C, SECTIONS> {
 mod tests {
     use super::*;
     use crate::filter::IirFilter;
+    use crate::float;
 
     /// Helper: measure peak amplitude of a sine after settling.
     fn measure_amplitude(
-        freq: f32,
-        sample_rate: f32,
+        freq: Float,
+        sample_rate: Float,
         settle: usize,
         measure: usize,
-        filter_fn: &mut impl FnMut(f32) -> f32,
-    ) -> f32 {
-        use core::f32::consts::PI;
-
+        filter_fn: &mut impl FnMut(Float) -> Float,
+    ) -> Float {
         for i in 0..settle {
-            let t = i as f32 / sample_rate;
-            filter_fn(libm::sinf(2.0 * PI * freq * t));
+            let t = i as Float / sample_rate;
+            filter_fn(float::sin(2.0 * float::PI * freq * t));
         }
 
-        let mut max = 0.0f32;
+        let mut max: Float = 0.0;
         for i in settle..(settle + measure) {
-            let t = i as f32 / sample_rate;
-            let y = filter_fn(libm::sinf(2.0 * PI * freq * t));
-            max = max.max(y.abs());
+            let t = i as Float / sample_rate;
+            let y = filter_fn(float::sin(2.0 * float::PI * freq * t));
+            if float::abs(y) > max {
+                max = float::abs(y);
+            }
         }
         max
     }
@@ -260,30 +263,32 @@ mod tests {
 
     #[test]
     fn test_multichannel_independence() {
-        use core::f32::consts::PI;
-
         let mut f = NotchFilter::<2, 4>::powerline_60hz(1000.0);
-        let sample_rate = 1000.0_f32;
+        let sample_rate: Float = 1000.0;
 
         // Channel 0: 60 Hz (should be attenuated)
         // Channel 1: 10 Hz (should pass through)
         // Settle
         for i in 0..1000usize {
-            let t = i as f32 / sample_rate;
-            let ch0 = libm::sinf(2.0 * PI * 60.0 * t);
-            let ch1 = libm::sinf(2.0 * PI * 10.0 * t);
+            let t = i as Float / sample_rate;
+            let ch0 = float::sin(2.0 * float::PI * 60.0 * t);
+            let ch1 = float::sin(2.0 * float::PI * 10.0 * t);
             f.process_sample(&[ch0, ch1]);
         }
 
-        let mut max_ch0 = 0.0f32;
-        let mut max_ch1 = 0.0f32;
+        let mut max_ch0: Float = 0.0;
+        let mut max_ch1: Float = 0.0;
         for i in 1000..1100usize {
-            let t = i as f32 / sample_rate;
-            let ch0 = libm::sinf(2.0 * PI * 60.0 * t);
-            let ch1 = libm::sinf(2.0 * PI * 10.0 * t);
+            let t = i as Float / sample_rate;
+            let ch0 = float::sin(2.0 * float::PI * 60.0 * t);
+            let ch1 = float::sin(2.0 * float::PI * 10.0 * t);
             let out = f.process_sample(&[ch0, ch1]);
-            max_ch0 = max_ch0.max(out[0].abs());
-            max_ch1 = max_ch1.max(out[1].abs());
+            if float::abs(out[0]) > max_ch0 {
+                max_ch0 = float::abs(out[0]);
+            }
+            if float::abs(out[1]) > max_ch1 {
+                max_ch1 = float::abs(out[1]);
+            }
         }
 
         assert!(
@@ -300,15 +305,13 @@ mod tests {
 
     #[test]
     fn test_reset_clears_state() {
-        use core::f32::consts::PI;
-
-        let sample_rate = 1000.0_f32;
+        let sample_rate: Float = 1000.0;
         let mut f = NotchFilter::<1, 4>::powerline_60hz(sample_rate);
 
         // Process some samples to build up state
         for i in 0..200usize {
-            let t = i as f32 / sample_rate;
-            f.process_sample(&[libm::sinf(2.0 * PI * 60.0 * t)]);
+            let t = i as Float / sample_rate;
+            f.process_sample(&[float::sin(2.0 * float::PI * 60.0 * t)]);
         }
 
         // Reset and re-process same signal from start
@@ -318,8 +321,8 @@ mod tests {
         let mut f2 = NotchFilter::<1, 4>::powerline_60hz(sample_rate);
 
         for i in 0..10usize {
-            let t = i as f32 / sample_rate;
-            let x = libm::sinf(2.0 * PI * 60.0 * t);
+            let t = i as Float / sample_rate;
+            let x = float::sin(2.0 * float::PI * 60.0 * t);
             let y1 = f.process_sample(&[x])[0];
             let y2 = f2.process_sample(&[x])[0];
             assert_eq!(
@@ -371,7 +374,7 @@ mod tests {
     fn test_doc_example() {
         // Verify the doc example compiles and runs
         let mut filter = NotchFilter::<8, 4>::powerline_60hz(1000.0);
-        let input = [0.0f32; 8];
+        let input = [0.0; 8];
         let output = filter.process_sample(&input);
         assert_eq!(output, [0.0; 8]);
     }

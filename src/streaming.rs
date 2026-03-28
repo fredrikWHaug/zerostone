@@ -30,6 +30,7 @@
 //! ```
 
 use crate::drift::DriftEstimator;
+use crate::float::{self, Float};
 use crate::probe::ProbeLayout;
 use crate::sorter::{sort_multichannel, SortConfig, SortResult};
 use crate::spike_sort::{MultiChannelEvent, SortError};
@@ -54,11 +55,11 @@ pub struct StreamingSorter<
     const N: usize,
 > {
     /// Mean waveforms from previous segments.
-    template_library: [[f64; W]; N],
+    template_library: [[Float; W]; N],
     /// How many spikes have contributed to each template.
     template_counts: [usize; N],
     /// Drift-corrected y-position for each template (used for spatial matching).
-    template_positions: [f64; N],
+    template_positions: [Float; N],
     /// Number of active templates.
     n_templates: usize,
     /// How many segments have been processed.
@@ -66,7 +67,7 @@ pub struct StreamingSorter<
     /// Sorting configuration.
     config: SortConfig,
     /// Exponential moving average decay for template updates.
-    decay: f64,
+    decay: Float,
     /// Drift estimator tracking probe motion across segments.
     /// Uses 64 bins of segment-length to estimate linear drift.
     drift: DriftEstimator<64>,
@@ -100,7 +101,7 @@ impl<
     ///     StreamingSorter::new(SortConfig::default(), 0.95);
     /// assert_eq!(sorter.segment_count(), 0);
     /// ```
-    pub fn new(config: SortConfig, decay: f64) -> Self {
+    pub fn new(config: SortConfig, decay: Float) -> Self {
         Self {
             template_library: [[0.0; W]; N],
             template_counts: [0; N],
@@ -119,7 +120,7 @@ impl<
     /// `drift_bin_samples` controls the time resolution of the drift
     /// estimator. Smaller bins give faster drift adaptation but noisier
     /// estimates. A typical value for 30kHz data is 30000 (1 second).
-    pub fn with_drift_bins(config: SortConfig, decay: f64, drift_bin_samples: usize) -> Self {
+    pub fn with_drift_bins(config: SortConfig, decay: Float, drift_bin_samples: usize) -> Self {
         Self {
             template_library: [[0.0; W]; N],
             template_counts: [0; N],
@@ -150,11 +151,11 @@ impl<
     pub fn process_segment(
         &mut self,
         probe: &ProbeLayout<C>,
-        data: &mut [[f64; C]],
-        scratch: &mut [f64],
+        data: &mut [[Float; C]],
+        scratch: &mut [Float],
         event_buf: &mut [MultiChannelEvent],
-        waveform_buf: &mut [[f64; W]],
-        feature_buf: &mut [[f64; K]],
+        waveform_buf: &mut [[Float; W]],
+        feature_buf: &mut [[Float; K]],
         labels: &mut [usize],
     ) -> Result<SortResult<N>, SortError> {
         // Run the batch pipeline on this segment.
@@ -178,7 +179,7 @@ impl<
         }
 
         // Compute mean waveforms for each cluster in this segment.
-        let mut seg_means = [[0.0f64; W]; N];
+        let mut seg_means = [[0.0; W]; N];
         let mut seg_counts = [0usize; N];
 
         for i in 0..n_spikes {
@@ -197,7 +198,7 @@ impl<
         }
         for c in 0..n_clusters.min(N) {
             if seg_counts[c] > 0 {
-                let inv = 1.0 / seg_counts[c] as f64;
+                let inv = 1.0 / seg_counts[c] as Float;
                 for mw in seg_means[c].iter_mut() {
                     *mw *= inv;
                 }
@@ -222,8 +223,8 @@ impl<
 
         // Compute drift-corrected y-position for each cluster in this segment.
         // For each cluster, compute the amplitude-weighted mean corrected position.
-        let mut seg_positions = [0.0f64; N];
-        let mut seg_pos_weights = [0.0f64; N];
+        let mut seg_positions = [0.0; N];
+        let mut seg_pos_weights = [0.0; N];
 
         for i in 0..n_spikes {
             let label = if i < labels.len() {
@@ -272,7 +273,7 @@ impl<
 
                 // Find best matching existing template by combined NCC and
                 // drift-corrected spatial proximity.
-                let mut best_score = -2.0f64;
+                let mut best_score = -2.0;
                 let mut best_idx = N; // sentinel: no match
 
                 for (t, &used) in used_template.iter().enumerate().take(self.n_templates) {
@@ -285,7 +286,7 @@ impl<
                     // Spatial penalty: Gaussian weighting on position difference.
                     // sigma = 50um -- positions beyond ~100um are heavily penalized.
                     let dy = seg_positions[c] - self.template_positions[t];
-                    let spatial_weight = libm::exp(-0.5 * (dy * dy) / (50.0 * 50.0));
+                    let spatial_weight = float::exp(-0.5 * (dy * dy) / (50.0 * 50.0));
 
                     // Combined score: NCC weighted by spatial proximity.
                     let score = ncc * spatial_weight;
@@ -365,7 +366,7 @@ impl<
     ///     StreamingSorter::new(SortConfig::default(), 0.95);
     /// assert!(sorter.template(0).is_none());
     /// ```
-    pub fn template(&self, idx: usize) -> Option<&[f64; W]> {
+    pub fn template(&self, idx: usize) -> Option<&[Float; W]> {
         if idx < self.n_templates {
             Some(&self.template_library[idx])
         } else {
@@ -374,7 +375,7 @@ impl<
     }
 
     /// Get the drift-corrected y-position for a template, or `None` if out of range.
-    pub fn template_position(&self, idx: usize) -> Option<f64> {
+    pub fn template_position(&self, idx: usize) -> Option<Float> {
         if idx < self.n_templates {
             Some(self.template_positions[idx])
         } else {
@@ -386,7 +387,7 @@ impl<
     ///
     /// Positive values indicate the spike center of mass is moving
     /// toward higher-numbered channels over time.
-    pub fn drift_rate(&self) -> f64 {
+    pub fn drift_rate(&self) -> Float {
         self.drift.slope()
     }
 
@@ -396,7 +397,7 @@ impl<
     }
 
     /// Estimated drift at a given sample index, in micrometers.
-    pub fn drift_at(&self, sample_index: usize) -> f64 {
+    pub fn drift_at(&self, sample_index: usize) -> Float {
         self.drift.estimate_drift(sample_index)
     }
 
@@ -416,10 +417,10 @@ impl<
 ///
 /// Returns a value in [-1, 1]. Returns 0.0 if either waveform has
 /// zero energy (all zeros).
-fn normalized_cross_correlation<const W: usize>(a: &[f64; W], b: &[f64; W]) -> f64 {
-    let mut dot = 0.0f64;
-    let mut norm_a = 0.0f64;
-    let mut norm_b = 0.0f64;
+fn normalized_cross_correlation<const W: usize>(a: &[Float; W], b: &[Float; W]) -> Float {
+    let mut dot = 0.0;
+    let mut norm_a = 0.0;
+    let mut norm_b = 0.0;
 
     for w in 0..W {
         dot += a[w] * b[w];
@@ -427,7 +428,7 @@ fn normalized_cross_correlation<const W: usize>(a: &[f64; W], b: &[f64; W]) -> f
         norm_b += b[w] * b[w];
     }
 
-    let denom = libm::sqrt(norm_a * norm_b);
+    let denom = float::sqrt(norm_a * norm_b);
     if denom < 1e-15 {
         return 0.0;
     }
@@ -441,10 +442,10 @@ mod tests {
 
     // Helper: create a simple linear probe with C channels.
     fn make_probe<const C: usize>() -> ProbeLayout<C> {
-        let mut positions = [[0.0f64; 2]; C];
+        let mut positions = [[0.0; 2]; C];
         for (i, pos) in positions.iter_mut().enumerate() {
             pos[0] = 0.0;
-            pos[1] = i as f64 * 25.0; // 25 um spacing
+            pos[1] = i as Float * 25.0; // 25 um spacing
         }
         ProbeLayout::new(positions)
     }
@@ -455,10 +456,10 @@ mod tests {
         n_samples: usize,
         spike_channel: usize,
         spike_positions: &[usize],
-        amplitude: f64,
-    ) -> ([[f64; C]; 5000], usize) {
+        amplitude: Float,
+    ) -> ([[Float; C]; 5000], usize) {
         assert!(n_samples <= 5000);
-        let mut data = [[0.0f64; C]; 5000];
+        let mut data = [[0.0; C]; 5000];
 
         // Add small background noise (deterministic PRNG).
         let mut rng_state: u64 = 12345;
@@ -468,7 +469,7 @@ mod tests {
                 rng_state ^= rng_state << 13;
                 rng_state ^= rng_state >> 7;
                 rng_state ^= rng_state << 17;
-                let noise = ((rng_state as f64) / (u64::MAX as f64) - 0.5) * 0.5;
+                let noise = ((rng_state as Float) / (u64::MAX as Float) - 0.5) * 0.5;
                 *ch = noise;
             }
         }
@@ -479,9 +480,9 @@ mod tests {
                 // Triangular spike: ramp down then up, width ~20 samples.
                 for off in 0..20 {
                     let shape = if off < 10 {
-                        amplitude * (off as f64 / 10.0)
+                        amplitude * (off as Float / 10.0)
                     } else {
-                        amplitude * ((20 - off) as f64 / 10.0)
+                        amplitude * ((20 - off) as Float / 10.0)
                     };
                     data[pos + off][spike_channel] += shape; // negative amplitude
                 }
@@ -507,14 +508,14 @@ mod tests {
 
         // Batch sort.
         let mut data_batch = data_orig;
-        let mut scratch = [0.0f64; 20000];
+        let mut scratch = [0.0; 20000];
         let mut events = [MultiChannelEvent {
             sample: 0,
             channel: 0,
             amplitude: 0.0,
         }; 512];
-        let mut waveforms = [[0.0f64; W]; 512];
-        let mut features = [[0.0f64; K]; 512];
+        let mut waveforms = [[0.0; W]; 512];
+        let mut features = [[0.0; K]; 512];
         let mut labels_batch = [0usize; 512];
 
         let batch_result = sort_multichannel::<C, CM, W, K, WM, N>(
@@ -530,14 +531,14 @@ mod tests {
 
         // Streaming sort (single segment).
         let mut data_stream = data_orig;
-        let mut scratch2 = [0.0f64; 20000];
+        let mut scratch2 = [0.0; 20000];
         let mut events2 = [MultiChannelEvent {
             sample: 0,
             channel: 0,
             amplitude: 0.0,
         }; 512];
-        let mut waveforms2 = [[0.0f64; W]; 512];
-        let mut features2 = [[0.0f64; K]; 512];
+        let mut waveforms2 = [[0.0; W]; 512];
+        let mut features2 = [[0.0; K]; 512];
         let mut labels_stream = [0usize; 512];
 
         let mut sorter: StreamingSorter<C, CM, W, K, WM, N> =
@@ -584,14 +585,14 @@ mod tests {
 
         // Process segment 1.
         let mut data1 = data_orig;
-        let mut scratch = [0.0f64; 20000];
+        let mut scratch = [0.0; 20000];
         let mut events = [MultiChannelEvent {
             sample: 0,
             channel: 0,
             amplitude: 0.0,
         }; 512];
-        let mut waveforms = [[0.0f64; W]; 512];
-        let mut features = [[0.0f64; K]; 512];
+        let mut waveforms = [[0.0; W]; 512];
+        let mut features = [[0.0; K]; 512];
         let mut labels1 = [0usize; 512];
 
         let r1 = sorter.process_segment(
@@ -652,14 +653,14 @@ mod tests {
             StreamingSorter::new(SortConfig::default(), 0.95);
 
         let mut data = data_orig;
-        let mut scratch = [0.0f64; 20000];
+        let mut scratch = [0.0; 20000];
         let mut events = [MultiChannelEvent {
             sample: 0,
             channel: 0,
             amplitude: 0.0,
         }; 512];
-        let mut waveforms = [[0.0f64; W]; 512];
-        let mut features = [[0.0f64; K]; 512];
+        let mut waveforms = [[0.0; W]; 512];
+        let mut features = [[0.0; K]; 512];
         let mut labels = [0usize; 512];
 
         let _ = sorter.process_segment(
@@ -700,14 +701,14 @@ mod tests {
         let (data1_orig, n_samples) = generate_test_data::<C>(5000, 0, &positions_ch0, -15.0);
 
         let mut data1 = data1_orig;
-        let mut scratch = [0.0f64; 20000];
+        let mut scratch = [0.0; 20000];
         let mut events = [MultiChannelEvent {
             sample: 0,
             channel: 0,
             amplitude: 0.0,
         }; 512];
-        let mut waveforms = [[0.0f64; W]; 512];
-        let mut features = [[0.0f64; K]; 512];
+        let mut waveforms = [[0.0; W]; 512];
+        let mut features = [[0.0; K]; 512];
         let mut labels = [0usize; 512];
 
         let r1 = sorter.process_segment(
@@ -730,9 +731,9 @@ mod tests {
             if pos + 20 < n_samples {
                 for off in 0..20 {
                     let shape = if off < 10 {
-                        -20.0 * (off as f64 / 10.0)
+                        -20.0 * (off as Float / 10.0)
                     } else {
-                        -20.0 * ((20 - off) as f64 / 10.0)
+                        -20.0 * ((20 - off) as Float / 10.0)
                     };
                     data2[pos + off][2] += shape;
                 }
@@ -821,10 +822,10 @@ mod tests {
         const N: usize = 32;
 
         // 8-channel linear probe with 25um spacing.
-        let mut pos = [[0.0f64; 2]; C];
+        let mut pos = [[0.0; 2]; C];
         for (i, p) in pos.iter_mut().enumerate() {
             p[0] = 0.0;
-            p[1] = i as f64 * 25.0;
+            p[1] = i as Float * 25.0;
         }
         let probe = ProbeLayout::new(pos);
 
@@ -844,7 +845,7 @@ mod tests {
         let mut n_templates_final = 0usize;
 
         for (seg, &ch) in channels_over_time.iter().enumerate().take(n_segments) {
-            let mut data = [[0.0f64; C]; 5000];
+            let mut data = [[0.0; C]; 5000];
 
             // Deterministic noise.
             let mut rng_state: u64 = 12345 + seg as u64 * 9999;
@@ -853,7 +854,7 @@ mod tests {
                     rng_state ^= rng_state << 13;
                     rng_state ^= rng_state >> 7;
                     rng_state ^= rng_state << 17;
-                    let noise = ((rng_state as f64) / (u64::MAX as f64) - 0.5) * 0.5;
+                    let noise = ((rng_state as Float) / (u64::MAX as Float) - 0.5) * 0.5;
                     *val = noise;
                 }
             }
@@ -863,9 +864,9 @@ mod tests {
                 if sp + 20 < seg_len {
                     for off in 0..20 {
                         let shape = if off < 10 {
-                            -15.0 * (off as f64 / 10.0)
+                            -15.0 * (off as Float / 10.0)
                         } else {
-                            -15.0 * ((20 - off) as f64 / 10.0)
+                            -15.0 * ((20 - off) as Float / 10.0)
                         };
                         data[sp + off][ch] += shape;
                         // Spread to neighbors.
@@ -879,14 +880,14 @@ mod tests {
                 }
             }
 
-            let mut scratch = [0.0f64; 20000];
+            let mut scratch = [0.0; 20000];
             let mut events = [MultiChannelEvent {
                 sample: 0,
                 channel: 0,
                 amplitude: 0.0,
             }; 512];
-            let mut waveforms = [[0.0f64; W]; 512];
-            let mut features = [[0.0f64; K]; 512];
+            let mut waveforms = [[0.0; W]; 512];
+            let mut features = [[0.0; K]; 512];
             let mut labels = [0usize; 512];
 
             let _ = sorter.process_segment(

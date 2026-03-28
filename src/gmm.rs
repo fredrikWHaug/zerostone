@@ -61,6 +61,8 @@
 // Clippy's iterator suggestions don't apply to coupled-index matrix math.
 #![allow(clippy::needless_range_loop)]
 
+use crate::float::{self, Float};
+
 /// Gaussian Mixture Model with full covariance matrices.
 ///
 /// # Type Parameters
@@ -78,19 +80,19 @@
 /// ```
 pub struct GaussianMixture<const D: usize, const K: usize> {
     /// Component means: mu_k[d]
-    means: [[f64; D]; K],
+    means: [[Float; D]; K],
     /// Component covariances: cov_k[d1][d2] (symmetric)
-    covs: [[[f64; D]; D]; K],
+    covs: [[[Float; D]; D]; K],
     /// Cholesky factors of covariance matrices (lower triangular)
-    cholesky: [[[f64; D]; D]; K],
+    cholesky: [[[Float; D]; D]; K],
     /// Log-determinants of covariance matrices (from Cholesky diagonal)
-    log_dets: [f64; K],
+    log_dets: [Float; K],
     /// Mixing weights: pi_k
-    weights: [f64; K],
+    weights: [Float; K],
     /// Number of active components
     n_components: usize,
     /// Regularization parameter (added to diagonal)
-    epsilon: f64,
+    epsilon: Float,
     /// Whether Cholesky factors are up to date
     cholesky_valid: [bool; K],
 }
@@ -111,7 +113,7 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
     /// let gmm = GaussianMixture::<4, 8>::new(1e-4);
     /// assert_eq!(gmm.n_components(), 0);
     /// ```
-    pub fn new(epsilon: f64) -> Self {
+    pub fn new(epsilon: Float) -> Self {
         Self {
             means: [[0.0; D]; K],
             covs: [[[0.0; D]; D]; K],
@@ -144,10 +146,10 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
     /// gmm.init_from_centroids(&centroids, 2);
     /// assert_eq!(gmm.n_components(), 2);
     /// ```
-    pub fn init_from_centroids(&mut self, centroids: &[[f64; D]], n: usize) {
+    pub fn init_from_centroids(&mut self, centroids: &[[Float; D]], n: usize) {
         let n = n.min(K).min(centroids.len());
         self.n_components = n;
-        let w = if n > 0 { 1.0 / n as f64 } else { 0.0 };
+        let w = if n > 0 { 1.0 / n as Float } else { 0.0 };
 
         for (k, centroid) in centroids.iter().enumerate().take(n) {
             self.means[k] = *centroid;
@@ -176,7 +178,7 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
     /// gmm.init_from_labels(&data, &labels, 2);
     /// assert_eq!(gmm.n_components(), 2);
     /// ```
-    pub fn init_from_labels(&mut self, data: &[[f64; D]], labels: &[usize], n_clusters: usize) {
+    pub fn init_from_labels(&mut self, data: &[[Float; D]], labels: &[usize], n_clusters: usize) {
         let n = n_clusters.min(K);
         self.n_components = n;
         let n_data = data.len().min(labels.len());
@@ -197,7 +199,7 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
         }
         for k in 0..n {
             if counts[k] > 0 {
-                let inv = 1.0 / counts[k] as f64;
+                let inv = 1.0 / counts[k] as Float;
                 for d in 0..D {
                     self.means[k][d] *= inv;
                 }
@@ -208,7 +210,7 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
         self.covs = [[[0.0; D]; D]; K];
         for (xi, &lab) in data.iter().zip(labels.iter()).take(n_data) {
             if lab < n {
-                let mut diff = [0.0f64; D];
+                let mut diff = [0.0 as Float; D];
                 for d in 0..D {
                     diff[d] = xi[d] - self.means[lab][d];
                 }
@@ -227,7 +229,7 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
         // Normalize and regularize
         for k in 0..n {
             if counts[k] > 1 {
-                let inv = 1.0 / (counts[k] - 1) as f64; // unbiased
+                let inv = 1.0 / (counts[k] - 1) as Float; // unbiased
                 for d1 in 0..D {
                     for d2 in 0..D {
                         self.covs[k][d1][d2] *= inv;
@@ -237,7 +239,7 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
             for d in 0..D {
                 self.covs[k][d][d] += self.epsilon;
             }
-            self.weights[k] = counts[k] as f64 / n_data as f64;
+            self.weights[k] = counts[k] as Float / n_data as Float;
             self.cholesky_valid[k] = false;
         }
     }
@@ -268,10 +270,10 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
                         self.cholesky_valid[k] = false;
                         return false;
                     }
-                    l[i][j] = libm::sqrt(sum);
+                    l[i][j] = float::sqrt(sum);
                 } else {
                     let l_jj = l[j][j];
-                    if libm::fabs(l_jj) < 1e-15 {
+                    if float::abs(l_jj) < 1e-15 {
                         return false;
                     }
                     l[i][j] = sum / l_jj;
@@ -280,13 +282,13 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
         }
 
         // Log-determinant = 2 * sum(log(L_ii))
-        let mut log_det = 0.0;
+        let mut log_det: Float = 0.0;
         for d in 0..D {
             let diag = l[d][d];
             if diag <= 0.0 {
                 return false;
             }
-            log_det += libm::log(diag);
+            log_det += float::log(diag);
         }
         self.log_dets[k] = 2.0 * log_det;
         self.cholesky_valid[k] = true;
@@ -294,16 +296,16 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
     }
 
     /// Solve L * x = b (forward substitution) for component k.
-    fn forward_solve(&self, k: usize, b: &[f64; D]) -> [f64; D] {
+    fn forward_solve(&self, k: usize, b: &[Float; D]) -> [Float; D] {
         let l = &self.cholesky[k];
-        let mut x = [0.0f64; D];
+        let mut x = [0.0 as Float; D];
         for i in 0..D {
             let mut sum = b[i];
             for j in 0..i {
                 sum -= l[i][j] * x[j];
             }
             let diag = l[i][i];
-            x[i] = if libm::fabs(diag) > 1e-15 {
+            x[i] = if float::abs(diag) > 1e-15 {
                 sum / diag
             } else {
                 0.0
@@ -315,42 +317,42 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
     /// Log-probability of x under component k (up to additive constant).
     ///
     /// Returns `log N(x | mu_k, Sigma_k)` = -0.5 * [mahalanobis^2 + log|Sigma| + D*log(2*pi)]
-    fn log_prob(&self, x: &[f64; D], k: usize) -> f64 {
+    fn log_prob(&self, x: &[Float; D], k: usize) -> Float {
         if k >= self.n_components || !self.cholesky_valid[k] {
-            return f64::NEG_INFINITY;
+            return -float::INFINITY;
         }
 
         // Mahalanobis distance via Cholesky: solve L*y = (x - mu), then ||y||^2
-        let mut diff = [0.0f64; D];
+        let mut diff = [0.0 as Float; D];
         for d in 0..D {
             diff[d] = x[d] - self.means[k][d];
         }
         let y = self.forward_solve(k, &diff);
-        let mut maha_sq = 0.0;
+        let mut maha_sq: Float = 0.0;
         for yv in y.iter() {
             maha_sq += yv * yv;
         }
 
-        const LOG_2PI: f64 = 1.8378770664093453; // log(2*pi)
-        -0.5 * (maha_sq + self.log_dets[k] + D as f64 * LOG_2PI)
+        let log_2pi: Float = 1.8378770664093453; // log(2*pi)
+        -0.5 * (maha_sq + self.log_dets[k] + D as Float * log_2pi)
     }
 
     /// Compute responsibilities for a single point.
     ///
     /// Returns log-responsibilities (unnormalized) and the log-sum-exp.
-    fn responsibilities(&self, x: &[f64; D], resp: &mut [f64; K]) -> f64 {
+    fn responsibilities(&self, x: &[Float; D], resp: &mut [Float; K]) -> Float {
         let n = self.n_components;
         if n == 0 {
-            return f64::NEG_INFINITY;
+            return -float::INFINITY;
         }
 
         // Compute log(pi_k) + log N(x | mu_k, Sigma_k) for each k
-        let mut max_log = f64::NEG_INFINITY;
+        let mut max_log = -float::INFINITY;
         for (k, rk) in resp.iter_mut().enumerate().take(n) {
             let log_w = if self.weights[k] > 0.0 {
-                libm::log(self.weights[k])
+                float::log(self.weights[k])
             } else {
-                f64::NEG_INFINITY
+                -float::INFINITY
             };
             *rk = log_w + self.log_prob(x, k);
             if *rk > max_log {
@@ -359,26 +361,26 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
         }
         // Zero out inactive components
         for rk in resp.iter_mut().skip(n) {
-            *rk = f64::NEG_INFINITY;
+            *rk = -float::INFINITY;
         }
 
         if !max_log.is_finite() {
-            return f64::NEG_INFINITY;
+            return -float::INFINITY;
         }
 
         // Log-sum-exp for normalization
-        let mut sum_exp = 0.0;
+        let mut sum_exp: Float = 0.0;
         for rk in resp.iter().take(n) {
             if rk.is_finite() {
-                sum_exp += libm::exp(rk - max_log);
+                sum_exp += float::exp(rk - max_log);
             }
         }
-        let log_sum = max_log + libm::log(sum_exp);
+        let log_sum = max_log + float::log(sum_exp);
 
         // Normalize to probabilities
         for rk in resp.iter_mut().take(n) {
             if rk.is_finite() {
-                *rk = libm::exp(*rk - log_sum);
+                *rk = float::exp(*rk - log_sum);
             } else {
                 *rk = 0.0;
             }
@@ -410,11 +412,11 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
     /// let ll = gmm.fit(&data, 10);
     /// assert!(ll.is_finite());
     /// ```
-    pub fn fit(&mut self, data: &[[f64; D]], max_iter: usize) -> f64 {
+    pub fn fit(&mut self, data: &[[Float; D]], max_iter: usize) -> Float {
         let n_data = data.len();
         let n = self.n_components;
         if n == 0 || n_data == 0 || D == 0 {
-            return f64::NEG_INFINITY;
+            return -float::INFINITY;
         }
 
         // Ensure all Cholesky factors are valid
@@ -428,17 +430,17 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
             }
         }
 
-        let mut prev_ll = f64::NEG_INFINITY;
+        let mut prev_ll = -float::INFINITY;
 
         for _iter in 0..max_iter {
             // --- E-step: compute responsibilities ---
-            let mut total_ll = 0.0;
-            let mut new_means = [[0.0f64; D]; K];
-            let mut new_covs = [[[0.0f64; D]; D]; K];
-            let mut new_weights = [0.0f64; K];
+            let mut total_ll: Float = 0.0;
+            let mut new_means = [[0.0 as Float; D]; K];
+            let mut new_covs = [[[0.0 as Float; D]; D]; K];
+            let mut new_weights = [0.0 as Float; K];
 
             for xi in data.iter().take(n_data) {
-                let mut resp = [0.0f64; K];
+                let mut resp = [0.0 as Float; K];
                 let ll_i = self.responsibilities(xi, &mut resp);
                 if ll_i.is_finite() {
                     total_ll += ll_i;
@@ -478,9 +480,9 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
                 let inv_nk = 1.0 / nk;
 
                 // Compute new mean and the shift from old mean
-                let mut delta = [0.0f64; D];
+                let mut delta = [0.0 as Float; D];
                 let new_mean_k = {
-                    let mut m = [0.0f64; D];
+                    let mut m = [0.0 as Float; D];
                     for d in 0..D {
                         m[d] = new_means[k][d] * inv_nk;
                         delta[d] = m[d] - self.means[k][d];
@@ -514,7 +516,7 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
 
                 // Update mean and weight
                 self.means[k] = new_mean_k;
-                self.weights[k] = nk / n_data as f64;
+                self.weights[k] = nk / n_data as Float;
                 self.cholesky_valid[k] = false;
             }
 
@@ -524,9 +526,9 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
             }
 
             // Check convergence
-            let ll_per_point = total_ll / n_data as f64;
-            let prev_per_point = prev_ll / n_data as f64;
-            if _iter > 0 && libm::fabs(ll_per_point - prev_per_point) < 1e-6 {
+            let ll_per_point = total_ll / n_data as Float;
+            let prev_per_point = prev_ll / n_data as Float;
+            if _iter > 0 && float::abs(ll_per_point - prev_per_point) < 1e-6 {
                 return total_ll;
             }
             prev_ll = total_ll;
@@ -553,12 +555,12 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
     /// assert_eq!(label, 0);
     /// assert!(prob > 0.5);
     /// ```
-    pub fn predict(&self, x: &[f64; D]) -> (usize, f64) {
-        let mut resp = [0.0f64; K];
+    pub fn predict(&self, x: &[Float; D]) -> (usize, Float) {
+        let mut resp = [0.0 as Float; K];
         let _ = self.responsibilities(x, &mut resp);
 
         let mut best_k = 0;
-        let mut best_r = 0.0;
+        let mut best_r: Float = 0.0;
         for (k, &rk) in resp.iter().enumerate().take(self.n_components) {
             if rk > best_r {
                 best_r = rk;
@@ -586,7 +588,7 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
     /// // Labels should stay the same for well-separated clusters
     /// assert_eq!(changed, 0);
     /// ```
-    pub fn relabel(&self, data: &[[f64; D]], labels: &mut [usize]) -> usize {
+    pub fn relabel(&self, data: &[[Float; D]], labels: &mut [usize]) -> usize {
         let mut changed = 0usize;
         for (xi, lab) in data.iter().zip(labels.iter_mut()) {
             let (best_k, _) = self.predict(xi);
@@ -608,15 +610,15 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
     /// - K - 1 mixing weights
     ///
     /// Lower BIC indicates a better model (balances fit vs complexity).
-    pub fn bic(&self, data: &[[f64; D]]) -> f64 {
+    pub fn bic(&self, data: &[[Float; D]]) -> Float {
         let n_data = data.len();
         if n_data == 0 || self.n_components == 0 {
-            return f64::INFINITY;
+            return float::INFINITY;
         }
 
         // Compute log-likelihood
-        let mut ll = 0.0;
-        let mut resp = [0.0f64; K];
+        let mut ll: Float = 0.0;
+        let mut resp = [0.0 as Float; K];
         for x in data {
             let ll_i = self.responsibilities(x, &mut resp);
             if ll_i.is_finite() {
@@ -628,16 +630,16 @@ impl<const D: usize, const K: usize> GaussianMixture<D, K> {
         let k = self.n_components;
         let n_params = k * D + k * D * (D + 1) / 2 + (k - 1);
 
-        -2.0 * ll + n_params as f64 * libm::log(n_data as f64)
+        -2.0 * ll + n_params as Float * float::log(n_data as Float)
     }
 
     /// Get the mean of component k.
-    pub fn mean(&self, k: usize) -> &[f64; D] {
+    pub fn mean(&self, k: usize) -> &[Float; D] {
         &self.means[k.min(K - 1)]
     }
 
     /// Get the weight of component k.
-    pub fn weight(&self, k: usize) -> f64 {
+    pub fn weight(&self, k: usize) -> Float {
         if k < self.n_components {
             self.weights[k]
         } else {
@@ -789,7 +791,7 @@ mod tests {
         let labels = [0, 0, 0, 1, 1, 1];
         gmm.init_from_labels(&data, &labels, 2);
 
-        let mut prev_ll = f64::NEG_INFINITY;
+        let mut prev_ll = -float::INFINITY;
         for _ in 0..10 {
             let ll = gmm.fit(&data, 1);
             if ll.is_finite() && prev_ll.is_finite() {
@@ -852,11 +854,11 @@ mod kani_proofs {
     #[kani::proof]
     fn init_from_centroids_panic_free() {
         let mut gmm = GaussianMixture::<2, 2>::new(1e-4);
-        let c0: [f64; 2] = [kani::any(), kani::any()];
-        let c1: [f64; 2] = [kani::any(), kani::any()];
+        let c0: [Float; 2] = [kani::any(), kani::any()];
+        let c1: [Float; 2] = [kani::any(), kani::any()];
         for v in c0.iter().chain(c1.iter()) {
             kani::assume(v.is_finite());
-            kani::assume(v.abs() < 100.0);
+            kani::assume(float::abs(*v) < 100.0);
         }
         let n: usize = kani::any();
         kani::assume(n <= 2);
@@ -872,9 +874,9 @@ mod kani_proofs {
         gmm.init_from_centroids(&centroids, 2);
         gmm.update_cholesky(0);
         gmm.update_cholesky(1);
-        let x: [f64; 2] = [kani::any(), kani::any()];
+        let x: [Float; 2] = [kani::any(), kani::any()];
         kani::assume(x[0].is_finite() && x[1].is_finite());
-        kani::assume(x[0].abs() < 100.0 && x[1].abs() < 100.0);
+        kani::assume(float::abs(x[0]) < 100.0 && float::abs(x[1]) < 100.0);
         let (k, p) = gmm.predict(&x);
         assert!(k < 2);
         assert!(p >= 0.0);

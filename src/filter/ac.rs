@@ -4,7 +4,7 @@
 //! specifically designed for AC coupling (DC removal). It's more efficient
 //! than a general IIR filter when you only need to remove DC offset.
 
-use core::f32::consts::PI;
+use crate::float::{self, Float};
 
 /// An AC coupling filter that removes the DC component from a signal.
 ///
@@ -28,11 +28,11 @@ use core::f32::consts::PI;
 /// ```
 pub struct AcCoupler<const C: usize> {
     /// Filter coefficient (pole location)
-    alpha: f32,
+    alpha: Float,
     /// Previous input sample per channel
-    x_prev: [f32; C],
+    x_prev: [Float; C],
     /// Previous output sample per channel
-    y_prev: [f32; C],
+    y_prev: [Float; C],
 }
 
 impl<const C: usize> AcCoupler<C> {
@@ -57,11 +57,11 @@ impl<const C: usize> AcCoupler<C> {
     /// // 1.0 Hz cutoff - fast DC tracking, may affect sub-1Hz signals
     /// let fast: AcCoupler<4> = AcCoupler::new(250.0, 1.0);
     /// ```
-    pub fn new(sample_rate: f32, cutoff_freq: f32) -> Self {
+    pub fn new(sample_rate: Float, cutoff_freq: Float) -> Self {
         // Compute alpha from cutoff frequency
         // α = exp(-2π * fc / fs)
-        let omega = 2.0 * PI * cutoff_freq / sample_rate;
-        let alpha = libm::expf(-omega);
+        let omega = 2.0 * float::PI * cutoff_freq / sample_rate;
+        let alpha = float::exp(-omega);
 
         Self {
             alpha,
@@ -87,7 +87,7 @@ impl<const C: usize> AcCoupler<C> {
     ///
     /// let blocker: AcCoupler<4> = AcCoupler::with_alpha(0.995);
     /// ```
-    pub fn with_alpha(alpha: f32) -> Self {
+    pub fn with_alpha(alpha: Float) -> Self {
         Self {
             alpha,
             x_prev: [0.0; C],
@@ -104,7 +104,7 @@ impl<const C: usize> AcCoupler<C> {
     /// # Returns
     ///
     /// Output sample array with DC removed from each channel
-    pub fn process(&mut self, input: &[f32; C]) -> [f32; C] {
+    pub fn process(&mut self, input: &[Float; C]) -> [Float; C] {
         let mut output = [0.0; C];
 
         for i in 0..C {
@@ -122,7 +122,7 @@ impl<const C: usize> AcCoupler<C> {
     /// # Arguments
     ///
     /// * `block` - Mutable slice of sample arrays to process
-    pub fn process_block(&mut self, block: &mut [[f32; C]]) {
+    pub fn process_block(&mut self, block: &mut [[Float; C]]) {
         for sample in block.iter_mut() {
             *sample = self.process(sample);
         }
@@ -138,7 +138,7 @@ impl<const C: usize> AcCoupler<C> {
     }
 
     /// Get the current alpha coefficient.
-    pub fn alpha(&self) -> f32 {
+    pub fn alpha(&self) -> Float {
         self.alpha
     }
 
@@ -147,7 +147,7 @@ impl<const C: usize> AcCoupler<C> {
     /// # Arguments
     ///
     /// * `alpha` - New filter coefficient (0 < α < 1)
-    pub fn set_alpha(&mut self, alpha: f32) {
+    pub fn set_alpha(&mut self, alpha: Float) {
         self.alpha = alpha;
     }
 
@@ -157,9 +157,9 @@ impl<const C: usize> AcCoupler<C> {
     ///
     /// * `sample_rate` - The sample rate in Hz
     /// * `cutoff_freq` - The new cutoff frequency in Hz
-    pub fn set_cutoff(&mut self, sample_rate: f32, cutoff_freq: f32) {
-        let omega = 2.0 * PI * cutoff_freq / sample_rate;
-        self.alpha = libm::expf(-omega);
+    pub fn set_cutoff(&mut self, sample_rate: Float, cutoff_freq: Float) {
+        let omega = 2.0 * float::PI * cutoff_freq / sample_rate;
+        self.alpha = float::exp(-omega);
     }
 }
 
@@ -171,9 +171,9 @@ impl<const C: usize> Default for AcCoupler<C> {
 }
 
 impl<const C: usize> crate::pipeline::BlockProcessor<C> for AcCoupler<C> {
-    type Sample = f32;
+    type Sample = Float;
 
-    fn process_block_inplace(&mut self, block: &mut [[f32; C]]) {
+    fn process_block_inplace(&mut self, block: &mut [[Float; C]]) {
         for sample in block.iter_mut() {
             *sample = self.process(sample);
         }
@@ -204,7 +204,7 @@ mod tests {
         }
 
         // Output should converge to near zero
-        assert!(libm::fabsf(output) < 0.01);
+        assert!(float::abs(output) < 0.01);
     }
 
     #[test]
@@ -214,17 +214,17 @@ mod tests {
         // Generate 10 Hz sine wave (well above cutoff)
         let sample_rate = 250.0;
         let freq = 10.0;
-        let mut max_output = 0.0f32;
+        let mut max_output: Float = 0.0;
 
         // Let filter settle
         for i in 0..500 {
-            let t = i as f32 / sample_rate;
-            let input = libm::sinf(2.0 * PI * freq * t);
+            let t = i as Float / sample_rate;
+            let input = float::sin(2.0 * float::PI * freq * t);
             let output = blocker.process(&[input]);
             if i > 250 {
                 // After settling
-                max_output = if libm::fabsf(output[0]) > max_output {
-                    libm::fabsf(output[0])
+                max_output = if float::abs(output[0]) > max_output {
+                    float::abs(output[0])
                 } else {
                     max_output
                 };
@@ -249,7 +249,7 @@ mod tests {
 
         // All channels should converge to near zero
         for val in &output {
-            assert!(libm::fabsf(*val) < 0.01);
+            assert!(float::abs(*val) < 0.01);
         }
     }
 

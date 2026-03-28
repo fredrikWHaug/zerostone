@@ -76,6 +76,8 @@
 //! Total: ~6.3 KB (stack allocated)
 //! ```
 
+use crate::float::Float;
+
 /// Surface Laplacian spatial filter.
 ///
 /// Computes the second spatial derivative of scalp potentials using neighboring
@@ -113,7 +115,7 @@ pub struct SurfaceLaplacian<const C: usize, const MAX_N: usize> {
     /// Neighbor channel indices for each channel. INVALID_INDEX marks unused slots.
     neighbor_indices: [[u16; MAX_N]; C],
     /// Normalized weights for each neighbor (sum to 1.0 per channel).
-    neighbor_weights: [[f32; MAX_N]; C],
+    neighbor_weights: [[Float; MAX_N]; C],
     /// Number of valid neighbors for each channel.
     neighbor_counts: [u8; C],
 }
@@ -170,7 +172,7 @@ impl<const C: usize, const MAX_N: usize> SurfaceLaplacian<C, MAX_N> {
         let () = Self::_ASSERT_MAX_N;
 
         let neighbor_indices = neighbors;
-        let mut neighbor_weights = [[0.0f32; MAX_N]; C];
+        let mut neighbor_weights = [[0.0; MAX_N]; C];
         let mut neighbor_counts = [0u8; C];
 
         // Process each channel
@@ -205,7 +207,7 @@ impl<const C: usize, const MAX_N: usize> SurfaceLaplacian<C, MAX_N> {
 
             // Compute equal weights: 1/N for N neighbors
             if count > 0 {
-                let weight = 1.0 / (count as f32);
+                let weight = 1.0 / (count as Float);
                 let mut n = 0;
                 while n < MAX_N {
                     if neighbor_indices[ch][n] != INVALID_INDEX {
@@ -264,7 +266,7 @@ impl<const C: usize, const MAX_N: usize> SurfaceLaplacian<C, MAX_N> {
     ///
     /// let laplacian: SurfaceLaplacian<3, 2> = SurfaceLaplacian::weighted(neighbors, distances);
     /// ```
-    pub fn weighted(neighbors: [[u16; MAX_N]; C], distances: [[f32; MAX_N]; C]) -> Self {
+    pub fn weighted(neighbors: [[u16; MAX_N]; C], distances: [[Float; MAX_N]; C]) -> Self {
         // Trigger compile-time assertions
         #[allow(clippy::let_unit_value)]
         let () = Self::_ASSERT_C;
@@ -272,13 +274,13 @@ impl<const C: usize, const MAX_N: usize> SurfaceLaplacian<C, MAX_N> {
         let () = Self::_ASSERT_MAX_N;
 
         let neighbor_indices = neighbors;
-        let mut neighbor_weights = [[0.0f32; MAX_N]; C];
+        let mut neighbor_weights = [[0.0; MAX_N]; C];
         let mut neighbor_counts = [0u8; C];
 
         // Process each channel
         for ch in 0..C {
             let mut count = 0u8;
-            let mut inverse_distance_sum = 0.0f32;
+            let mut inverse_distance_sum: Float = 0.0;
 
             // First pass: validate and compute sum of inverse distances
             for n in 0..MAX_N {
@@ -370,7 +372,7 @@ impl<const C: usize, const MAX_N: usize> SurfaceLaplacian<C, MAX_N> {
     /// assert!((filtered[1] - 0.0).abs() < 1e-6);
     /// ```
     #[inline]
-    pub fn process(&self, samples: &[f32; C]) -> [f32; C] {
+    pub fn process(&self, samples: &[Float; C]) -> [Float; C] {
         let mut output = [0.0; C];
 
         for ch in 0..C {
@@ -448,7 +450,7 @@ impl<const C: usize, const MAX_N: usize> SurfaceLaplacian<C, MAX_N> {
     /// assert!((laplacian.neighbor_weight(1, 1) - 0.5).abs() < 1e-6);
     /// ```
     #[inline]
-    pub fn neighbor_weight(&self, channel: usize, neighbor: usize) -> f32 {
+    pub fn neighbor_weight(&self, channel: usize, neighbor: usize) -> Float {
         assert!(
             neighbor < self.neighbor_count(channel),
             "Neighbor index out of bounds"
@@ -497,9 +499,9 @@ impl<const C: usize, const MAX_N: usize> SurfaceLaplacian<C, MAX_N> {
 impl<const C: usize, const MAX_N: usize> crate::pipeline::BlockProcessor<C>
     for SurfaceLaplacian<C, MAX_N>
 {
-    type Sample = f32;
+    type Sample = Float;
 
-    fn process_block_inplace(&mut self, block: &mut [[f32; C]]) {
+    fn process_block_inplace(&mut self, block: &mut [[Float; C]]) {
         for sample in block.iter_mut() {
             *sample = self.process(sample);
         }
@@ -744,7 +746,7 @@ mod tests {
 
         let laplacian: SurfaceLaplacian<128, 4> = SurfaceLaplacian::unweighted(neighbors);
 
-        let mut samples = [0.0f32; 128];
+        let mut samples = [0.0; 128];
         samples[64] = 10.0; // Peak in middle
 
         let filtered = laplacian.process(&samples);
@@ -807,7 +809,7 @@ mod tests {
     #[should_panic(expected = "Invalid distance")]
     fn test_infinite_distance() {
         let neighbors = [[1, INVALID_INDEX], [0, INVALID_INDEX]];
-        let distances = [[f32::INFINITY, 0.0], [1.0, 0.0]];
+        let distances = [[Float::INFINITY, 0.0], [1.0, 0.0]];
         let _laplacian: SurfaceLaplacian<2, 2> = SurfaceLaplacian::weighted(neighbors, distances);
     }
 

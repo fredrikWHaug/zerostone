@@ -25,12 +25,13 @@
 //!
 //! // Estimate noise on 2-channel data
 //! let data = [[1.0, -0.5], [0.3, 0.2], [-0.7, 1.1], [0.1, -0.3]];
-//! let mut scratch = [0.0f64; 8];
+//! let mut scratch = [0.0; 8];
 //! let noise = estimate_noise_multichannel::<2>(&data, &mut scratch);
 //! assert!(noise[0] > 0.0);
 //! assert!(noise[1] > 0.0);
 //! ```
 
+use crate::float::{self, Float};
 use crate::isi;
 use crate::matched_filter::{MatchedDetection, MatchedFilterBank};
 use crate::online_kmeans::OnlineKMeans;
@@ -94,11 +95,11 @@ pub enum DetectionMode {
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
-    pub threshold_multiplier: f64,
+    pub threshold_multiplier: Float,
     /// Minimum samples between detections on the same channel.
     pub refractory_samples: usize,
     /// Spatial deduplication radius in micrometers.
-    pub spatial_radius_um: f64,
+    pub spatial_radius_um: Float,
     /// Temporal deduplication radius in samples.
     pub temporal_radius: usize,
     /// Half-window for fine peak alignment.
@@ -106,42 +107,42 @@ pub struct SortConfig {
     /// Samples before the peak in extracted waveforms.
     pub pre_samples: usize,
     /// Distance threshold for creating new clusters.
-    pub cluster_threshold: f64,
+    pub cluster_threshold: Float,
     /// Maximum observation count per cluster (keeps centroids plastic).
     pub cluster_max_count: u32,
     /// Regularization for whitening eigenvalues.
-    pub whitening_epsilon: f64,
+    pub whitening_epsilon: Float,
     /// D-prime threshold for cluster merging: merge if d' below this value.
-    pub merge_dprime_threshold: f64,
+    pub merge_dprime_threshold: Float,
     /// ISI violation threshold for cluster merging: skip merge if combined
     /// ISI violation rate would exceed this value.
-    pub merge_isi_threshold: f64,
+    pub merge_isi_threshold: Float,
     /// Minimum spikes per cluster to attempt splitting.
     pub split_min_cluster_size: usize,
     /// Bimodality threshold for cluster splitting (gap / std_dev).
-    pub split_bimodality_threshold: f64,
+    pub split_bimodality_threshold: Float,
     /// D-prime threshold for cross-channel spatial merge.
-    pub spatial_merge_dprime: f64,
+    pub spatial_merge_dprime: Float,
     /// Enable template subtraction pass to recover masked spikes.
     pub template_subtract: bool,
     /// Minimum spikes per cluster to build a reliable template for subtraction.
     pub template_min_count: usize,
     /// Minimum cluster SNR for auto-curation. Clusters below this are removed.
-    pub min_cluster_snr: f64,
+    pub min_cluster_snr: Float,
     /// Detection mode: Amplitude (default), NEO, or SNEO.
     pub detection_mode: DetectionMode,
     /// Enable CCG-based cluster merging after d-prime and spatial merge.
     /// Merges cluster pairs with high template correlation and no refractory dip.
     pub ccg_merge: bool,
     /// Template correlation threshold for CCG merge candidates.
-    pub ccg_template_corr_threshold: f64,
+    pub ccg_template_corr_threshold: Float,
     /// Number of template subtraction passes (0 = disabled, 1 = single pass, 2+ = multi-pass).
     /// Each additional pass subtracts the updated templates and re-detects on the residual.
     pub template_subtract_passes: usize,
     /// ISI violation rate threshold for post-sort cluster splitting.
     /// Clusters with ISI violation rate above this are split along the
     /// first principal axis of their feature distribution.
-    pub isi_split_threshold: f64,
+    pub isi_split_threshold: Float,
     /// Enable GMM refinement of k-means clusters.
     /// After k-means clustering and merge/split, runs batch EM with full
     /// covariance to capture cluster shape. Typically reassigns 5-15% of
@@ -159,15 +160,15 @@ pub struct SortConfig {
     /// Under the null hypothesis (noise), the normalized statistic is N(0,1).
     /// Lower values detect weaker spikes but increase false positives.
     /// Default 4.0 corresponds to P(false positive) ≈ 3e-5 per sample per filter.
-    pub matched_filter_threshold: f64,
+    pub matched_filter_threshold: Float,
     /// Bandpass filter low cutoff in Hz (0.0 = disabled).
     /// Standard spike sorting range: 300-6000 Hz at 30 kHz sample rate.
     /// Applied as a 4th-order Butterworth forward filter before whitening.
-    pub bandpass_low: f64,
+    pub bandpass_low: Float,
     /// Bandpass filter high cutoff in Hz (0.0 = disabled).
-    pub bandpass_high: f64,
+    pub bandpass_high: Float,
     /// Sample rate in Hz (needed for bandpass filter).
-    pub sample_rate: f64,
+    pub sample_rate: Float,
     /// Enable common median reference (CMR) before whitening.
     /// Subtracts the per-timepoint median across all channels.
     /// More robust than CAR against large artifacts on individual channels.
@@ -191,10 +192,10 @@ pub struct SortConfig {
     pub adaptive_threshold: bool,
     /// Minimum absolute threshold for adaptive mode (dead channel floor).
     /// Channels with noise below this get this threshold. Default: 0.5.
-    pub adaptive_min_threshold: f64,
+    pub adaptive_min_threshold: Float,
     /// Maximum crossing rate (Hz) before adaptive threshold is raised.
     /// Overactive channels get scaled up by sqrt(rate / max_rate). Default: 200.0.
-    pub adaptive_max_rate_hz: f64,
+    pub adaptive_max_rate_hz: Float,
 }
 
 impl Default for SortConfig {
@@ -253,9 +254,9 @@ pub struct ClusterInfo {
     /// Number of spikes assigned to this cluster.
     pub count: usize,
     /// Signal-to-noise ratio (peak-to-peak / 2*noise_std).
-    pub snr: f64,
+    pub snr: Float,
     /// Fraction of ISI violations (inter-spike intervals below refractory).
-    pub isi_violation_rate: f64,
+    pub isi_violation_rate: Float,
 }
 
 /// Result of the sorting pipeline.
@@ -301,17 +302,17 @@ pub struct SortResult<const N: usize> {
 /// use zerostone::sorter::estimate_noise_multichannel;
 ///
 /// let data = [[1.0, -2.0], [0.5, 1.5], [-0.3, 0.8], [0.7, -1.2]];
-/// let mut scratch = [0.0f64; 8];
+/// let mut scratch = [0.0; 8];
 /// let noise = estimate_noise_multichannel::<2>(&data, &mut scratch);
 /// assert!(noise[0] > 0.0 && noise[0].is_finite());
 /// assert!(noise[1] > 0.0 && noise[1].is_finite());
 /// ```
 pub fn estimate_noise_multichannel<const C: usize>(
-    data: &[[f64; C]],
-    scratch: &mut [f64],
-) -> [f64; C] {
+    data: &[[Float; C]],
+    scratch: &mut [Float],
+) -> [Float; C] {
     let t_len = data.len();
-    let mut noise = [0.0f64; C];
+    let mut noise = [0.0; C];
     if t_len == 0 {
         return noise;
     }
@@ -324,7 +325,7 @@ pub fn estimate_noise_multichannel<const C: usize>(
     while ch < C {
         // Copy absolute values into scratch
         for t in 0..t_len {
-            scratch[t] = libm::fabs(data[t][ch]);
+            scratch[t] = float::abs(data[t][ch]);
         }
         let s = &mut scratch[..t_len];
         s.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
@@ -346,16 +347,16 @@ pub fn estimate_noise_multichannel<const C: usize>(
 /// The filter is causal (forward-only), suitable for real-time use.
 /// Coefficients are computed using the bilinear transform.
 #[allow(clippy::needless_range_loop)]
-fn bandpass_inplace<const C: usize>(data: &mut [[f64; C]], fs: f64, low: f64, high: f64) {
-    use core::f64::consts::PI;
+fn bandpass_inplace<const C: usize>(data: &mut [[Float; C]], fs: Float, low: Float, high: Float) {
+    use float::PI;
     let n = data.len();
     if n < 4 || low >= high || fs <= 0.0 {
         return;
     }
 
     // Prewarp cutoff frequencies
-    let w_low = libm::tan(PI * low / fs);
-    let w_high = libm::tan(PI * high / fs);
+    let w_low = float::tan(PI * low / fs);
+    let w_high = float::tan(PI * high / fs);
     let bw = w_high - w_low;
     let w0_sq = w_low * w_high;
 
@@ -383,10 +384,10 @@ fn bandpass_inplace<const C: usize>(data: &mut [[f64; C]], fs: f64, low: f64, hi
     // Apply 2 passes of the same biquad for 4th-order response
     for ch in 0..C {
         for _pass in 0..2 {
-            let mut x1 = 0.0f64;
-            let mut x2 = 0.0f64;
-            let mut y1 = 0.0f64;
-            let mut y2 = 0.0f64;
+            let mut x1 = 0.0;
+            let mut x2 = 0.0;
+            let mut y1 = 0.0;
+            let mut y2 = 0.0;
             for sample in data.iter_mut().take(n) {
                 let x = sample[ch];
                 let y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
@@ -402,21 +403,21 @@ fn bandpass_inplace<const C: usize>(data: &mut [[f64; C]], fs: f64, low: f64, hi
 
 /// Compute sample covariance matrix from multi-channel data.
 #[allow(clippy::needless_range_loop)]
-fn compute_covariance<const C: usize>(data: &[[f64; C]]) -> [[f64; C]; C] {
+fn compute_covariance<const C: usize>(data: &[[Float; C]]) -> [[Float; C]; C] {
     let n = data.len();
-    let mut cov = [[0.0f64; C]; C];
+    let mut cov = [[0.0; C]; C];
     if n < 2 {
         return cov;
     }
 
     // Compute means
-    let mut mean = [0.0f64; C];
+    let mut mean = [0.0; C];
     for sample in data.iter() {
         for c in 0..C {
             mean[c] += sample[c];
         }
     }
-    let inv_n = 1.0 / n as f64;
+    let inv_n = 1.0 / n as Float;
     for m in mean.iter_mut() {
         *m *= inv_n;
     }
@@ -431,7 +432,7 @@ fn compute_covariance<const C: usize>(data: &[[f64; C]]) -> [[f64; C]; C] {
             }
         }
     }
-    let inv_nm1 = 1.0 / (n - 1) as f64;
+    let inv_nm1 = 1.0 / (n - 1) as Float;
     for i in 0..C {
         for j in i..C {
             cov[i][j] *= inv_nm1;
@@ -498,7 +499,7 @@ const MAX_MERGE_CLUSTERS: usize = 32;
 ///     MultiChannelEvent { sample: 500, channel: 0, amplitude: 5.0 },
 ///     MultiChannelEvent { sample: 600, channel: 0, amplitude: 5.0 },
 /// ];
-/// let mut scratch = [0.0f64; 6];
+/// let mut scratch = [0.0; 6];
 /// let new_n = merge_clusters(
 ///     6, &mut labels, &features, &events, 2,
 ///     1.5, 0.05, 15, &mut scratch, 2,
@@ -510,13 +511,13 @@ const MAX_MERGE_CLUSTERS: usize = 32;
 pub fn merge_clusters<const K: usize>(
     n_spikes: usize,
     labels: &mut [usize],
-    feature_buf: &[[f64; K]],
+    feature_buf: &[[Float; K]],
     event_buf: &[MultiChannelEvent],
     n_clusters: usize,
-    dprime_threshold: f64,
-    isi_threshold: f64,
+    dprime_threshold: Float,
+    isi_threshold: Float,
     refractory_samples: usize,
-    scratch: &mut [f64],
+    scratch: &mut [Float],
     merge_dims: usize,
 ) -> usize {
     if n_clusters < 2 || n_spikes < 2 {
@@ -549,12 +550,12 @@ pub fn merge_clusters<const K: usize>(
         }
 
         // Find the pair with the smallest d-prime (skipping excluded pairs)
-        let mut best_dp = f64::MAX;
+        let mut best_dp = float::MAX;
         let mut best_i = 0usize;
         let mut best_j = 0usize;
 
         // Compute centroids for each cluster
-        let mut centroids = [[0.0f64; 32]; MAX_MERGE_CLUSTERS];
+        let mut centroids = [[0.0; 32]; MAX_MERGE_CLUSTERS];
         let mut counts = [0usize; MAX_MERGE_CLUSTERS];
         // Use caller-specified dims (excludes channel feature when appropriate)
         let dim = if merge_dims > 32 { 32 } else { merge_dims };
@@ -574,7 +575,7 @@ pub fn merge_clusters<const K: usize>(
         }
         for cl in 0..current_n {
             if counts[cl] > 0 {
-                let inv = 1.0 / counts[cl] as f64;
+                let inv = 1.0 / counts[cl] as Float;
                 for d in 0..dim {
                     centroids[cl][d] *= inv;
                 }
@@ -606,7 +607,7 @@ pub fn merge_clusters<const K: usize>(
                 }
 
                 // Compute discriminant axis: centroid_j - centroid_i
-                let mut axis = [0.0f64; 32];
+                let mut axis = [0.0; 32];
                 let mut axis_norm_sq = 0.0;
                 for d in 0..dim {
                     axis[d] = centroids[j][d] - centroids[i][d];
@@ -619,14 +620,14 @@ pub fn merge_clusters<const K: usize>(
                     best_j = j;
                     continue;
                 }
-                let inv_norm = 1.0 / libm::sqrt(axis_norm_sq);
+                let inv_norm = 1.0 / float::sqrt(axis_norm_sq);
                 for d in 0..dim {
                     axis[d] *= inv_norm;
                 }
 
                 // Project spikes from cluster i and j onto axis and compute d-prime
-                let mut proj_a = [0.0f64; MAX_SPIKES];
-                let mut proj_b = [0.0f64; MAX_SPIKES];
+                let mut proj_a = [0.0; MAX_SPIKES];
+                let mut proj_b = [0.0; MAX_SPIKES];
                 let mut na = 0usize;
                 let mut nb = 0usize;
 
@@ -667,7 +668,7 @@ pub fn merge_clusters<const K: usize>(
         }
 
         // Check if the best pair meets the d-prime criterion
-        if best_dp > dprime_threshold || best_dp == f64::MAX {
+        if best_dp > dprime_threshold || best_dp == float::MAX {
             break;
         }
 
@@ -681,7 +682,7 @@ pub fn merge_clusters<const K: usize>(
                 }
                 let cl = labels[s];
                 if (cl == best_i || cl == best_j) && n_combined < scratch.len() {
-                    scratch[n_combined] = event_buf[s].sample as f64;
+                    scratch[n_combined] = event_buf[s].sample as Float;
                     n_combined += 1;
                 }
             }
@@ -691,7 +692,7 @@ pub fn merge_clusters<const K: usize>(
             let times = &mut scratch[..n_combined];
             times.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
             let combined_isi =
-                quality::isi_violation_rate(times, refractory_samples as f64).unwrap_or(1.0);
+                quality::isi_violation_rate(times, refractory_samples as Float).unwrap_or(1.0);
             if combined_isi > isi_threshold {
                 // Merging would create too many ISI violations -- exclude this
                 // pair and try the next-best pair instead of stopping all merges.
@@ -764,10 +765,10 @@ pub fn merge_clusters<const K: usize>(
 pub fn split_clusters<const K: usize>(
     n_spikes: usize,
     labels: &mut [usize],
-    feature_buf: &[[f64; K]],
+    feature_buf: &[[Float; K]],
     n_clusters: usize,
     min_cluster_size: usize,
-    bimodality_threshold: f64,
+    bimodality_threshold: Float,
 ) -> usize {
     if n_spikes == 0 || n_clusters == 0 {
         return n_clusters;
@@ -805,7 +806,7 @@ pub fn split_clusters<const K: usize>(
             let dim = if K > 32 { 32 } else { K };
 
             // Compute centroid
-            let mut centroid = [0.0f64; 32];
+            let mut centroid = [0.0; 32];
             let mut i = 0;
             while i < count {
                 let mut d = 0;
@@ -815,7 +816,7 @@ pub fn split_clusters<const K: usize>(
                 }
                 i += 1;
             }
-            let inv_count = 1.0 / count as f64;
+            let inv_count = 1.0 / count as Float;
             let mut d = 0;
             while d < dim {
                 centroid[d] *= inv_count;
@@ -824,7 +825,7 @@ pub fn split_clusters<const K: usize>(
 
             // Power iteration: find direction of maximum variance (1D PCA)
             // Initialize with first centered spike
-            let mut axis = [0.0f64; 32];
+            let mut axis = [0.0; 32];
             let mut d = 0;
             while d < dim {
                 axis[d] = feature_buf[indices[0]][d] - centroid[d];
@@ -841,7 +842,7 @@ pub fn split_clusters<const K: usize>(
                 cl += 1;
                 continue;
             }
-            let inv_norm = 1.0 / libm::sqrt(norm_sq);
+            let inv_norm = 1.0 / float::sqrt(norm_sq);
             d = 0;
             while d < dim {
                 axis[d] *= inv_norm;
@@ -851,7 +852,7 @@ pub fn split_clusters<const K: usize>(
             // 3 iterations of power method on the scatter matrix
             let mut iter = 0;
             while iter < 3 {
-                let mut new_axis = [0.0f64; 32];
+                let mut new_axis = [0.0; 32];
                 let mut i = 0;
                 while i < count {
                     // Project centered spike onto current axis
@@ -879,7 +880,7 @@ pub fn split_clusters<const K: usize>(
                 if ns < 1e-30 {
                     break;
                 }
-                let inv = 1.0 / libm::sqrt(ns);
+                let inv = 1.0 / float::sqrt(ns);
                 d = 0;
                 while d < dim {
                     axis[d] = new_axis[d] * inv;
@@ -889,7 +890,7 @@ pub fn split_clusters<const K: usize>(
             }
 
             // Project all spikes onto the axis
-            let mut projections = [0.0f64; MAX_SPIKES];
+            let mut projections = [0.0; MAX_SPIKES];
             let mut i = 0;
             while i < count {
                 let mut dot = 0.0;
@@ -911,9 +912,9 @@ pub fn split_clusters<const K: usize>(
                 sum_sq += projections[i] * projections[i];
                 i += 1;
             }
-            let mean_proj = sum / count as f64;
-            let var = sum_sq / count as f64 - mean_proj * mean_proj;
-            let std_dev = if var > 0.0 { libm::sqrt(var) } else { 0.0 };
+            let mean_proj = sum / count as Float;
+            let var = sum_sq / count as Float - mean_proj * mean_proj;
+            let std_dev = if var > 0.0 { float::sqrt(var) } else { 0.0 };
 
             if std_dev < 1e-15 {
                 cl += 1;
@@ -921,7 +922,7 @@ pub fn split_clusters<const K: usize>(
             }
 
             // Sort projections (need sorted copy + index mapping)
-            let mut sorted_proj = [0.0f64; MAX_SPIKES];
+            let mut sorted_proj = [0.0; MAX_SPIKES];
             i = 0;
             while i < count {
                 sorted_proj[i] = projections[i];
@@ -979,15 +980,15 @@ pub fn split_clusters<const K: usize>(
 pub fn merge_clusters_spatial<const C: usize>(
     n_spikes: usize,
     labels: &mut [usize],
-    data: &[[f64; C]],
+    data: &[[Float; C]],
     event_buf: &[MultiChannelEvent],
     probe: &ProbeLayout<C>,
     n_clusters: usize,
-    dprime_threshold: f64,
-    spatial_radius_um: f64,
-    isi_threshold: f64,
+    dprime_threshold: Float,
+    spatial_radius_um: Float,
+    isi_threshold: Float,
     refractory_samples: usize,
-    scratch: &mut [f64],
+    scratch: &mut [Float],
 ) -> usize {
     if n_clusters < 2 || n_spikes < 2 {
         return n_clusters;
@@ -1039,7 +1040,7 @@ pub fn merge_clusters_spatial<const C: usize>(
         }
 
         // Compute spatial centroids (amplitude at peak time, all channels)
-        let mut centroids = [[0.0f64; 32]; MAX_MERGE_CLUSTERS];
+        let mut centroids = [[0.0; 32]; MAX_MERGE_CLUSTERS];
         let mut counts = [0usize; MAX_MERGE_CLUSTERS];
 
         for s in 0..n_spikes {
@@ -1060,7 +1061,7 @@ pub fn merge_clusters_spatial<const C: usize>(
         }
         for cl in 0..current_n {
             if counts[cl] > 0 {
-                let inv = 1.0 / counts[cl] as f64;
+                let inv = 1.0 / counts[cl] as Float;
                 for d in 0..dim {
                     centroids[cl][d] *= inv;
                 }
@@ -1068,7 +1069,7 @@ pub fn merge_clusters_spatial<const C: usize>(
         }
 
         // Find best merge pair: lowest dprime among spatially proximate clusters
-        let mut best_dp = f64::MAX;
+        let mut best_dp = float::MAX;
         let mut best_i = 0usize;
         let mut best_j = 0usize;
 
@@ -1100,7 +1101,7 @@ pub fn merge_clusters_spatial<const C: usize>(
                 }
 
                 // Compute discriminant axis
-                let mut axis = [0.0f64; 32];
+                let mut axis = [0.0; 32];
                 let mut axis_norm_sq = 0.0;
                 for d in 0..dim {
                     axis[d] = centroids[j][d] - centroids[i][d];
@@ -1112,14 +1113,14 @@ pub fn merge_clusters_spatial<const C: usize>(
                     best_j = j;
                     continue;
                 }
-                let inv_norm = 1.0 / libm::sqrt(axis_norm_sq);
+                let inv_norm = 1.0 / float::sqrt(axis_norm_sq);
                 for d in 0..dim {
                     axis[d] *= inv_norm;
                 }
 
                 // Project spikes onto axis
-                let mut proj_a = [0.0f64; MAX_SPIKES];
-                let mut proj_b = [0.0f64; MAX_SPIKES];
+                let mut proj_a = [0.0; MAX_SPIKES];
+                let mut proj_b = [0.0; MAX_SPIKES];
                 let mut na = 0usize;
                 let mut nb = 0usize;
 
@@ -1163,7 +1164,7 @@ pub fn merge_clusters_spatial<const C: usize>(
             }
         }
 
-        if best_dp > dprime_threshold || best_dp == f64::MAX {
+        if best_dp > dprime_threshold || best_dp == float::MAX {
             break;
         }
 
@@ -1176,7 +1177,7 @@ pub fn merge_clusters_spatial<const C: usize>(
                 }
                 let cl = labels[s];
                 if (cl == best_i || cl == best_j) && n_combined < scratch.len() {
-                    scratch[n_combined] = event_buf[s].sample as f64;
+                    scratch[n_combined] = event_buf[s].sample as Float;
                     n_combined += 1;
                 }
             }
@@ -1185,7 +1186,7 @@ pub fn merge_clusters_spatial<const C: usize>(
             let times = &mut scratch[..n_combined];
             times.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
             let combined_isi =
-                quality::isi_violation_rate(times, refractory_samples as f64).unwrap_or(1.0);
+                quality::isi_violation_rate(times, refractory_samples as Float).unwrap_or(1.0);
             if combined_isi > isi_threshold {
                 if n_excluded < MAX_EXCLUDED {
                     excluded[n_excluded] = (best_i, best_j);
@@ -1288,11 +1289,11 @@ pub fn merge_clusters_spatial<const C: usize>(
 pub fn ccg_merge_clusters<const W: usize, const N: usize>(
     n_spikes: usize,
     labels: &mut [usize],
-    waveform_buf: &[[f64; W]],
+    waveform_buf: &[[Float; W]],
     event_buf: &[MultiChannelEvent],
     n_clusters: usize,
-    corr_threshold: f64,
-    sample_rate: f64,
+    corr_threshold: Float,
+    sample_rate: Float,
 ) -> usize {
     if n_clusters < 2 || n_spikes < 4 {
         return n_clusters;
@@ -1317,7 +1318,7 @@ pub fn ccg_merge_clusters<const W: usize, const N: usize>(
         }
 
         // Compute mean waveforms for current clusters
-        let mut means = [[0.0f64; W]; MAX_MERGE_CLUSTERS];
+        let mut means = [[0.0; W]; MAX_MERGE_CLUSTERS];
         let mut counts = [0usize; MAX_MERGE_CLUSTERS];
         for s in 0..n_spikes {
             if s >= labels.len() {
@@ -1334,7 +1335,7 @@ pub fn ccg_merge_clusters<const W: usize, const N: usize>(
         }
         for cl in 0..current_n {
             if counts[cl] > 0 {
-                let inv = 1.0 / counts[cl] as f64;
+                let inv = 1.0 / counts[cl] as Float;
                 for w in 0..W {
                     means[cl][w] *= inv;
                 }
@@ -1356,7 +1357,7 @@ pub fn ccg_merge_clusters<const W: usize, const N: usize>(
             for w in 0..W {
                 norm_i_sq += means[i][w] * means[i][w];
             }
-            let norm_i = libm::sqrt(norm_i_sq);
+            let norm_i = float::sqrt(norm_i_sq);
             if norm_i < 1e-15 {
                 continue;
             }
@@ -1372,7 +1373,7 @@ pub fn ccg_merge_clusters<const W: usize, const N: usize>(
                     dot += means[i][w] * means[j][w];
                     norm_j_sq += means[j][w] * means[j][w];
                 }
-                let norm_j = libm::sqrt(norm_j_sq);
+                let norm_j = float::sqrt(norm_j_sq);
                 if norm_j < 1e-15 {
                     continue;
                 }
@@ -1392,8 +1393,8 @@ pub fn ccg_merge_clusters<const W: usize, const N: usize>(
 
         // Collect spike times for each cluster (in seconds)
         const MAX_TIMES: usize = 512;
-        let mut times_a = [0.0f64; MAX_TIMES];
-        let mut times_b = [0.0f64; MAX_TIMES];
+        let mut times_a = [0.0; MAX_TIMES];
+        let mut times_b = [0.0; MAX_TIMES];
         let mut n_a = 0;
         let mut n_b = 0;
         let inv_sr = 1.0 / sample_rate;
@@ -1403,10 +1404,10 @@ pub fn ccg_merge_clusters<const W: usize, const N: usize>(
                 break;
             }
             if labels[s] == best_i && n_a < MAX_TIMES {
-                times_a[n_a] = event_buf[s].sample as f64 * inv_sr;
+                times_a[n_a] = event_buf[s].sample as Float * inv_sr;
                 n_a += 1;
             } else if labels[s] == best_j && n_b < MAX_TIMES {
-                times_b[n_b] = event_buf[s].sample as f64 * inv_sr;
+                times_b[n_b] = event_buf[s].sample as Float * inv_sr;
                 n_b += 1;
             }
         }
@@ -1463,13 +1464,13 @@ pub fn ccg_merge_clusters<const W: usize, const N: usize>(
 pub fn isi_violation_split<const K: usize>(
     n_spikes: usize,
     labels: &mut [usize],
-    feature_buf: &[[f64; K]],
+    feature_buf: &[[Float; K]],
     event_buf: &[MultiChannelEvent],
     n_clusters: usize,
-    isi_threshold: f64,
+    isi_threshold: Float,
     refractory_samples: usize,
     min_cluster_size: usize,
-    scratch: &mut [f64],
+    scratch: &mut [Float],
     max_clusters: usize,
 ) -> usize {
     if n_spikes == 0 || n_clusters == 0 {
@@ -1508,13 +1509,13 @@ pub fn isi_violation_split<const K: usize>(
             // Compute ISI violation rate for this cluster
             let spike_n = count.min(scratch.len());
             for i in 0..spike_n {
-                scratch[i] = event_buf[indices[i]].sample as f64;
+                scratch[i] = event_buf[indices[i]].sample as Float;
             }
             let st = &mut scratch[..spike_n];
             st.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
 
             let isi_rate =
-                quality::isi_violation_rate(st, refractory_samples as f64).unwrap_or(0.0);
+                quality::isi_violation_rate(st, refractory_samples as Float).unwrap_or(0.0);
 
             if isi_rate <= isi_threshold {
                 cl += 1;
@@ -1526,19 +1527,19 @@ pub fn isi_violation_split<const K: usize>(
             let dim = if K > 32 { 32 } else { K };
 
             // Compute centroid
-            let mut centroid = [0.0f64; 32];
+            let mut centroid = [0.0; 32];
             for i in 0..count {
                 for d in 0..dim {
                     centroid[d] += feature_buf[indices[i]][d];
                 }
             }
-            let inv_count = 1.0 / count as f64;
+            let inv_count = 1.0 / count as Float;
             for d in centroid.iter_mut().take(dim) {
                 *d *= inv_count;
             }
 
             // Power iteration for first principal axis
-            let mut axis = [0.0f64; 32];
+            let mut axis = [0.0; 32];
             for d in 0..dim {
                 axis[d] = feature_buf[indices[0]][d] - centroid[d];
             }
@@ -1550,13 +1551,13 @@ pub fn isi_violation_split<const K: usize>(
                 cl += 1;
                 continue;
             }
-            let inv_norm = 1.0 / libm::sqrt(norm_sq);
+            let inv_norm = 1.0 / float::sqrt(norm_sq);
             for a in axis.iter_mut().take(dim) {
                 *a *= inv_norm;
             }
 
             for _iter in 0..3 {
-                let mut new_axis = [0.0f64; 32];
+                let mut new_axis = [0.0; 32];
                 for i in 0..count {
                     let mut dot = 0.0;
                     for d in 0..dim {
@@ -1573,14 +1574,14 @@ pub fn isi_violation_split<const K: usize>(
                 if ns < 1e-30 {
                     break;
                 }
-                let inv = 1.0 / libm::sqrt(ns);
+                let inv = 1.0 / float::sqrt(ns);
                 for d in 0..dim {
                     axis[d] = new_axis[d] * inv;
                 }
             }
 
             // Project spikes and split at median
-            let mut projections = [0.0f64; MAX_SPIKES];
+            let mut projections = [0.0; MAX_SPIKES];
             for i in 0..count {
                 let mut dot = 0.0;
                 for d in 0..dim {
@@ -1590,7 +1591,7 @@ pub fn isi_violation_split<const K: usize>(
             }
 
             // Split at median projection (ensures roughly equal-sized halves)
-            let mut sorted_proj = [0.0f64; MAX_SPIKES];
+            let mut sorted_proj = [0.0; MAX_SPIKES];
             sorted_proj[..count].copy_from_slice(&projections[..count]);
             sorted_proj[..count]
                 .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
@@ -1666,7 +1667,7 @@ pub fn amplitude_bimodality_split(
     labels: &mut [usize],
     event_buf: &[MultiChannelEvent],
     n_clusters: usize,
-    threshold: f64,
+    threshold: Float,
     min_cluster_size: usize,
     max_clusters: usize,
 ) -> usize {
@@ -1687,7 +1688,7 @@ pub fn amplitude_bimodality_split(
         let mut cl = 0;
         while cl < current_n {
             // Collect amplitudes for this cluster
-            let mut amps = [0.0f64; MAX_SPIKES];
+            let mut amps = [0.0; MAX_SPIKES];
             let mut indices = [0usize; MAX_SPIKES];
             let mut count = 0usize;
             let mut s = 0;
@@ -1726,7 +1727,7 @@ pub fn amplitude_bimodality_split(
             // then check if the gap exceeds threshold * local spread.
             // "Local spread" = max(MAD_left, MAD_right) to handle bimodal cases
             // where the global MAD is inflated by spanning both modes.
-            let mut best_gap = 0.0f64;
+            let mut best_gap = 0.0;
             let mut best_gap_idx = 0usize;
             for k in 1..count {
                 let gap = amps[k] - amps[k - 1];
@@ -1745,14 +1746,14 @@ pub fn amplitude_bimodality_split(
             let left_n = best_gap_idx;
             let right_n = count - best_gap_idx;
             let local_sigma = {
-                let mad_half = |start: usize, n: usize| -> f64 {
+                let mad_half = |start: usize, n: usize| -> Float {
                     if n < 2 {
                         return 0.0;
                     }
                     let med = amps[start + n / 2];
-                    let mut devs = [0.0f64; MAX_SPIKES];
+                    let mut devs = [0.0; MAX_SPIKES];
                     for k in 0..n {
-                        devs[k] = libm::fabs(amps[start + k] - med);
+                        devs[k] = float::abs(amps[start + k] - med);
                     }
                     devs[..n].sort_unstable_by(|a, b| {
                         a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
@@ -1808,12 +1809,12 @@ pub fn amplitude_bimodality_split(
 /// Compute mean waveform per cluster, spike count, and most common peak channel.
 #[allow(clippy::too_many_arguments)]
 fn compute_cluster_means<const W: usize, const N: usize>(
-    waveform_buf: &[[f64; W]],
+    waveform_buf: &[[Float; W]],
     labels: &[usize],
     event_buf: &[MultiChannelEvent],
     n_extracted: usize,
     n_clusters: usize,
-    means: &mut [[f64; W]; N],
+    means: &mut [[Float; W]; N],
     counts: &mut [u32; N],
     peak_channels: &mut [usize; N],
 ) {
@@ -1841,7 +1842,7 @@ fn compute_cluster_means<const W: usize, const N: usize>(
 
     for c in 0..n_clusters.min(N) {
         if counts[c] > 0 {
-            let inv = 1.0 / counts[c] as f64;
+            let inv = 1.0 / counts[c] as Float;
             for mw in means[c].iter_mut() {
                 *mw *= inv;
             }
@@ -1861,18 +1862,18 @@ fn compute_cluster_means<const W: usize, const N: usize>(
 /// Subtract cluster mean templates from data at each spike location.
 #[allow(clippy::too_many_arguments)]
 fn subtract_templates_multichannel<const C: usize, const W: usize, const N: usize>(
-    data: &mut [[f64; C]],
+    data: &mut [[Float; C]],
     event_buf: &[MultiChannelEvent],
     n_spikes: usize,
     labels: &[usize],
-    means: &[[f64; W]; N],
+    means: &[[Float; W]; N],
     counts: &[u32; N],
     peak_channels: &[usize; N],
     min_count: usize,
     pre_samples: usize,
 ) {
     // Precompute template norms squared for amplitude scaling
-    let mut norms_sq = [0.0f64; N];
+    let mut norms_sq = [0.0; N];
     for c in 0..N {
         if counts[c] == 0 {
             continue;
@@ -1920,13 +1921,13 @@ fn subtract_templates_multichannel<const C: usize, const W: usize, const N: usiz
 
 /// Assign a waveform to the nearest cluster template by L2 distance.
 fn assign_to_nearest_template<const W: usize, const N: usize>(
-    waveform: &[f64; W],
-    means: &[[f64; W]; N],
+    waveform: &[Float; W],
+    means: &[[Float; W]; N],
     counts: &[u32; N],
     n_clusters: usize,
-) -> (usize, f64) {
+) -> (usize, Float) {
     let mut best = 0;
-    let mut best_dist = f64::MAX;
+    let mut best_dist = float::MAX;
     for c in 0..n_clusters.min(N) {
         if counts[c] == 0 {
             continue;
@@ -1988,11 +1989,11 @@ fn assign_to_nearest_template<const W: usize, const N: usize>(
 /// ```
 #[allow(clippy::needless_range_loop)]
 pub fn svd_init_centroids<const K: usize, const N: usize>(
-    feature_buf: &[[f64; K]],
+    feature_buf: &[[Float; K]],
     n_extracted: usize,
     max_seeds: usize,
-) -> ([[f64; K]; N], usize) {
-    let mut centroids = [[0.0f64; K]; N];
+) -> ([[Float; K]; N], usize) {
+    let mut centroids = [[0.0; K]; N];
     let n = if n_extracted < feature_buf.len() {
         n_extracted
     } else {
@@ -2005,13 +2006,13 @@ pub fn svd_init_centroids<const K: usize, const N: usize>(
     let n_seeds = if n_seeds > n { n } else { n_seeds };
 
     // 1. Compute mean
-    let mut mean = [0.0f64; K];
+    let mut mean = [0.0; K];
     for i in 0..n {
         for d in 0..K {
             mean[d] += feature_buf[i][d];
         }
     }
-    let inv_n = 1.0 / n as f64;
+    let inv_n = 1.0 / n as Float;
     for d in 0..K {
         mean[d] *= inv_n;
     }
@@ -2020,15 +2021,15 @@ pub fn svd_init_centroids<const K: usize, const N: usize>(
     //    Instead of forming the K x K matrix explicitly, we use the identity:
     //      C * v = (1/n) * sum_i [ (x_i - mu) * ((x_i - mu) . v) ]
     //    Each iteration is O(n * K), no K x K storage needed.
-    let mut top_vec = [0.0f64; K];
+    let mut top_vec = [0.0; K];
     // Initialize with [1, 1, ..., 1] normalized
-    let inv_sqrt_k = 1.0 / libm::sqrt(K as f64);
+    let inv_sqrt_k = 1.0 / float::sqrt(K as Float);
     for d in 0..K {
         top_vec[d] = inv_sqrt_k;
     }
 
     for _iter in 0..50 {
-        let mut new_vec = [0.0f64; K];
+        let mut new_vec = [0.0; K];
         // Multiply: new_vec = C * top_vec = (1/(n-1)) * sum_i (x_i - mu) * dot(x_i - mu, top_vec)
         for i in 0..n {
             let mut dot = 0.0;
@@ -2044,7 +2045,7 @@ pub fn svd_init_centroids<const K: usize, const N: usize>(
         for d in 0..K {
             norm_sq += new_vec[d] * new_vec[d];
         }
-        let norm = libm::sqrt(norm_sq);
+        let norm = float::sqrt(norm_sq);
         if norm < 1e-30 {
             // Degenerate -- all points identical
             centroids[0] = mean;
@@ -2064,8 +2065,8 @@ pub fn svd_init_centroids<const K: usize, const N: usize>(
     }
 
     // 3. Project features onto top eigenvector and find min/max
-    let mut proj_min = f64::MAX;
-    let mut proj_max = f64::MIN;
+    let mut proj_min = float::MAX;
+    let mut proj_max = Float::MIN;
     for i in 0..n {
         let mut p = 0.0;
         for d in 0..K {
@@ -2085,9 +2086,9 @@ pub fn svd_init_centroids<const K: usize, const N: usize>(
     }
 
     // 4. Range-based binning: divide [proj_min, proj_max] into n_seeds equal-width bins.
-    let bin_width = (proj_max - proj_min) / n_seeds as f64;
+    let bin_width = (proj_max - proj_min) / n_seeds as Float;
 
-    let mut bin_sums = [[0.0f64; K]; N];
+    let mut bin_sums = [[0.0; K]; N];
     let mut bin_counts = [0usize; N];
 
     for i in 0..n {
@@ -2109,7 +2110,7 @@ pub fn svd_init_centroids<const K: usize, const N: usize>(
     let mut count = 0;
     for b in 0..n_seeds {
         if bin_counts[b] > 0 && count < N {
-            let inv_c = 1.0 / bin_counts[b] as f64;
+            let inv_c = 1.0 / bin_counts[b] as Float;
             for d in 0..K {
                 centroids[count][d] = bin_sums[b][d] * inv_c;
             }
@@ -2171,11 +2172,11 @@ pub fn svd_init_centroids<const K: usize, const N: usize>(
 ///
 /// let config = SortConfig::default();
 /// let probe = ProbeLayout::<2>::linear(25.0);
-/// let mut data = vec![[0.0f64; 2]; 1000];
-/// let mut scratch = vec![0.0f64; 1000];
+/// let mut data = vec![[0.0; 2]; 1000];
+/// let mut scratch = vec![0.0; 1000];
 /// let mut events = vec![MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; 100];
-/// let mut waveforms = vec![[0.0f64; 16]; 100];
-/// let mut features = vec![[0.0f64; 3]; 100];
+/// let mut waveforms = vec![[0.0; 16]; 100];
+/// let mut features = vec![[0.0; 3]; 100];
 /// let mut labels = vec![0usize; 100];
 ///
 /// let result = sort_multichannel::<2, 4, 16, 3, 256, 8>(
@@ -2194,11 +2195,11 @@ pub fn sort_multichannel<
 >(
     config: &SortConfig,
     probe: &ProbeLayout<C>,
-    data: &mut [[f64; C]],
-    scratch: &mut [f64],
+    data: &mut [[Float; C]],
+    scratch: &mut [Float],
     event_buf: &mut [MultiChannelEvent],
-    waveform_buf: &mut [[f64; W]],
-    feature_buf: &mut [[f64; K]],
+    waveform_buf: &mut [[Float; W]],
+    feature_buf: &mut [[Float; K]],
     labels: &mut [usize],
 ) -> Result<SortResult<N>, SortError> {
     let t_len = data.len();
@@ -2251,7 +2252,7 @@ pub fn sort_multichannel<
     for noise_val in pre_noise.iter() {
         noise_mean += noise_val;
     }
-    noise_mean /= C as f64;
+    noise_mean /= C as Float;
     if noise_mean <= 0.0 {
         noise_mean = 1.0;
     }
@@ -2296,7 +2297,7 @@ pub fn sort_multichannel<
                     event_buf,
                 )
             } else {
-                let unit_noise = [1.0f64; C];
+                let unit_noise = [1.0; C];
                 detect_spikes_multichannel::<C>(
                     data,
                     config.threshold_multiplier,
@@ -2347,7 +2348,7 @@ pub fn sort_multichannel<
                 } else {
                     CAL_LEN
                 };
-                let mut cal_buf = [0.0f64; CAL_LEN];
+                let mut cal_buf = [0.0; CAL_LEN];
                 let mut ci = 0;
                 while ci < cal_n {
                     cal_buf[ci] = energy[ci];
@@ -2366,7 +2367,7 @@ pub fn sort_multichannel<
                 // MAD = median(|x - median|)
                 ci = 0;
                 while ci < cal_n {
-                    cal_buf[ci] = libm::fabs(cal_buf[ci] - median);
+                    cal_buf[ci] = float::abs(cal_buf[ci] - median);
                     ci += 1;
                 }
                 cal_buf[..cal_n].sort_unstable_by(|a, b| {
@@ -2424,7 +2425,7 @@ pub fn sort_multichannel<
                             event_buf[total] = MultiChannelEvent {
                                 sample: best_sample,
                                 channel: ch,
-                                amplitude: libm::fabs(best_val),
+                                amplitude: float::abs(best_val),
                             };
                             total += 1;
                         }
@@ -2517,10 +2518,10 @@ pub fn sort_multichannel<
     // spatial discrimination. The scale factor controls how strongly channel
     // identity influences clustering relative to waveform shape.
     if K >= 3 {
-        let channel_scale = config.cluster_threshold * C as f64;
+        let channel_scale = config.cluster_threshold * C as Float;
         for i in 0..n_extracted {
             let ch = event_buf[i].channel;
-            feature_buf[i][K - 1] = (ch as f64 / C as f64) * channel_scale;
+            feature_buf[i][K - 1] = (ch as Float / C as Float) * channel_scale;
         }
     }
 
@@ -2681,7 +2682,7 @@ pub fn sort_multichannel<
     };
     for _pass in 0..n_passes {
         if n_clusters > 0 && n_extracted > 0 {
-            let mut tmpl_means = [[0.0f64; W]; N];
+            let mut tmpl_means = [[0.0; W]; N];
             let mut tmpl_counts = [0u32; N];
             let mut tmpl_peak_ch = [0usize; N];
 
@@ -2697,7 +2698,7 @@ pub fn sort_multichannel<
             );
 
             // Compute mean within-cluster L2 distance for rejection threshold
-            let mut mean_dist = [0.0f64; N];
+            let mut mean_dist = [0.0; N];
             for i in 0..n_extracted {
                 let label = labels[i];
                 if label < n_clusters && label < N {
@@ -2711,11 +2712,11 @@ pub fn sort_multichannel<
             }
             for c in 0..n_clusters.min(N) {
                 if tmpl_counts[c] > 0 {
-                    mean_dist[c] /= tmpl_counts[c] as f64;
+                    mean_dist[c] /= tmpl_counts[c] as Float;
                 }
             }
             // Max acceptable distance: 3x the mean within-cluster distance
-            let mut max_accept_dist = 0.0f64;
+            let mut max_accept_dist = 0.0;
             let mut n_valid = 0;
             for c in 0..n_clusters.min(N) {
                 if tmpl_counts[c] >= config.template_min_count as u32 {
@@ -2724,9 +2725,9 @@ pub fn sort_multichannel<
                 }
             }
             if n_valid > 0 {
-                max_accept_dist = (max_accept_dist / n_valid as f64) * 3.0;
+                max_accept_dist = (max_accept_dist / n_valid as Float) * 3.0;
             } else {
-                max_accept_dist = f64::MAX;
+                max_accept_dist = float::MAX;
             }
 
             // Subtract templates from whitened data
@@ -2764,7 +2765,7 @@ pub fn sort_multichannel<
                         &mut event_buf[n_extracted..],
                     )
                 } else {
-                    let unit_noise_re = [1.0f64; C];
+                    let unit_noise_re = [1.0; C];
                     detect_spikes_multichannel::<C>(
                         data,
                         config.threshold_multiplier,
@@ -2862,12 +2863,12 @@ pub fn sort_multichannel<
                 let n_existing = n_extracted;
                 let sorted_times_n = n_existing.min(scratch.len());
                 for i in 0..sorted_times_n {
-                    scratch[i] = event_buf[i].sample as f64;
+                    scratch[i] = event_buf[i].sample as Float;
                 }
                 scratch[..sorted_times_n].sort_unstable_by(|a, b| {
                     a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
                 });
-                let overlap_radius = (config.temporal_radius + W / 2) as f64;
+                let overlap_radius = (config.temporal_radius + W / 2) as Float;
 
                 for c in 0..n_clusters.min(N) {
                     if (tmpl_counts[c] as usize) < config.template_min_count {
@@ -2882,7 +2883,7 @@ pub fn sort_multichannel<
                     for &tv in tmpl_means[c].iter() {
                         t_norm_sq += tv * tv;
                     }
-                    let t_norm = libm::sqrt(t_norm_sq);
+                    let t_norm = float::sqrt(t_norm_sq);
                     if t_norm < 1e-15 {
                         continue;
                     }
@@ -2897,7 +2898,7 @@ pub fn sort_multichannel<
                     let mut pos = pre;
                     while pos + W <= t_len {
                         // Early amplitude check: if peak sample is negligible, skip ahead
-                        let peak_amp = libm::fabs(data[pos][ch]);
+                        let peak_amp = float::abs(data[pos][ch]);
                         if peak_amp < half_thresh {
                             // Adaptive step: skip more aggressively in quiet regions
                             pos += W / 4;
@@ -2905,7 +2906,7 @@ pub fn sort_multichannel<
                         }
 
                         // Binary search overlap check on sorted spike times
-                        let pos_f = pos as f64;
+                        let pos_f = pos as Float;
                         let lo = pos_f - overlap_radius;
                         let hi = pos_f + overlap_radius;
                         // Find first spike time >= lo
@@ -2941,7 +2942,7 @@ pub fn sort_multichannel<
                             continue;
                         }
 
-                        let r_norm = libm::sqrt(r_norm_sq);
+                        let r_norm = float::sqrt(r_norm_sq);
                         let ncc = if r_norm > 1e-15 {
                             dot / (r_norm * t_norm)
                         } else {
@@ -2993,7 +2994,7 @@ pub fn sort_multichannel<
     // 5σ amplitude threshold) but matched-filter SNR above the MF threshold.
     if config.matched_filter_detect && n_clusters > 0 && n_extracted > 0 {
         // Build templates from current cluster assignments
-        let mut mf_means = [[0.0f64; W]; N];
+        let mut mf_means = [[0.0; W]; N];
         let mut mf_counts = [0u32; N];
         let mut mf_peak_ch = [0usize; N];
         compute_cluster_means::<W, N>(
@@ -3084,7 +3085,7 @@ pub fn sort_multichannel<
                     event_buf[dst] = MultiChannelEvent {
                         sample: mf_sample,
                         channel: ch,
-                        amplitude: libm::fabs(data[mf_sample][ch]),
+                        amplitude: float::abs(data[mf_sample][ch]),
                     };
                     for w in 0..W {
                         waveform_buf[dst][w] = data[start + w][ch];
@@ -3122,7 +3123,7 @@ pub fn sort_multichannel<
         }
 
         // Mean waveform for SNR
-        let mut mean_wf = [0.0f64; W];
+        let mut mean_wf = [0.0; W];
         for i in 0..n_extracted {
             if i < labels.len() && labels[i] == ci {
                 for (w, mw) in mean_wf.iter_mut().enumerate() {
@@ -3130,7 +3131,7 @@ pub fn sort_multichannel<
                 }
             }
         }
-        let inv_count = 1.0 / count as f64;
+        let inv_count = 1.0 / count as Float;
         for mw in mean_wf.iter_mut() {
             *mw *= inv_count;
         }
@@ -3144,7 +3145,7 @@ pub fn sort_multichannel<
             let mut spike_idx = 0;
             for i in 0..n_extracted {
                 if i < labels.len() && labels[i] == ci && spike_idx < scratch.len() {
-                    scratch[spike_idx] = event_buf[i].sample as f64;
+                    scratch[spike_idx] = event_buf[i].sample as Float;
                     spike_idx += 1;
                 }
             }
@@ -3154,7 +3155,7 @@ pub fn sort_multichannel<
                 .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
             // ISI violation rate with refractory period in samples
             cluster.isi_violation_rate =
-                quality::isi_violation_rate(spike_times, config.refractory_samples as f64)
+                quality::isi_violation_rate(spike_times, config.refractory_samples as Float)
                     .unwrap_or(0.0);
         }
     }
@@ -3163,7 +3164,7 @@ pub fn sort_multichannel<
     // Normalize threshold by noise level: SNR uses pre-whitening noise_mean as denominator,
     // so higher noise → lower SNR for the same signal. Scale threshold proportionally.
     // noise_mean ≈ median(|x|)/0.6745 ≈ 1.0 for unit Gaussian noise.
-    const REF_NOISE: f64 = 1.0;
+    const REF_NOISE: Float = 1.0;
     let effective_snr_threshold = config.min_cluster_snr * (REF_NOISE / noise_mean);
     let mut keep_cluster = [false; N];
     let mut n_kept_clusters = 0usize;
@@ -3267,9 +3268,9 @@ pub fn sort_multichannel<
 /// assert!(sorter.classify_or_reject(&[5.0, 5.0, 5.0]).is_none());
 /// ```
 pub struct OnlineSorter<const K: usize, const N: usize> {
-    templates: [[f64; K]; N],
+    templates: [[Float; K]; N],
     n_templates: usize,
-    max_distance: f64,
+    max_distance: Float,
     n_classified: usize,
     n_rejected: usize,
 }
@@ -3280,7 +3281,7 @@ impl<const K: usize, const N: usize> OnlineSorter<K, N> {
         Self {
             templates: [[0.0; K]; N],
             n_templates: 0,
-            max_distance: f64::MAX,
+            max_distance: float::MAX,
             n_classified: 0,
             n_rejected: 0,
         }
@@ -3288,7 +3289,7 @@ impl<const K: usize, const N: usize> OnlineSorter<K, N> {
 
     /// Create from centroids extracted from a batch sort result.
     /// `centroids` is a slice of feature vectors, up to N are used.
-    pub fn from_centroids(centroids: &[[f64; K]]) -> Self {
+    pub fn from_centroids(centroids: &[[Float; K]]) -> Self {
         let mut s = Self::new();
         let count = if centroids.len() < N {
             centroids.len()
@@ -3305,7 +3306,7 @@ impl<const K: usize, const N: usize> OnlineSorter<K, N> {
     }
 
     /// Add a template. Returns the template index, or None if full.
-    pub fn add_template(&mut self, centroid: &[f64; K]) -> Option<usize> {
+    pub fn add_template(&mut self, centroid: &[Float; K]) -> Option<usize> {
         if self.n_templates >= N {
             return None;
         }
@@ -3317,34 +3318,34 @@ impl<const K: usize, const N: usize> OnlineSorter<K, N> {
 
     /// Set the maximum distance for classification. Spikes farther
     /// than this from all templates are rejected (classified as `None`).
-    /// Default: f64::MAX (no rejection).
-    pub fn set_max_distance(&mut self, max_dist: f64) {
+    /// Default: float::MAX (no rejection).
+    pub fn set_max_distance(&mut self, max_dist: Float) {
         self.max_distance = max_dist;
     }
 
     /// Classify a single spike by nearest centroid.
     /// Returns (template_index, distance).
-    /// If no templates are loaded, returns (0, f64::MAX).
-    pub fn classify(&mut self, features: &[f64; K]) -> (usize, f64) {
+    /// If no templates are loaded, returns (0, float::MAX).
+    pub fn classify(&mut self, features: &[Float; K]) -> (usize, Float) {
         self.n_classified += 1;
 
         if self.n_templates == 0 {
-            return (0, f64::MAX);
+            return (0, float::MAX);
         }
 
         let mut best_idx = 0;
-        let mut best_dist = f64::MAX;
+        let mut best_dist = float::MAX;
 
         let mut ti = 0;
         while ti < self.n_templates {
-            let mut sum_sq = 0.0f64;
+            let mut sum_sq = 0.0;
             let mut ki = 0;
             while ki < K {
                 let diff = features[ki] - self.templates[ti][ki];
                 sum_sq += diff * diff;
                 ki += 1;
             }
-            let dist = libm::sqrt(sum_sq);
+            let dist = float::sqrt(sum_sq);
             if dist < best_dist {
                 best_dist = dist;
                 best_idx = ti;
@@ -3356,7 +3357,7 @@ impl<const K: usize, const N: usize> OnlineSorter<K, N> {
     }
 
     /// Classify a spike, returning None if distance exceeds max_distance.
-    pub fn classify_or_reject(&mut self, features: &[f64; K]) -> Option<(usize, f64)> {
+    pub fn classify_or_reject(&mut self, features: &[Float; K]) -> Option<(usize, Float)> {
         let (label, dist) = self.classify(features);
         if dist > self.max_distance {
             self.n_rejected += 1;
@@ -3382,7 +3383,7 @@ impl<const K: usize, const N: usize> OnlineSorter<K, N> {
     }
 
     /// Get a reference to the template centroids.
-    pub fn templates(&self) -> &[[f64; K]] {
+    pub fn templates(&self) -> &[[Float; K]] {
         &self.templates[..self.n_templates]
     }
 
@@ -3419,10 +3420,10 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(6)]
     fn noise_estimation_no_panic() {
-        let d0: f64 = kani::any();
-        let d1: f64 = kani::any();
-        let d2: f64 = kani::any();
-        let d3: f64 = kani::any();
+        let d0: Float = kani::any();
+        let d1: Float = kani::any();
+        let d2: Float = kani::any();
+        let d3: Float = kani::any();
 
         kani::assume(d0.is_finite() && d0 >= -1e6 && d0 <= 1e6);
         kani::assume(d1.is_finite() && d1 >= -1e6 && d1 <= 1e6);
@@ -3430,7 +3431,7 @@ mod kani_proofs {
         kani::assume(d3.is_finite() && d3 >= -1e6 && d3 <= 1e6);
 
         let data = [[d0, d1], [d2, d3]];
-        let mut scratch = [0.0f64; 2];
+        let mut scratch = [0.0; 2];
         let noise = estimate_noise_multichannel::<2>(&data, &mut scratch);
         assert!(noise[0].is_finite(), "noise[0] must be finite");
         assert!(noise[1].is_finite(), "noise[1] must be finite");
@@ -3450,7 +3451,7 @@ mod kani_proofs {
         kani::assume(l0 < 3 && l1 < 3 && l2 < 3 && l3 < 3);
 
         let mut labels = [l0, l1, l2, l3];
-        let features = [[0.0f64; 2]; 4];
+        let features = [[0.0; 2]; 4];
         let events = [
             crate::spike_sort::MultiChannelEvent {
                 sample: 100,
@@ -3473,10 +3474,10 @@ mod kani_proofs {
                 amplitude: 5.0,
             },
         ];
-        let mut scratch = [0.0f64; 4];
+        let mut scratch = [0.0; 4];
 
-        let dp_thresh: f64 = kani::any();
-        let isi_thresh: f64 = kani::any();
+        let dp_thresh: Float = kani::any();
+        let isi_thresh: Float = kani::any();
         kani::assume(dp_thresh.is_finite() && dp_thresh >= 0.0 && dp_thresh <= 100.0);
         kani::assume(isi_thresh.is_finite() && isi_thresh >= 0.0 && isi_thresh <= 1.0);
 
@@ -3506,8 +3507,8 @@ mod kani_proofs {
         kani::assume(l0 < 2 && l1 < 2 && l2 < 2 && l3 < 2);
 
         let mut labels = [l0, l1, l2, l3];
-        let features = [[1.0f64, 0.0], [0.0, 1.0], [5.0, 5.0], [6.0, 6.0]];
-        let threshold: f64 = kani::any();
+        let features = [[1.0, 0.0], [0.0, 1.0], [5.0, 5.0], [6.0, 6.0]];
+        let threshold: Float = kani::any();
         kani::assume(threshold.is_finite() && threshold >= 0.0 && threshold <= 100.0);
 
         let new_n = split_clusters(4, &mut labels, &features, 2, 2, threshold);
@@ -3519,10 +3520,10 @@ mod kani_proofs {
     #[kani::unwind(6)]
     fn online_sorter_classify_no_panic() {
         let mut sorter = OnlineSorter::<2, 4>::new();
-        let t0: f64 = kani::any();
-        let t1: f64 = kani::any();
-        let f0: f64 = kani::any();
-        let f1: f64 = kani::any();
+        let t0: Float = kani::any();
+        let t1: Float = kani::any();
+        let f0: Float = kani::any();
+        let f1: Float = kani::any();
         kani::assume(t0.is_finite() && t0 >= -1e6 && t0 <= 1e6);
         kani::assume(t1.is_finite() && t1 >= -1e6 && t1 <= 1e6);
         kani::assume(f0.is_finite() && f0 >= -1e6 && f0 <= 1e6);
@@ -3559,14 +3560,14 @@ mod kani_proofs {
     fn verify_amplitude_scaling_finite() {
         // C=2, W=4, N=2
         // Build arbitrary finite data and template values
-        let d0: f64 = kani::any();
-        let d1: f64 = kani::any();
-        let d2: f64 = kani::any();
-        let d3: f64 = kani::any();
-        let t0: f64 = kani::any();
-        let t1: f64 = kani::any();
-        let t2: f64 = kani::any();
-        let t3: f64 = kani::any();
+        let d0: Float = kani::any();
+        let d1: Float = kani::any();
+        let d2: Float = kani::any();
+        let d3: Float = kani::any();
+        let t0: Float = kani::any();
+        let t1: Float = kani::any();
+        let t2: Float = kani::any();
+        let t3: Float = kani::any();
 
         kani::assume(d0.is_finite() && d0 >= -1e6 && d0 <= 1e6);
         kani::assume(d1.is_finite() && d1 >= -1e6 && d1 <= 1e6);
@@ -3581,13 +3582,13 @@ mod kani_proofs {
         let template = [t0, t1, t2, t3];
 
         // Compute norms_sq (same as subtract_templates_multichannel)
-        let mut norms_sq = 0.0f64;
+        let mut norms_sq = 0.0;
         for val in template.iter() {
             norms_sq += val * val;
         }
 
         // Compute dot product (same as subtract_templates_multichannel)
-        let mut dot = 0.0f64;
+        let mut dot = 0.0;
         for w in 0..4 {
             dot += data[w] * template[w];
         }
@@ -3610,11 +3611,11 @@ mod kani_proofs {
     #[kani::unwind(6)]
     fn verify_subtract_templates_no_panic() {
         // Build small arbitrary data: 6 time samples x 2 channels
-        let mut data = [[0.0f64; 2]; 6];
-        let d0: f64 = kani::any();
-        let d1: f64 = kani::any();
-        let d2: f64 = kani::any();
-        let d3: f64 = kani::any();
+        let mut data = [[0.0; 2]; 6];
+        let d0: Float = kani::any();
+        let d1: Float = kani::any();
+        let d2: Float = kani::any();
+        let d3: Float = kani::any();
         kani::assume(d0.is_finite() && d0 >= -1e3 && d0 <= 1e3);
         kani::assume(d1.is_finite() && d1 >= -1e3 && d1 <= 1e3);
         kani::assume(d2.is_finite() && d2 >= -1e3 && d2 <= 1e3);
@@ -3625,11 +3626,11 @@ mod kani_proofs {
         data[3][1] = d3;
 
         // Template means: 2 clusters, W=4 each
-        let m0: f64 = kani::any();
-        let m1: f64 = kani::any();
+        let m0: Float = kani::any();
+        let m1: Float = kani::any();
         kani::assume(m0.is_finite() && m0 >= -1e3 && m0 <= 1e3);
         kani::assume(m1.is_finite() && m1 >= -1e3 && m1 <= 1e3);
-        let means: [[f64; 4]; 2] = [[m0, m1, 0.5, -0.5], [0.3, -0.3, m0, m1]];
+        let means: [[Float; 4]; 2] = [[m0, m1, 0.5, -0.5], [0.3, -0.3, m0, m1]];
 
         // Spike events: 2 spikes
         let s0: usize = kani::any();
@@ -3691,8 +3692,8 @@ mod kani_proofs {
         let mut labels = [l0, l1, l2, l3, l4, l5];
 
         // Arbitrary feature values for 6 spikes with K=3 dimensions
-        let f0: f64 = kani::any();
-        let f1: f64 = kani::any();
+        let f0: Float = kani::any();
+        let f1: Float = kani::any();
         kani::assume(f0.is_finite() && f0 >= -1e3 && f0 <= 1e3);
         kani::assume(f1.is_finite() && f1 >= -1e3 && f1 <= 1e3);
 
@@ -3736,10 +3737,10 @@ mod kani_proofs {
                 amplitude: 5.0,
             },
         ];
-        let mut scratch = [0.0f64; 6];
+        let mut scratch = [0.0; 6];
 
-        let dp_thresh: f64 = kani::any();
-        let isi_thresh: f64 = kani::any();
+        let dp_thresh: Float = kani::any();
+        let isi_thresh: Float = kani::any();
         kani::assume(dp_thresh.is_finite() && dp_thresh >= 0.0 && dp_thresh <= 100.0);
         kani::assume(isi_thresh.is_finite() && isi_thresh >= 0.0 && isi_thresh <= 1.0);
 
@@ -3783,10 +3784,10 @@ mod tests {
             self.0 ^= self.0 << 17;
             self.0
         }
-        fn gaussian(&mut self, mean: f64, std: f64) -> f64 {
-            let u1 = (self.next_u64() % 1_000_000 + 1) as f64 / 1_000_001.0;
-            let u2 = (self.next_u64() % 1_000_000) as f64 / 1_000_000.0;
-            let z = libm::sqrt(-2.0 * libm::log(u1)) * libm::cos(2.0 * core::f64::consts::PI * u2);
+        fn gaussian(&mut self, mean: Float, std: Float) -> Float {
+            let u1 = (self.next_u64() % 1_000_000 + 1) as Float / 1_000_001.0;
+            let u2 = (self.next_u64() % 1_000_000) as Float / 1_000_000.0;
+            let z = float::sqrt(-2.0 * float::log(u1)) * float::cos(2.0 * float::PI * u2);
             mean + z * std
         }
     }
@@ -3796,7 +3797,7 @@ mod tests {
         // Constant data: all values are 1.0
         // |1.0| / 0.6745 = 1.4826
         let data = [[1.0, 2.0]; 100];
-        let mut scratch = [0.0f64; 100];
+        let mut scratch = [0.0; 100];
         let noise = estimate_noise_multichannel::<2>(&data, &mut scratch);
         assert!(
             (noise[0] - 1.0 / 0.6745).abs() < 0.01,
@@ -3814,12 +3815,12 @@ mod tests {
     fn test_estimate_noise_multichannel_gaussian() {
         let mut rng = Rng::new(42);
         let n = 10000;
-        let mut data = vec![[0.0f64; 2]; n];
+        let mut data = vec![[0.0; 2]; n];
         for sample in data.iter_mut() {
             sample[0] = rng.gaussian(0.0, 1.0);
             sample[1] = rng.gaussian(0.0, 3.0);
         }
-        let mut scratch = vec![0.0f64; n];
+        let mut scratch = vec![0.0; n];
         let noise = estimate_noise_multichannel::<2>(&data, &mut scratch);
         assert!(
             (noise[0] - 1.0).abs() < 0.15,
@@ -3835,8 +3836,8 @@ mod tests {
 
     #[test]
     fn test_estimate_noise_empty() {
-        let data: &[[f64; 2]] = &[];
-        let mut scratch = [0.0f64; 1];
+        let data: &[[Float; 2]] = &[];
+        let mut scratch = [0.0; 1];
         let noise = estimate_noise_multichannel::<2>(data, &mut scratch);
         assert!((noise[0]).abs() < 1e-12);
         assert!((noise[1]).abs() < 1e-12);
@@ -3865,7 +3866,7 @@ mod tests {
         // Uncorrelated unit-variance 2-channel data
         let mut rng = Rng::new(99);
         let n = 5000;
-        let mut data = vec![[0.0f64; 2]; n];
+        let mut data = vec![[0.0; 2]; n];
         for sample in data.iter_mut() {
             sample[0] = rng.gaussian(0.0, 1.0);
             sample[1] = rng.gaussian(0.0, 1.0);
@@ -3888,8 +3889,8 @@ mod tests {
     fn test_sort_multichannel_insufficient_data() {
         let config = SortConfig::default();
         let probe = ProbeLayout::<2>::linear(25.0);
-        let mut data = vec![[0.0f64; 2]; 4]; // too short for W=8
-        let mut scratch = vec![0.0f64; 4];
+        let mut data = vec![[0.0; 2]; 4]; // too short for W=8
+        let mut scratch = vec![0.0; 4];
         let mut events = vec![
             MultiChannelEvent {
                 sample: 0,
@@ -3898,8 +3899,8 @@ mod tests {
             };
             10
         ];
-        let mut waveforms = vec![[0.0f64; 8]; 10];
-        let mut features = vec![[0.0f64; 3]; 10];
+        let mut waveforms = vec![[0.0; 8]; 10];
+        let mut features = vec![[0.0; 3]; 10];
         let mut labels = vec![0usize; 10];
 
         let result = sort_multichannel::<2, 4, 8, 3, 64, 4>(
@@ -3920,8 +3921,8 @@ mod tests {
         // All-zero data should produce no spikes
         let config = SortConfig::default();
         let probe = ProbeLayout::<2>::linear(25.0);
-        let mut data = vec![[0.0f64; 2]; 1000];
-        let mut scratch = vec![0.0f64; 1000];
+        let mut data = vec![[0.0; 2]; 1000];
+        let mut scratch = vec![0.0; 1000];
         let mut events = vec![
             MultiChannelEvent {
                 sample: 0,
@@ -3930,8 +3931,8 @@ mod tests {
             };
             100
         ];
-        let mut waveforms = vec![[0.0f64; 8]; 100];
-        let mut features = vec![[0.0f64; 3]; 100];
+        let mut waveforms = vec![[0.0; 8]; 100];
+        let mut features = vec![[0.0; 3]; 100];
         let mut labels = vec![0usize; 100];
 
         let result = sort_multichannel::<2, 4, 8, 3, 64, 4>(
@@ -3956,21 +3957,22 @@ mod tests {
         let n = 5000;
 
         // Generate 2-channel noisy data
-        let mut data = vec![[0.0f64; 2]; n];
+        let mut data = vec![[0.0; 2]; n];
         for sample in data.iter_mut() {
             sample[0] = rng.gaussian(0.0, 1.0);
             sample[1] = rng.gaussian(0.0, 1.0);
         }
 
         // Inject spikes: neuron A on channel 0, neuron B on channel 1
-        let spike_template_a = |t: f64| -> f64 { -12.0 * libm::exp(-0.5 * t * t) };
-        let spike_template_b = |t: f64| -> f64 { -10.0 * libm::exp(-0.5 * (t / 1.5) * (t / 1.5)) };
+        let spike_template_a = |t: Float| -> Float { -12.0 * float::exp(-0.5 * t * t) };
+        let spike_template_b =
+            |t: Float| -> Float { -10.0 * float::exp(-0.5 * (t / 1.5) * (t / 1.5)) };
 
         // Neuron A fires at regular intervals on channel 0
         let mut spike_pos_a = 200;
         while spike_pos_a + 10 < n {
             for dt in 0..8 {
-                let t = (dt as f64 - 2.0) / 1.5;
+                let t = (dt as Float - 2.0) / 1.5;
                 if spike_pos_a + dt < n {
                     data[spike_pos_a + dt][0] += spike_template_a(t);
                 }
@@ -3982,7 +3984,7 @@ mod tests {
         let mut spike_pos_b = 300;
         while spike_pos_b + 12 < n {
             for dt in 0..10 {
-                let t = (dt as f64 - 3.0) / 2.0;
+                let t = (dt as Float - 3.0) / 2.0;
                 if spike_pos_b + dt < n {
                     data[spike_pos_b + dt][1] += spike_template_b(t);
                 }
@@ -4001,7 +4003,7 @@ mod tests {
         };
 
         let probe = ProbeLayout::<2>::linear(25.0);
-        let mut scratch = vec![0.0f64; n];
+        let mut scratch = vec![0.0; n];
         let mut events = vec![
             MultiChannelEvent {
                 sample: 0,
@@ -4010,8 +4012,8 @@ mod tests {
             };
             200
         ];
-        let mut waveforms = vec![[0.0f64; 8]; 200];
-        let mut features = vec![[0.0f64; 3]; 200];
+        let mut waveforms = vec![[0.0; 8]; 200];
+        let mut features = vec![[0.0; 3]; 200];
         let mut labels = vec![0usize; 200];
 
         let result = sort_multichannel::<2, 4, 8, 3, 64, 8>(
@@ -4040,7 +4042,7 @@ mod tests {
         let max_snr = sr.clusters[..sr.n_clusters]
             .iter()
             .map(|c| c.snr)
-            .fold(0.0f64, |a, b| if a > b { a } else { b });
+            .fold(0.0, |a, b| if a > b { a } else { b });
         assert!(
             max_snr > 1.0,
             "Best cluster SNR should be > 1.0, got {}",
@@ -4054,7 +4056,7 @@ mod tests {
         let n = 5000;
 
         // 4-channel data with different noise levels per channel
-        let mut data = vec![[0.0f64; 4]; n];
+        let mut data = vec![[0.0; 4]; n];
         let noise_levels = [1.0, 0.5, 2.0, 0.01]; // ch3 is near-dead
         for sample in data.iter_mut() {
             for ch in 0..4 {
@@ -4063,11 +4065,11 @@ mod tests {
         }
 
         // Inject spikes on channel 0
-        let spike_template = |t: f64| -> f64 { -12.0 * libm::exp(-0.5 * t * t) };
+        let spike_template = |t: Float| -> Float { -12.0 * float::exp(-0.5 * t * t) };
         let mut pos = 200;
         while pos + 10 < n {
             for dt in 0..8 {
-                let t = (dt as f64 - 2.0) / 1.5;
+                let t = (dt as Float - 2.0) / 1.5;
                 if pos + dt < n {
                     data[pos + dt][0] += spike_template(t);
                 }
@@ -4076,7 +4078,7 @@ mod tests {
         }
 
         let probe = ProbeLayout::<4>::linear(25.0);
-        let mut scratch = vec![0.0f64; n];
+        let mut scratch = vec![0.0; n];
         let mut events = vec![
             MultiChannelEvent {
                 sample: 0,
@@ -4085,8 +4087,8 @@ mod tests {
             };
             200
         ];
-        let mut waveforms = vec![[0.0f64; 8]; 200];
-        let mut features = vec![[0.0f64; 3]; 200];
+        let mut waveforms = vec![[0.0; 8]; 200];
+        let mut features = vec![[0.0; 3]; 200];
         let mut labels = vec![0usize; 200];
 
         // Sort with adaptive thresholds
@@ -4170,7 +4172,7 @@ mod tests {
                 amplitude: 5.0,
             },
         ];
-        let mut scratch = [0.0f64; 6];
+        let mut scratch = [0.0; 6];
 
         let new_n = merge_clusters(
             6,
@@ -4235,7 +4237,7 @@ mod tests {
                 amplitude: 5.0,
             },
         ];
-        let mut scratch = [0.0f64; 6];
+        let mut scratch = [0.0; 6];
 
         let new_n = merge_clusters(
             6,
@@ -4301,7 +4303,7 @@ mod tests {
                 amplitude: 5.0,
             },
         ];
-        let mut scratch = [0.0f64; 6];
+        let mut scratch = [0.0; 6];
 
         let new_n = merge_clusters(
             6,
@@ -4343,7 +4345,7 @@ mod tests {
                 amplitude: 5.0,
             },
         ];
-        let mut scratch = [0.0f64; 3];
+        let mut scratch = [0.0; 3];
 
         let new_n = merge_clusters(
             3,
@@ -4363,9 +4365,9 @@ mod tests {
     #[test]
     fn test_merge_empty() {
         let mut labels: [usize; 0] = [];
-        let features: [[f64; 2]; 0] = [];
+        let features: [[Float; 2]; 0] = [];
         let events: [MultiChannelEvent; 0] = [];
-        let mut scratch: [f64; 0] = [];
+        let mut scratch: [Float; 0] = [];
 
         let new_n = merge_clusters(
             0,
@@ -4444,7 +4446,7 @@ mod tests {
                 amplitude: 5.0,
             },
         ];
-        let mut scratch = [0.0f64; 9];
+        let mut scratch = [0.0; 9];
 
         let new_n = merge_clusters(
             9,
@@ -4533,7 +4535,7 @@ mod tests {
                 amplitude: 5.0,
             },
         ];
-        let mut scratch = [0.0f64; 8];
+        let mut scratch = [0.0; 8];
 
         let new_n = merge_clusters(
             8,
@@ -4611,7 +4613,7 @@ mod tests {
     #[test]
     fn test_split_empty_no_panic() {
         let mut labels: [usize; 0] = [];
-        let features: [[f64; 2]; 0] = [];
+        let features: [[Float; 2]; 0] = [];
         let new_n = split_clusters(0, &mut labels, &features, 0, 3, 2.0);
         assert_eq!(new_n, 0);
     }
@@ -4662,7 +4664,7 @@ mod tests {
         let mut sorter = OnlineSorter::<2, 4>::new();
         let (label, dist) = sorter.classify(&[1.0, 2.0]);
         assert_eq!(label, 0);
-        assert_eq!(dist, f64::MAX);
+        assert_eq!(dist, float::MAX);
     }
 
     #[test]
@@ -4715,7 +4717,7 @@ mod tests {
     #[test]
     fn test_compute_cluster_means() {
         // 2 clusters, W=4, N=4
-        let waveforms: alloc::vec::Vec<[f64; 4]> = vec![
+        let waveforms: alloc::vec::Vec<[Float; 4]> = vec![
             [1.0, 2.0, 3.0, 4.0],
             [3.0, 4.0, 5.0, 6.0],
             [10.0, 20.0, 30.0, 40.0],
@@ -4739,7 +4741,7 @@ mod tests {
             },
         ];
 
-        let mut means = [[0.0f64; 4]; 4];
+        let mut means = [[0.0; 4]; 4];
         let mut counts = [0u32; 4];
         let mut peak_ch = [0usize; 4];
 
@@ -4768,7 +4770,7 @@ mod tests {
     #[test]
     fn test_subtract_templates_multichannel() {
         // 2-channel data, W=4, 1 spike at sample 5
-        let mut data = vec![[0.0f64; 2]; 20];
+        let mut data = vec![[0.0; 2]; 20];
         data[3] = [1.0, 0.0];
         data[4] = [2.0, 0.0];
         data[5] = [3.0, 0.0];
@@ -4780,7 +4782,7 @@ mod tests {
             amplitude: 3.0,
         }];
         let labels = [0usize];
-        let means: [[f64; 4]; 4] = [[1.0, 2.0, 3.0, 2.0], [0.0; 4], [0.0; 4], [0.0; 4]];
+        let means: [[Float; 4]; 4] = [[1.0, 2.0, 3.0, 2.0], [0.0; 4], [0.0; 4], [0.0; 4]];
         let counts = [5u32, 0, 0, 0];
         let peak_ch = [0usize, 0, 0, 0];
 
@@ -4799,7 +4801,7 @@ mod tests {
 
     #[test]
     fn test_assign_to_nearest_template() {
-        let means: [[f64; 4]; 4] = [
+        let means: [[Float; 4]; 4] = [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0; 4],
@@ -4821,7 +4823,7 @@ mod tests {
         // Run sorting with template_subtract on vs off on the same data
         let mut rng = Rng::new(77);
         let n = 5000;
-        let mut data_on = vec![[0.0f64; 2]; n];
+        let mut data_on = vec![[0.0; 2]; n];
         for s in data_on.iter_mut() {
             s[0] = rng.gaussian(0.0, 1.0);
             s[1] = rng.gaussian(0.0, 1.0);
@@ -4830,8 +4832,8 @@ mod tests {
         let mut pos = 200;
         while pos + 8 < n {
             for dt in 0..8 {
-                let t = (dt as f64 - 2.0) / 1.5;
-                data_on[pos + dt][0] += -12.0 * libm::exp(-0.5 * t * t);
+                let t = (dt as Float - 2.0) / 1.5;
+                data_on[pos + dt][0] += -12.0 * float::exp(-0.5 * t * t);
             }
             pos += 150;
         }
@@ -4847,7 +4849,7 @@ mod tests {
             ccg_template_corr_threshold: 0.5,
             ..SortConfig::default()
         };
-        let mut scratch_on = vec![0.0f64; n];
+        let mut scratch_on = vec![0.0; n];
         let mut ev_on = vec![
             MultiChannelEvent {
                 sample: 0,
@@ -4856,8 +4858,8 @@ mod tests {
             };
             max_ev
         ];
-        let mut wf_on = vec![[0.0f64; 8]; max_ev];
-        let mut feat_on = vec![[0.0f64; 3]; max_ev];
+        let mut wf_on = vec![[0.0; 8]; max_ev];
+        let mut feat_on = vec![[0.0; 3]; max_ev];
         let mut lab_on = vec![0usize; max_ev];
 
         let r_on = sort_multichannel::<2, 4, 8, 3, 64, 4>(
@@ -4879,7 +4881,7 @@ mod tests {
             ccg_template_corr_threshold: 0.5,
             ..SortConfig::default()
         };
-        let mut scratch_off = vec![0.0f64; n];
+        let mut scratch_off = vec![0.0; n];
         let mut ev_off = vec![
             MultiChannelEvent {
                 sample: 0,
@@ -4888,8 +4890,8 @@ mod tests {
             };
             max_ev
         ];
-        let mut wf_off = vec![[0.0f64; 8]; max_ev];
-        let mut feat_off = vec![[0.0f64; 3]; max_ev];
+        let mut wf_off = vec![[0.0; 8]; max_ev];
+        let mut feat_off = vec![[0.0; 3]; max_ev];
         let mut lab_off = vec![0usize; max_ev];
 
         let r_off = sort_multichannel::<2, 4, 8, 3, 64, 4>(
@@ -4919,7 +4921,7 @@ mod tests {
     fn test_isi_violation_split_no_violations() {
         // Cluster with well-spaced spikes should not be split
         let mut labels = [0usize; 20];
-        let features: Vec<[f64; 2]> = (0..20).map(|i| [i as f64 * 0.1, 0.0]).collect();
+        let features: Vec<[Float; 2]> = (0..20).map(|i| [i as Float * 0.1, 0.0]).collect();
         let events: Vec<MultiChannelEvent> = (0..20)
             .map(|i| MultiChannelEvent {
                 sample: i * 100, // well-spaced (100 samples apart)
@@ -4927,7 +4929,7 @@ mod tests {
                 amplitude: 5.0,
             })
             .collect();
-        let mut scratch = [0.0f64; 100];
+        let mut scratch = [0.0; 100];
         let n = isi_violation_split::<2>(
             20,
             &mut labels,
@@ -4949,7 +4951,7 @@ mod tests {
         let n_spikes = 40;
         let mut labels = vec![0usize; n_spikes];
         // Two populations in feature space
-        let features: Vec<[f64; 2]> = (0..n_spikes)
+        let features: Vec<[Float; 2]> = (0..n_spikes)
             .map(|i| if i % 2 == 0 { [5.0, 0.0] } else { [0.0, 5.0] })
             .collect();
         // Interleaved spike times: 0, 5, 10, 15, ... (5 samples apart, < 15 refractory)
@@ -4960,7 +4962,7 @@ mod tests {
                 amplitude: 5.0,
             })
             .collect();
-        let mut scratch = vec![0.0f64; n_spikes + 10];
+        let mut scratch = vec![0.0; n_spikes + 10];
         let n = isi_violation_split::<2>(
             n_spikes,
             &mut labels,
@@ -4983,9 +4985,9 @@ mod tests {
     #[test]
     fn test_isi_violation_split_empty() {
         let mut labels = [];
-        let features: Vec<[f64; 2]> = vec![];
+        let features: Vec<[Float; 2]> = vec![];
         let events: Vec<MultiChannelEvent> = vec![];
-        let mut scratch = [0.0f64; 10];
+        let mut scratch = [0.0; 10];
         let n = isi_violation_split::<2>(
             0,
             &mut labels,
@@ -5005,7 +5007,7 @@ mod tests {
     fn test_isi_violation_split_high_threshold() {
         // With threshold = 1.0 (100%), nothing should be split since max ISI rate < 1.0
         let mut labels = [0usize; 20];
-        let features: Vec<[f64; 2]> = (0..20).map(|i| [i as f64, 0.0]).collect();
+        let features: Vec<[Float; 2]> = (0..20).map(|i| [i as Float, 0.0]).collect();
         let events: Vec<MultiChannelEvent> = (0..20)
             .map(|i| MultiChannelEvent {
                 sample: i * 5,
@@ -5013,7 +5015,7 @@ mod tests {
                 amplitude: 5.0,
             })
             .collect();
-        let mut scratch = [0.0f64; 30];
+        let mut scratch = [0.0; 30];
         // threshold = 1.0 means only split if 100% ISI violations (impossible)
         let n = isi_violation_split::<2>(
             20,
@@ -5037,9 +5039,9 @@ mod tests {
         let events: Vec<MultiChannelEvent> = (0..20)
             .map(|i| {
                 let amp = if i < 10 {
-                    2.0 + (i as f64) * 0.05
+                    2.0 + (i as Float) * 0.05
                 } else {
-                    20.0 + ((i - 10) as f64) * 0.05
+                    20.0 + ((i - 10) as Float) * 0.05
                 };
                 MultiChannelEvent {
                     sample: i * 100,
@@ -5064,7 +5066,7 @@ mod tests {
             .map(|i| MultiChannelEvent {
                 sample: i * 100,
                 channel: 0,
-                amplitude: 5.0 + (i as f64) * 0.1,
+                amplitude: 5.0 + (i as Float) * 0.1,
             })
             .collect();
         let n = amplitude_bimodality_split(20, &mut labels, &events, 1, 2.0, 3, 8);
@@ -5107,7 +5109,7 @@ mod tests {
         use crate::probe::ProbeLayout;
         let probe = ProbeLayout::<4>::linear(25.0);
         let n_samples = 10000;
-        let mut data1 = vec![[0.0f64; 4]; n_samples];
+        let mut data1 = vec![[0.0; 4]; n_samples];
         let mut data2 = data1.clone();
         // Inject overlapping spikes
         for t in (200..9000).step_by(80) {
@@ -5183,18 +5185,18 @@ mod tests {
     #[test]
     fn test_bandpass_removes_dc() {
         // Bandpass filter should remove DC offset
-        let mut data = [[5.0f64; 2]; 2000];
+        let mut data = [[5.0; 2]; 2000];
         // Add some high-frequency content at sample rate / 10
         for (i, sample) in data.iter_mut().enumerate() {
-            let t = i as f64 / 1000.0;
-            sample[0] += libm::sin(2.0 * core::f64::consts::PI * 100.0 * t);
+            let t = i as Float / 1000.0;
+            sample[0] += float::sin(2.0 * float::PI * 100.0 * t);
         }
         bandpass_inplace::<2>(&mut data, 1000.0, 50.0, 200.0);
         // DC should be removed: mean should be near zero
-        let mean: f64 =
-            data.iter().skip(200).map(|s| s[0]).sum::<f64>() / (data.len() - 200) as f64;
+        let mean: Float =
+            data.iter().skip(200).map(|s| s[0]).sum::<Float>() / (data.len() - 200) as Float;
         assert!(
-            libm::fabs(mean) < 1.0,
+            float::abs(mean) < 1.0,
             "bandpass should remove DC, mean={}",
             mean
         );
@@ -5203,25 +5205,25 @@ mod tests {
     #[test]
     fn test_bandpass_preserves_passband() {
         // Signal in passband should be mostly preserved
-        let mut data = [[0.0f64; 1]; 4000];
+        let mut data = [[0.0; 1]; 4000];
         let freq = 1000.0; // 1kHz signal, passband 300-6000Hz at 30kHz
         for (i, sample) in data.iter_mut().enumerate() {
-            let t = i as f64 / 30000.0;
-            sample[0] = libm::sin(2.0 * core::f64::consts::PI * freq * t);
+            let t = i as Float / 30000.0;
+            sample[0] = float::sin(2.0 * float::PI * freq * t);
         }
-        let original_power: f64 = data
+        let original_power: Float = data
             .iter()
             .skip(500)
             .take(2000)
             .map(|s| s[0] * s[0])
-            .sum::<f64>();
+            .sum::<Float>();
         bandpass_inplace::<1>(&mut data, 30000.0, 300.0, 6000.0);
-        let filtered_power: f64 = data
+        let filtered_power: Float = data
             .iter()
             .skip(500)
             .take(2000)
             .map(|s| s[0] * s[0])
-            .sum::<f64>();
+            .sum::<Float>();
         let ratio = filtered_power / original_power;
         assert!(
             ratio > 0.5,
@@ -5237,7 +5239,7 @@ mod tests {
         // Common noise on all channels should be removed by CMR
         let probe = ProbeLayout::<4>::linear(25.0);
         let n_samples = 2000;
-        let mut data = vec![[0.0f64; 4]; n_samples];
+        let mut data = vec![[0.0; 4]; n_samples];
         let mut rng = Rng::new(77);
         // Add common noise + independent noise + spikes
         for t in 0..n_samples {
@@ -5331,7 +5333,7 @@ mod tests {
         use crate::probe::ProbeLayout;
         let probe = ProbeLayout::<4>::linear(25.0);
         let n_samples = 2000;
-        let mut data = vec![[0.0f64; 4]; n_samples];
+        let mut data = vec![[0.0; 4]; n_samples];
         let mut rng = Rng::new(99);
         for row in data.iter_mut() {
             for ch in row.iter_mut() {
@@ -5379,8 +5381,8 @@ mod tests {
         let n = 6000;
 
         // Helper to build data with two neurons
-        let build_data = |rng: &mut Rng| -> Vec<[f64; 2]> {
-            let mut data = vec![[0.0f64; 2]; n];
+        let build_data = |rng: &mut Rng| -> Vec<[Float; 2]> {
+            let mut data = vec![[0.0; 2]; n];
             for sample in data.iter_mut() {
                 sample[0] = rng.gaussian(0.0, 1.0);
                 sample[1] = rng.gaussian(0.0, 1.0);
@@ -5389,9 +5391,9 @@ mod tests {
             let mut pos = 200;
             while pos + 10 < n {
                 for dt in 0..8 {
-                    let t = (dt as f64 - 2.0) / 1.5;
+                    let t = (dt as Float - 2.0) / 1.5;
                     if pos + dt < n {
-                        data[pos + dt][0] += -14.0 * libm::exp(-0.5 * t * t);
+                        data[pos + dt][0] += -14.0 * float::exp(-0.5 * t * t);
                     }
                 }
                 pos += 150;
@@ -5400,9 +5402,9 @@ mod tests {
             let mut pos = 350;
             while pos + 12 < n {
                 for dt in 0..10 {
-                    let t = (dt as f64 - 3.0) / 2.0;
+                    let t = (dt as Float - 3.0) / 2.0;
                     if pos + dt < n {
-                        data[pos + dt][1] += -10.0 * libm::exp(-0.5 * t * t);
+                        data[pos + dt][1] += -10.0 * float::exp(-0.5 * t * t);
                     }
                 }
                 pos += 200;
@@ -5421,7 +5423,7 @@ mod tests {
                 ..SortConfig::default()
             };
             let probe = ProbeLayout::<2>::linear(25.0);
-            let mut scratch = vec![0.0f64; n];
+            let mut scratch = vec![0.0; n];
             let mut events = vec![
                 MultiChannelEvent {
                     sample: 0,
@@ -5430,8 +5432,8 @@ mod tests {
                 };
                 300
             ];
-            let mut waveforms = vec![[0.0f64; 8]; 300];
-            let mut features = vec![[0.0f64; 3]; 300];
+            let mut waveforms = vec![[0.0; 8]; 300];
+            let mut features = vec![[0.0; 3]; 300];
             let mut labels = vec![0usize; 300];
 
             sort_multichannel::<2, 4, 8, 3, 64, 8>(

@@ -36,13 +36,14 @@
 //!
 //! ```
 //! use zerostone::LmsFilter;
+//! use zerostone::Float;
 //!
 //! // Create LMS filter with 64 taps, step size 0.01
 //! let mut lms = LmsFilter::<64>::new(0.01);
 //!
 //! // Process EEG samples with EOG reference
-//! # let eog_data = [0.0f32; 100];
-//! # let eeg_data = [0.0f32; 100];
+//! # let eog_data = [0.0 as Float; 100];
+//! # let eeg_data = [0.0 as Float; 100];
 //! for i in 0..eeg_data.len() {
 //!     let result = lms.process_sample(eog_data[i], eeg_data[i]);
 //!     let clean_eeg = result.error;   // Clean signal (artifact removed)
@@ -54,22 +55,22 @@
 //!
 //! ```
 //! use zerostone::LmsFilter;
-//! use core::f32::consts::PI;
+//! use zerostone::float::{self, Float};
 //!
 //! let mut lms = LmsFilter::<32>::new(0.05);
 //! let sample_rate = 250.0;
 //!
 //! for i in 0..500 {
-//!     let t = i as f32 / sample_rate;
+//!     let t = i as Float / sample_rate;
 //!
 //!     // Clean signal (10 Hz)
-//!     let clean = libm::sinf(2.0 * PI * 10.0 * t);
+//!     let clean = float::sin(2.0 * float::PI * 10.0 * t);
 //!
 //!     // Powerline interference (60 Hz)
-//!     let interference = 0.3 * libm::sinf(2.0 * PI * 60.0 * t);
+//!     let interference = 0.3 * float::sin(2.0 * float::PI * 60.0 * t);
 //!
 //!     // Reference signal (60 Hz from separate sensor)
-//!     let reference = libm::sinf(2.0 * PI * 60.0 * t);
+//!     let reference = float::sin(2.0 * float::PI * 60.0 * t);
 //!
 //!     // Contaminated signal
 //!     let contaminated = clean + interference;
@@ -81,6 +82,8 @@
 //! }
 //! ```
 
+use crate::float::Float;
+
 /// Output from LMS adaptive filter processing.
 ///
 /// Contains both the filtered output and the error signal. The error signal
@@ -88,9 +91,9 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AdaptiveOutput {
     /// Filtered output signal y(n) = w^T * u(n)
-    pub output: f32,
+    pub output: Float,
     /// Error signal e(n) = d(n) - y(n), represents removed artifact/noise
-    pub error: f32,
+    pub error: Float,
 }
 
 /// LMS (Least Mean Squares) adaptive filter.
@@ -125,13 +128,13 @@ pub struct AdaptiveOutput {
 #[derive(Debug, Clone)]
 pub struct LmsFilter<const N: usize> {
     /// Adaptive filter coefficients (weights)
-    weights: [f32; N],
+    weights: [Float; N],
     /// Circular buffer storing past N input samples
-    delay_line: [f32; N],
+    delay_line: [Float; N],
     /// Current write position in circular buffer
     index: usize,
     /// Step size (learning rate), controls adaptation speed vs stability
-    mu: f32,
+    mu: Float,
 }
 
 impl<const N: usize> LmsFilter<N> {
@@ -152,7 +155,7 @@ impl<const N: usize> LmsFilter<N> {
     ///
     /// let lms = LmsFilter::<64>::new(0.01);
     /// ```
-    pub fn new(mu: f32) -> Self {
+    pub fn new(mu: Float) -> Self {
         assert!(mu > 0.0, "step size mu must be positive");
         Self {
             weights: [0.0; N],
@@ -184,7 +187,7 @@ impl<const N: usize> LmsFilter<N> {
     /// let weights = [0.5, 1.0, 0.5];
     /// let lms = LmsFilter::<3>::with_weights(0.01, weights);
     /// ```
-    pub fn with_weights(mu: f32, weights: [f32; N]) -> Self {
+    pub fn with_weights(mu: Float, weights: [Float; N]) -> Self {
         assert!(mu > 0.0, "step size mu must be positive");
         Self {
             weights,
@@ -222,7 +225,7 @@ impl<const N: usize> LmsFilter<N> {
     /// let result = lms.process_sample(0.5, 1.0);
     /// println!("Output: {}, Error: {}", result.output, result.error);
     /// ```
-    pub fn process_sample(&mut self, input: f32, desired: f32) -> AdaptiveOutput {
+    pub fn process_sample(&mut self, input: Float, desired: Float) -> AdaptiveOutput {
         // 1. Store input in circular buffer
         self.delay_line[self.index] = input;
 
@@ -278,8 +281,8 @@ impl<const N: usize> LmsFilter<N> {
     /// ```
     pub fn process_block(
         &mut self,
-        inputs: &[f32],
-        desired: &[f32],
+        inputs: &[Float],
+        desired: &[Float],
         outputs: &mut [AdaptiveOutput],
     ) {
         let len = inputs.len().min(desired.len()).min(outputs.len());
@@ -316,7 +319,7 @@ impl<const N: usize> LmsFilter<N> {
     /// // Use trained filter for prediction only
     /// let prediction = lms.predict(0.5);
     /// ```
-    pub fn predict(&mut self, input: f32) -> f32 {
+    pub fn predict(&mut self, input: Float) -> Float {
         // Store input in delay line (same as process_sample)
         self.delay_line[self.index] = input;
 
@@ -395,7 +398,7 @@ impl<const N: usize> LmsFilter<N> {
     /// let weights = lms.weights();
     /// assert_eq!(weights.len(), 3);
     /// ```
-    pub fn weights(&self) -> &[f32; N] {
+    pub fn weights(&self) -> &[Float; N] {
         &self.weights
     }
 
@@ -413,7 +416,7 @@ impl<const N: usize> LmsFilter<N> {
     /// let mut lms = LmsFilter::<3>::new(0.01);
     /// lms.set_weights([0.5, 1.0, 0.5]);
     /// ```
-    pub fn set_weights(&mut self, weights: [f32; N]) {
+    pub fn set_weights(&mut self, weights: [Float; N]) {
         self.weights = weights;
     }
 
@@ -427,7 +430,7 @@ impl<const N: usize> LmsFilter<N> {
     /// let lms = LmsFilter::<32>::new(0.01);
     /// assert_eq!(lms.mu(), 0.01);
     /// ```
-    pub fn mu(&self) -> f32 {
+    pub fn mu(&self) -> Float {
         self.mu
     }
 
@@ -450,7 +453,7 @@ impl<const N: usize> LmsFilter<N> {
     /// lms.set_mu(0.05);  // Increase adaptation speed
     /// assert_eq!(lms.mu(), 0.05);
     /// ```
-    pub fn set_mu(&mut self, mu: f32) {
+    pub fn set_mu(&mut self, mu: Float) {
         assert!(mu > 0.0, "step size mu must be positive");
         self.mu = mu;
     }
@@ -465,8 +468,8 @@ impl<const N: usize> Default for LmsFilter<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::float;
     use crate::FirFilter;
-    use core::f32::consts::PI;
 
     #[test]
     fn test_lms_new() {
@@ -497,7 +500,7 @@ mod tests {
         // Simple deterministic noise (white-ish)
         for i in 0..2000 {
             // More iterations
-            let input = (i % 17) as f32 / 17.0 - 0.5;
+            let input = (i % 17) as Float / 17.0 - 0.5;
             let desired = system.process_sample(input);
             lms.process_sample(input, desired);
         }
@@ -530,7 +533,7 @@ mod tests {
         let mut final_error_sum = 0.0;
 
         for i in 0..500 {
-            let input = libm::sinf(2.0 * PI * 0.1 * i as f32);
+            let input = float::sin(2.0 * float::PI * 0.1 * i as Float);
             let desired = 2.0 * input; // Desired is 2x input
 
             let result = lms.process_sample(input, desired);
@@ -592,7 +595,7 @@ mod tests {
 
         // Process some samples to fill delay line
         for i in 0..10 {
-            let input = i as f32 * 0.1;
+            let input = i as Float * 0.1;
             lms.process_sample(input, input * 2.0);
         }
 
@@ -612,7 +615,7 @@ mod tests {
 
         // Train the filter
         for i in 0..100 {
-            let input = (i % 7) as f32 / 7.0;
+            let input = (i % 7) as Float / 7.0;
             lms.process_sample(input, input * 2.0);
         }
 

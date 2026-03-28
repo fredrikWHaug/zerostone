@@ -18,8 +18,7 @@
 
 #![allow(dead_code)] // Remove once CSP module uses these
 
-use core::f64;
-use libm;
+use crate::float::{self, Float};
 
 /// Errors that can occur during matrix operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,7 +56,7 @@ pub enum LinalgError {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Matrix<const C: usize, const M: usize> {
     /// Matrix data in row-major order
-    data: [f64; M],
+    data: [Float; M],
 }
 
 impl<const C: usize, const M: usize> Matrix<C, M> {
@@ -66,7 +65,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
     /// # Panics
     ///
     /// Panics if M ≠ C×C.
-    pub const fn new(data: [f64; M]) -> Self {
+    pub const fn new(data: [Float; M]) -> Self {
         assert!(M == C * C, "Matrix size M must equal C * C");
         Self { data }
     }
@@ -91,7 +90,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
     ///
     /// Panics if i >= C or j >= C.
     #[inline]
-    pub fn get(&self, i: usize, j: usize) -> f64 {
+    pub fn get(&self, i: usize, j: usize) -> Float {
         assert!(i < C && j < C, "Index out of bounds");
         self.data[i * C + j]
     }
@@ -102,23 +101,23 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
     ///
     /// Panics if i >= C or j >= C.
     #[inline]
-    pub fn set(&mut self, i: usize, j: usize, value: f64) {
+    pub fn set(&mut self, i: usize, j: usize, value: Float) {
         assert!(i < C && j < C, "Index out of bounds");
         self.data[i * C + j] = value;
     }
 
     /// Get reference to the underlying data array.
-    pub fn data(&self) -> &[f64; M] {
+    pub fn data(&self) -> &[Float; M] {
         &self.data
     }
 
     /// Get mutable reference to the underlying data array.
-    pub fn data_mut(&mut self) -> &mut [f64; M] {
+    pub fn data_mut(&mut self) -> &mut [Float; M] {
         &mut self.data
     }
 
     /// Create matrix from covariance array (same format).
-    pub fn from_array(data: [f64; M]) -> Self {
+    pub fn from_array(data: [Float; M]) -> Self {
         Self::new(data)
     }
 
@@ -136,7 +135,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
     /// Add a constant to the diagonal (for regularization).
     ///
     /// This is used to improve numerical stability: A + λI
-    pub fn add_diagonal(&mut self, lambda: f64) {
+    pub fn add_diagonal(&mut self, lambda: Float) {
         for i in 0..C {
             self.data[i * C + i] += lambda;
         }
@@ -173,16 +172,16 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
     }
 
     /// Compute the Frobenius norm of the matrix: sqrt(sum of squared elements).
-    pub fn frobenius_norm(&self) -> f64 {
+    pub fn frobenius_norm(&self) -> Float {
         let mut sum = 0.0;
         for i in 0..M {
             sum += self.data[i] * self.data[i];
         }
-        libm::sqrt(sum)
+        float::sqrt(sum)
     }
 
     /// Scalar multiplication.
-    pub fn scale(&self, scalar: f64) -> Self {
+    pub fn scale(&self, scalar: Float) -> Self {
         let mut result = *self;
         for i in 0..M {
             result.data[i] *= scalar;
@@ -223,11 +222,11 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
                     if sum <= 0.0 {
                         return Err(LinalgError::NotPositiveDefinite);
                     }
-                    l.set(i, j, libm::sqrt(sum));
+                    l.set(i, j, float::sqrt(sum));
                 } else {
                     // Off-diagonal element
                     let l_jj = l.get(j, j);
-                    if libm::fabs(l_jj) < 1e-15 {
+                    if float::abs(l_jj) < 1e-15 {
                         return Err(LinalgError::NotPositiveDefinite);
                     }
                     l.set(i, j, sum / l_jj);
@@ -243,7 +242,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
     /// # Panics
     ///
     /// Panics if L has zero diagonal elements.
-    pub fn forward_substitute(&self, b: &[f64; C]) -> [f64; C] {
+    pub fn forward_substitute(&self, b: &[Float; C]) -> [Float; C] {
         let mut x = [0.0; C];
 
         #[allow(clippy::needless_range_loop)]
@@ -254,7 +253,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
             }
             let l_ii = self.get(i, i);
             assert!(
-                libm::fabs(l_ii) > 1e-15,
+                float::abs(l_ii) > 1e-15,
                 "Singular matrix in forward substitution"
             );
             x[i] = sum / l_ii;
@@ -268,7 +267,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
     /// # Panics
     ///
     /// Panics if L has zero diagonal elements.
-    pub fn backward_substitute(&self, b: &[f64; C]) -> [f64; C] {
+    pub fn backward_substitute(&self, b: &[Float; C]) -> [Float; C] {
         let mut x = [0.0; C];
 
         #[allow(clippy::needless_range_loop)]
@@ -279,7 +278,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
             }
             let l_ii = self.get(i, i);
             assert!(
-                libm::fabs(l_ii) > 1e-15,
+                float::abs(l_ii) > 1e-15,
                 "Singular matrix in backward substitution"
             );
             x[i] = sum / l_ii;
@@ -295,7 +294,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
     /// # Errors
     ///
     /// Returns error if Cholesky decomposition fails.
-    pub fn solve(&self, b: &[f64; C]) -> Result<[f64; C], LinalgError> {
+    pub fn solve(&self, b: &[Float; C]) -> Result<[Float; C], LinalgError> {
         let l = self.cholesky()?;
         let y = l.forward_substitute(b);
         Ok(l.backward_substitute(&y))
@@ -328,7 +327,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
     pub fn eigen_symmetric(
         &self,
         max_iters: usize,
-        tol: f64,
+        tol: Float,
     ) -> Result<EigenDecomposition<C, M>, LinalgError> {
         // Copy matrix (will be modified to diagonal form)
         let mut a = *self;
@@ -344,7 +343,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
                 matrix_norm += val * val;
             }
         }
-        matrix_norm = libm::sqrt(matrix_norm);
+        matrix_norm = float::sqrt(matrix_norm);
         if matrix_norm < 1e-300 {
             matrix_norm = 1.0; // avoid division by zero for zero matrix
         }
@@ -360,7 +359,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
                     off_diag_norm_sq += val * val;
                 }
             }
-            let off_diag_norm = libm::sqrt(2.0 * off_diag_norm_sq);
+            let off_diag_norm = float::sqrt(2.0 * off_diag_norm_sq);
 
             // Check convergence
             if off_diag_norm < abs_tol {
@@ -383,7 +382,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
 
             // Threshold for early sweeps: skip small elements
             let threshold = if sweep < 3 {
-                0.2 * off_diag_norm_sq / ((C * C) as f64)
+                0.2 * off_diag_norm_sq / ((C * C) as Float)
             } else {
                 0.0
             };
@@ -392,7 +391,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
             for i in 0..C {
                 for j in (i + 1)..C {
                     let a_ij = a.get(i, j);
-                    let abs_a_ij = libm::fabs(a_ij);
+                    let abs_a_ij = float::abs(a_ij);
 
                     // Early sweep threshold: skip small off-diagonal elements
                     if sweep < 3 && abs_a_ij * abs_a_ij < threshold {
@@ -401,8 +400,8 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
 
                     // Late sweep: skip if negligible relative to diagonal
                     if sweep >= 3 {
-                        let a_ii = libm::fabs(a.get(i, i));
-                        let a_jj = libm::fabs(a.get(j, j));
+                        let a_ii = float::abs(a.get(i, i));
+                        let a_jj = float::abs(a.get(j, j));
                         if abs_a_ij < 1e-15 * (a_ii + a_jj) {
                             continue;
                         }
@@ -431,14 +430,14 @@ pub struct EigenDiagnostics {
     /// Number of sweeps used before convergence
     pub sweeps_used: usize,
     /// Final off-diagonal Frobenius norm
-    pub final_off_diag_norm: f64,
+    pub final_off_diag_norm: Float,
 }
 
 /// Result of eigenvalue decomposition.
 #[derive(Debug, Clone, Copy)]
 pub struct EigenDecomposition<const C: usize, const M: usize> {
     /// Eigenvalues in descending order
-    pub eigenvalues: [f64; C],
+    pub eigenvalues: [Float; C],
 
     /// Eigenvectors as columns (eigenvectors.get(row, col) = col-th eigenvector, row-th element)
     pub eigenvectors: Matrix<C, M>,
@@ -452,27 +451,27 @@ fn compute_jacobi_rotation<const C: usize, const M: usize>(
     a: &Matrix<C, M>,
     i: usize,
     j: usize,
-) -> (f64, f64) {
+) -> (Float, Float) {
     let a_ii = a.get(i, i);
     let a_jj = a.get(j, j);
     let a_ij = a.get(i, j);
 
     if a_ii == a_jj {
         // Special case: diagonal elements equal
-        let cos_theta = libm::cos(f64::consts::PI / 4.0);
-        let sin_theta = libm::sin(f64::consts::PI / 4.0);
+        let cos_theta = float::cos(float::PI / 4.0);
+        let sin_theta = float::sin(float::PI / 4.0);
         return (cos_theta, sin_theta);
     }
 
     // Compute rotation angle
     let tau = (a_jj - a_ii) / (2.0 * a_ij);
     let t = if tau >= 0.0 {
-        1.0 / (tau + libm::sqrt(1.0 + tau * tau))
+        1.0 / (tau + float::sqrt(1.0 + tau * tau))
     } else {
-        -1.0 / (-tau + libm::sqrt(1.0 + tau * tau))
+        -1.0 / (-tau + float::sqrt(1.0 + tau * tau))
     };
 
-    let cos_theta = 1.0 / libm::sqrt(1.0 + t * t);
+    let cos_theta = 1.0 / float::sqrt(1.0 + t * t);
     let sin_theta = t * cos_theta;
 
     (cos_theta, sin_theta)
@@ -483,8 +482,8 @@ fn apply_jacobi_rotation<const C: usize, const M: usize>(
     a: &mut Matrix<C, M>,
     i: usize,
     j: usize,
-    cos_theta: f64,
-    sin_theta: f64,
+    cos_theta: Float,
+    sin_theta: Float,
 ) {
     // Update diagonal elements
     let a_ii = a.get(i, i);
@@ -524,8 +523,8 @@ fn apply_rotation_to_vectors<const C: usize, const M: usize>(
     v: &mut Matrix<C, M>,
     i: usize,
     j: usize,
-    cos_theta: f64,
-    sin_theta: f64,
+    cos_theta: Float,
+    sin_theta: Float,
 ) {
     for k in 0..C {
         let v_ki = v.get(k, i);
@@ -541,7 +540,7 @@ fn apply_rotation_to_vectors<const C: usize, const M: usize>(
 
 /// Sort eigenvalues in descending order and reorder corresponding eigenvectors.
 fn sort_eigen<const C: usize, const M: usize>(
-    eigenvalues: &mut [f64; C],
+    eigenvalues: &mut [Float; C],
     eigenvectors: &mut Matrix<C, M>,
 ) {
     // Simple selection sort (adequate for small C)
@@ -569,7 +568,7 @@ fn sort_eigen<const C: usize, const M: usize>(
 
 impl<const C: usize, const M: usize> EigenDecomposition<C, M> {
     /// Get the k-th eigenvector as an array.
-    pub fn eigenvector(&self, k: usize) -> [f64; C] {
+    pub fn eigenvector(&self, k: usize) -> [Float; C] {
         let mut vec = [0.0; C];
         #[allow(clippy::needless_range_loop)]
         for i in 0..C {
@@ -606,9 +605,9 @@ impl<const C: usize, const M: usize> EigenDecomposition<C, M> {
 pub fn generalized_eigen<const C: usize, const M: usize>(
     a: &Matrix<C, M>,
     b: &Matrix<C, M>,
-    regularization: f64,
+    regularization: Float,
     max_iters: usize,
-    tol: f64,
+    tol: Float,
 ) -> Result<EigenDecomposition<C, M>, LinalgError> {
     // Step 1: Regularize B
     let mut b_reg = *b;
@@ -650,7 +649,7 @@ pub fn generalized_eigen<const C: usize, const M: usize>(
             let val = w_normalized.get(i, j);
             norm_sq += val * val;
         }
-        let norm = libm::sqrt(norm_sq);
+        let norm = float::sqrt(norm_sq);
         if norm > 1e-15 {
             for i in 0..C {
                 let val = w_normalized.get(i, j);
@@ -1007,7 +1006,7 @@ mod tests {
                 let vi = eigen.eigenvector(i);
                 let vj = eigen.eigenvector(j);
                 let dot = vi[0] * vj[0] + vi[1] * vj[1] + vi[2] * vj[2];
-                assert!(libm::fabs(dot) < 1e-8, "Eigenvectors not orthogonal");
+                assert!(float::abs(dot) < 1e-8, "Eigenvectors not orthogonal");
             }
         }
 
@@ -1096,13 +1095,13 @@ mod tests {
         let mut a = Matrix::<C, M>::zeros();
         // Diagonal: eigenvalues from 1 to C
         for i in 0..C {
-            a.set(i, i, (i + 1) as f64);
+            a.set(i, i, (i + 1) as Float);
         }
         // Rank-1 perturbation: 0.1 * v * v^T
         for i in 0..C {
-            let vi = libm::sin((i + 1) as f64);
+            let vi = float::sin((i + 1) as Float);
             for j in 0..C {
-                let vj = libm::sin((j + 1) as f64);
+                let vj = float::sin((j + 1) as Float);
                 let cur = a.get(i, j);
                 a.set(i, j, cur + 0.1 * vi * vj);
             }
@@ -1115,7 +1114,7 @@ mod tests {
     fn verify_eigen<const C: usize, const M: usize>(
         a: &Matrix<C, M>,
         eigen: &EigenDecomposition<C, M>,
-        tol: f64,
+        tol: Float,
     ) {
         // Eigenvalues should be positive (SPD matrix)
         for i in 0..C {
@@ -1219,14 +1218,14 @@ mod tests {
         let mut a: Matrix<8, 64> = Matrix::zeros();
         for i in 0..8 {
             // Logarithmically spaced: 1e-3, ~1e-2.14, ..., 1e3
-            let log_val = -3.0 + 6.0 * (i as f64) / 7.0;
-            a.set(i, i, libm::pow(10.0, log_val));
+            let log_val = -3.0 + 6.0 * (i as Float) / 7.0;
+            a.set(i, i, float::pow(10.0, log_val));
         }
         // Add small off-diagonal structure
         for i in 0..8 {
-            let vi = libm::sin((i + 1) as f64);
+            let vi = float::sin((i + 1) as Float);
             for j in 0..8 {
-                let vj = libm::sin((j + 1) as f64);
+                let vj = float::sin((j + 1) as Float);
                 let cur = a.get(i, j);
                 a.set(i, j, cur + 0.001 * vi * vj);
             }
