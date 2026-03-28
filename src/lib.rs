@@ -73,6 +73,9 @@
 //! - Threshold detection: <10 μs for 1024 channels
 
 #![no_std]
+#![allow(clippy::unnecessary_cast)] // `as Float` casts needed for f32 feature, no-op when Float=f64
+
+pub mod float;
 
 mod artifact;
 mod bandpower;
@@ -131,6 +134,9 @@ pub mod whitening;
 mod window;
 pub mod xcorr;
 pub mod xdf;
+
+// Re-export Float type at crate root
+pub use float::Float;
 
 // Re-export at crate root for convenience
 pub use artifact::{ArtifactDetector, ArtifactType, ZscoreArtifact};
@@ -210,8 +216,7 @@ pub use wavelet::{morlet_coefficient, wavelet_half_width, Cwt, MultiChannelCwt, 
 pub use welch::WelchPsd;
 pub use whitening::{apply_whitening, estimate_noise_covariance, WhiteningMatrix, WhiteningMode};
 pub use window::{
-    apply_window, apply_window_f64, coherent_gain, equivalent_noise_bandwidth, window_coefficient,
-    WindowType,
+    apply_window, coherent_gain, equivalent_noise_bandwidth, window_coefficient, WindowType,
 };
 pub use xdf::{
     count_chunk_samples, decode_samples_f64, find_tag_value, next_chunk, parse_clock_offset,

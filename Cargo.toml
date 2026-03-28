@@ -9,6 +9,7 @@ categories = ["science", "no-std::no-alloc", "embedded"]
 
 [features]
 default = []
+f32 = []
 alloc = []
 parallel = ["alloc", "rayon"]
 
@@ -27,7 +28,7 @@ proptest = "1"
 libm = "0.2"
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(feature, values("f32"))'] }
 
 [[bench]]
 name = "benchmarks"
