@@ -7,7 +7,7 @@
 //!
 //! All structures are `no_std`, zero-heap, and use fixed-size arrays.
 
-use zerostone::float::{self, Float};
+use zerostone::float::Float;
 
 // ---------------------------------------------------------------------------
 // Template
@@ -215,25 +215,12 @@ impl<const W: usize, const N: usize> Classifier<W, N> {
     ///
     /// Returns the `cluster_id` of the best-matching template if its NCC
     /// exceeds `min_correlation`, or `0` (unclassified) otherwise.
+    ///
+    /// Uses optimized DSP primitives from [`crate::dsp`] for the hot path.
     pub fn classify(&self, waveform: &[Float; W]) -> u8 {
         if self.library.count() == 0 {
             return 0;
         }
-
-        // Precompute ||waveform||^2.
-        let mut waveform_norm_sq: Float = 0.0;
-        let mut i = 0;
-        while i < W {
-            waveform_norm_sq += waveform[i] * waveform[i];
-            i += 1;
-        }
-
-        // Guard against zero-energy waveforms.
-        if waveform_norm_sq <= 0.0 {
-            return 0;
-        }
-
-        let waveform_norm = float::sqrt(waveform_norm_sq);
 
         let mut best_ncc: Float = -2.0; // NCC range is [-1, 1]
         let mut best_id: u8 = 0;
@@ -242,25 +229,11 @@ impl<const W: usize, const N: usize> Classifier<W, N> {
         while t < self.library.count() {
             let tmpl = &self.library.templates[t];
 
-            // Skip templates with zero energy.
-            if tmpl.norm_sq <= 0.0 {
-                t += 1;
-                continue;
-            }
+            let corr = crate::dsp::ncc(waveform, &tmpl.waveform, tmpl.norm_sq);
 
-            // Compute dot product.
-            let mut dot: Float = 0.0;
-            let mut j = 0;
-            while j < W {
-                dot += waveform[j] * tmpl.waveform[j];
-                j += 1;
-            }
-
-            let tmpl_norm = float::sqrt(tmpl.norm_sq);
-            let ncc = dot / (waveform_norm * tmpl_norm);
-
-            if ncc > best_ncc {
-                best_ncc = ncc;
+            // ncc() returns 0.0 for zero-energy inputs, so no special guard needed.
+            if corr > best_ncc {
+                best_ncc = corr;
                 best_id = tmpl.cluster_id;
             }
 
