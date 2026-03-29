@@ -6,6 +6,8 @@
 
 #![no_std]
 
+pub mod ble;
+pub mod classifier;
 pub mod intan;
 pub mod pipeline;
 pub mod ring_buffer;
