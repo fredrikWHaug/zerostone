@@ -121,14 +121,16 @@ fn sym_decorrelate<const C: usize, const M: usize>(
     let wwt = w.matmul(&wt);
 
     // Eigendecompose W * W^T
+    let eigen_tol = if cfg!(feature = "f32") { 1e-5 } else { 1e-12 };
     let eigen = wwt
-        .eigen_symmetric(50, 1e-12)
+        .eigen_symmetric(50, eigen_tol)
         .map_err(|_| IcaError::EigenFailed)?;
 
     // Compute (W * W^T)^{-1/2}: eigenvalues -> 1/sqrt(eigenvalue)
     let mut inv_sqrt_eigs = eigen.eigenvalues;
+    let eig_min = if cfg!(feature = "f32") { 1e-10 } else { 1e-15 };
     for val in &mut inv_sqrt_eigs {
-        if *val <= 1e-15 {
+        if *val <= eig_min {
             return Err(IcaError::NumericalInstability);
         }
         *val = 1.0 / float::sqrt(*val);
@@ -276,12 +278,14 @@ impl<const C: usize, const M: usize> Ica<C, M> {
         // Add regularization to diagonal
         for i in 0..C {
             let val = cov.get(i, i);
-            cov.set(i, i, val + 1e-8);
+            let reg = if cfg!(feature = "f32") { 1e-5 } else { 1e-8 };
+            cov.set(i, i, val + reg);
         }
 
         // Step 3: Eigendecompose covariance for whitening
+        let eigen_tol = if cfg!(feature = "f32") { 1e-5 } else { 1e-12 };
         let eigen = cov
-            .eigen_symmetric(50, 1e-12)
+            .eigen_symmetric(50, eigen_tol)
             .map_err(|_| IcaError::EigenFailed)?;
 
         // Find max eigenvalue for clipping threshold
@@ -291,7 +295,7 @@ impl<const C: usize, const M: usize> Ica<C, M> {
                 max_eig = eigen.eigenvalues[i];
             }
         }
-        let eig_floor = max_eig * 1e-12;
+        let eig_floor = max_eig * if cfg!(feature = "f32") { 1e-5 } else { 1e-12 };
 
         // Compute whitening K = D^{-1/2} * E^T and de-whitening K_inv = E * D^{1/2}
         let mut d_inv_sqrt = [0.0; C];
@@ -813,7 +817,7 @@ mod tests {
             for j in 0..3 {
                 let expected = if i == j { 1.0 } else { 0.0 };
                 assert!(
-                    float::abs(wwt.get(i, j) - expected) < 1e-6,
+                    float::abs(wwt.get(i, j) - expected) < if cfg!(feature = "f32") { 1e-3 } else { 1e-6 },
                     "W*W^T [{},{}] = {}, expected {}",
                     i,
                     j,
@@ -850,8 +854,9 @@ mod tests {
 
         for t in 0..n {
             for j in 0..2 {
+                let tol = if cfg!(feature = "f32") { 1e-4 } else { 1e-10 };
                 assert!(
-                    float::abs(reconstructed[t][j] - data[t][j]) < 1e-10,
+                    float::abs(reconstructed[t][j] - data[t][j]) < tol,
                     "Round trip error at t={}, ch={}: got {}, expected {}",
                     t,
                     j,

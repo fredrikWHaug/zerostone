@@ -319,7 +319,8 @@ fn build_whitening_heap(
     let mut mat = HeapMatrix::zeros(n_ch);
     mat.data.copy_from_slice(&cov[..n_ch * n_ch]);
 
-    let (eigenvalues, eigenvectors) = mat.eigen_symmetric(50, 1e-12)?;
+    let eigen_tol = if cfg!(feature = "f32") { 1e-6 } else { 1e-12 };
+    let (eigenvalues, eigenvectors) = mat.eigen_symmetric(50, eigen_tol)?;
 
     // ZCA: W = E * diag(1/sqrt(lambda + eps)) * E^T
     let mut w = vec![0.0 as Float; n_ch * n_ch];
@@ -1096,9 +1097,11 @@ mod tests {
     #[test]
     fn test_heap_matrix_eigen_identity() {
         let mat = HeapMatrix::identity(3);
-        let (evals, _) = mat.eigen_symmetric(50, 1e-12).unwrap();
+        let eigen_tol = if cfg!(feature = "f32") { 1e-6 } else { 1e-12 };
+        let test_tol = if cfg!(feature = "f32") { 1e-4 } else { 1e-10 };
+        let (evals, _) = mat.eigen_symmetric(50, eigen_tol).unwrap();
         for &ev in &evals {
-            assert!((ev - 1.0).abs() < 1e-10);
+            assert!((ev - 1.0).abs() < test_tol);
         }
     }
 

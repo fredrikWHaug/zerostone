@@ -344,7 +344,7 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
             }
         }
         matrix_norm = float::sqrt(matrix_norm);
-        if matrix_norm < 1e-300 {
+        if matrix_norm < Float::MIN_POSITIVE {
             matrix_norm = 1.0; // avoid division by zero for zero matrix
         }
 
@@ -402,13 +402,13 @@ impl<const C: usize, const M: usize> Matrix<C, M> {
                     if sweep >= 3 {
                         let a_ii = float::abs(a.get(i, i));
                         let a_jj = float::abs(a.get(j, j));
-                        if abs_a_ij < 1e-15 * (a_ii + a_jj) {
+                        if abs_a_ij < Float::EPSILON * (a_ii + a_jj) {
                             continue;
                         }
                     }
 
                     // Skip truly zero elements
-                    if abs_a_ij < 1e-300 {
+                    if abs_a_ij < Float::MIN_POSITIVE {
                         continue;
                     }
 
@@ -672,6 +672,24 @@ impl<const C: usize, const M: usize> Default for Matrix<C, M> {
 mod tests {
     use super::*;
 
+    /// Convergence tolerance for the Jacobi eigensolver in tests.
+    #[cfg(feature = "f32")]
+    const EIGEN_TOL: Float = 1e-6;
+    #[cfg(not(feature = "f32"))]
+    const EIGEN_TOL: Float = 1e-10;
+
+    /// Assertion tolerance for test comparisons.
+    #[cfg(feature = "f32")]
+    const TEST_TOL: Float = 1e-3;
+    #[cfg(not(feature = "f32"))]
+    const TEST_TOL: Float = 1e-8;
+
+    /// Tight assertion tolerance for simple operations (solve, cholesky).
+    #[cfg(feature = "f32")]
+    const TIGHT_TOL: Float = 1e-4;
+    #[cfg(not(feature = "f32"))]
+    const TIGHT_TOL: Float = 1e-10;
+
     #[test]
     fn test_matrix_identity() {
         let eye: Matrix<3, 9> = Matrix::identity();
@@ -783,12 +801,12 @@ mod tests {
         let l = eye.cholesky().unwrap();
 
         // Cholesky of identity is identity
-        assert!((l.get(0, 0) - 1.0).abs() < 1e-10);
-        assert!((l.get(1, 1) - 1.0).abs() < 1e-10);
-        assert!((l.get(2, 2) - 1.0).abs() < 1e-10);
-        assert!(l.get(0, 1).abs() < 1e-10);
-        assert!(l.get(0, 2).abs() < 1e-10);
-        assert!(l.get(1, 2).abs() < 1e-10);
+        assert!((l.get(0, 0) - 1.0).abs() < TIGHT_TOL);
+        assert!((l.get(1, 1) - 1.0).abs() < TIGHT_TOL);
+        assert!((l.get(2, 2) - 1.0).abs() < TIGHT_TOL);
+        assert!(l.get(0, 1).abs() < TIGHT_TOL);
+        assert!(l.get(0, 2).abs() < TIGHT_TOL);
+        assert!(l.get(1, 2).abs() < TIGHT_TOL);
     }
 
     #[test]
@@ -801,10 +819,10 @@ mod tests {
         let l = a.cholesky().unwrap();
 
         // L should be [2, 0; 0, 3]
-        assert!((l.get(0, 0) - 2.0).abs() < 1e-10);
-        assert!((l.get(1, 1) - 3.0).abs() < 1e-10);
-        assert!(l.get(0, 1).abs() < 1e-10);
-        assert!(l.get(1, 0).abs() < 1e-10);
+        assert!((l.get(0, 0) - 2.0).abs() < TIGHT_TOL);
+        assert!((l.get(1, 1) - 3.0).abs() < TIGHT_TOL);
+        assert!(l.get(0, 1).abs() < TIGHT_TOL);
+        assert!(l.get(1, 0).abs() < TIGHT_TOL);
     }
 
     #[test]
@@ -824,10 +842,10 @@ mod tests {
         let lt = l.transpose();
         let reconstructed = l.matmul(&lt);
 
-        assert!((reconstructed.get(0, 0) - 4.0).abs() < 1e-10);
-        assert!((reconstructed.get(0, 1) - 2.0).abs() < 1e-10);
-        assert!((reconstructed.get(1, 0) - 2.0).abs() < 1e-10);
-        assert!((reconstructed.get(1, 1) - 3.0).abs() < 1e-10);
+        assert!((reconstructed.get(0, 0) - 4.0).abs() < TIGHT_TOL);
+        assert!((reconstructed.get(0, 1) - 2.0).abs() < TIGHT_TOL);
+        assert!((reconstructed.get(1, 0) - 2.0).abs() < TIGHT_TOL);
+        assert!((reconstructed.get(1, 1) - 3.0).abs() < TIGHT_TOL);
     }
 
     #[test]
@@ -858,8 +876,8 @@ mod tests {
         // x should be [1, 0.5]
         // L[0,0]*x[0] = 2 -> x[0] = 1
         // L[1,0]*x[0] + L[1,1]*x[1] = 5 -> 3*1 + 4*x[1] = 5 -> x[1] = 0.5
-        assert!((x[0] - 1.0).abs() < 1e-10);
-        assert!((x[1] - 0.5).abs() < 1e-10);
+        assert!((x[0] - 1.0).abs() < TIGHT_TOL);
+        assert!((x[1] - 0.5).abs() < TIGHT_TOL);
     }
 
     #[test]
@@ -881,8 +899,8 @@ mod tests {
         // Working backward:
         // L^T[1,1]*x[1] = 4 -> 4*x[1] = 4 -> x[1] = 1
         // L^T[0,0]*x[0] + L^T[0,1]*x[1] = 10 -> 2*x[0] + 3*1 = 10 -> x[0] = 3.5
-        assert!((x[0] - 3.5).abs() < 1e-10);
-        assert!((x[1] - 1.0).abs() < 1e-10);
+        assert!((x[0] - 3.5).abs() < TIGHT_TOL);
+        assert!((x[1] - 1.0).abs() < TIGHT_TOL);
     }
 
     #[test]
@@ -905,18 +923,18 @@ mod tests {
             a.get(1, 0) * x[0] + a.get(1, 1) * x[1],
         ];
 
-        assert!((ax[0] - b[0]).abs() < 1e-10);
-        assert!((ax[1] - b[1]).abs() < 1e-10);
+        assert!((ax[0] - b[0]).abs() < TIGHT_TOL);
+        assert!((ax[1] - b[1]).abs() < TIGHT_TOL);
     }
 
     #[test]
     fn test_eigen_identity() {
         let eye: Matrix<3, 9> = Matrix::identity();
-        let eigen = eye.eigen_symmetric(30, 1e-10).unwrap();
+        let eigen = eye.eigen_symmetric(30, EIGEN_TOL).unwrap();
 
         // All eigenvalues should be 1
         for i in 0..3 {
-            assert!((eigen.eigenvalues[i] - 1.0).abs() < 1e-8);
+            assert!((eigen.eigenvalues[i] - 1.0).abs() < TEST_TOL);
         }
     }
 
@@ -928,12 +946,12 @@ mod tests {
         a.set(1, 1, 3.0);
         a.set(2, 2, 1.0);
 
-        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
+        let eigen = a.eigen_symmetric(30, EIGEN_TOL).unwrap();
 
         // Eigenvalues should be [5, 3, 1] in descending order
-        assert!((eigen.eigenvalues[0] - 5.0).abs() < 1e-8);
-        assert!((eigen.eigenvalues[1] - 3.0).abs() < 1e-8);
-        assert!((eigen.eigenvalues[2] - 1.0).abs() < 1e-8);
+        assert!((eigen.eigenvalues[0] - 5.0).abs() < TEST_TOL);
+        assert!((eigen.eigenvalues[1] - 3.0).abs() < TEST_TOL);
+        assert!((eigen.eigenvalues[2] - 1.0).abs() < TEST_TOL);
     }
 
     #[test]
@@ -948,11 +966,11 @@ mod tests {
         a.set(1, 0, 1.0);
         a.set(1, 1, 3.0);
 
-        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
+        let eigen = a.eigen_symmetric(30, EIGEN_TOL).unwrap();
 
         // Check eigenvalues
-        assert!((eigen.eigenvalues[0] - 4.0).abs() < 1e-8);
-        assert!((eigen.eigenvalues[1] - 2.0).abs() < 1e-8);
+        assert!((eigen.eigenvalues[0] - 4.0).abs() < TEST_TOL);
+        assert!((eigen.eigenvalues[1] - 2.0).abs() < TEST_TOL);
 
         // Verify Av = λv for first eigenvector
         let v0 = eigen.eigenvector(0);
@@ -962,8 +980,8 @@ mod tests {
         ];
         let lambda_v0 = [eigen.eigenvalues[0] * v0[0], eigen.eigenvalues[0] * v0[1]];
 
-        assert!((av0[0] - lambda_v0[0]).abs() < 1e-8);
-        assert!((av0[1] - lambda_v0[1]).abs() < 1e-8);
+        assert!((av0[0] - lambda_v0[0]).abs() < TEST_TOL);
+        assert!((av0[1] - lambda_v0[1]).abs() < TEST_TOL);
     }
 
     #[test]
@@ -975,13 +993,13 @@ mod tests {
         a.set(2, 2, 2.0);
         a.set(3, 3, 3.0);
 
-        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
+        let eigen = a.eigen_symmetric(30, EIGEN_TOL).unwrap();
 
         // Should be sorted descending: [4, 3, 2, 1]
-        assert!((eigen.eigenvalues[0] - 4.0).abs() < 1e-8);
-        assert!((eigen.eigenvalues[1] - 3.0).abs() < 1e-8);
-        assert!((eigen.eigenvalues[2] - 2.0).abs() < 1e-8);
-        assert!((eigen.eigenvalues[3] - 1.0).abs() < 1e-8);
+        assert!((eigen.eigenvalues[0] - 4.0).abs() < TEST_TOL);
+        assert!((eigen.eigenvalues[1] - 3.0).abs() < TEST_TOL);
+        assert!((eigen.eigenvalues[2] - 2.0).abs() < TEST_TOL);
+        assert!((eigen.eigenvalues[3] - 1.0).abs() < TEST_TOL);
     }
 
     #[test]
@@ -998,7 +1016,7 @@ mod tests {
         a.set(2, 1, 1.0);
         a.set(2, 2, 4.0);
 
-        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
+        let eigen = a.eigen_symmetric(30, EIGEN_TOL).unwrap();
 
         // Check orthogonality: v_i · v_j = 0 for i ≠ j
         for i in 0..3 {
@@ -1006,7 +1024,7 @@ mod tests {
                 let vi = eigen.eigenvector(i);
                 let vj = eigen.eigenvector(j);
                 let dot = vi[0] * vj[0] + vi[1] * vj[1] + vi[2] * vj[2];
-                assert!(float::abs(dot) < 1e-8, "Eigenvectors not orthogonal");
+                assert!(float::abs(dot) < TEST_TOL, "Eigenvectors not orthogonal");
             }
         }
 
@@ -1014,7 +1032,7 @@ mod tests {
         for i in 0..3 {
             let vi = eigen.eigenvector(i);
             let norm_sq = vi[0] * vi[0] + vi[1] * vi[1] + vi[2] * vi[2];
-            assert!((norm_sq - 1.0).abs() < 1e-8, "Eigenvector not normalized");
+            assert!((norm_sq - 1.0).abs() < TEST_TOL, "Eigenvector not normalized");
         }
     }
 
@@ -1028,7 +1046,7 @@ mod tests {
 
         let b: Matrix<2, 4> = Matrix::identity();
 
-        let eigen = generalized_eigen(&a, &b, 1e-8, 30, 1e-10).unwrap();
+        let eigen = generalized_eigen(&a, &b, 1e-8, 30, EIGEN_TOL).unwrap();
 
         // Eigenvalues should be [2, 1]
         assert!((eigen.eigenvalues[0] - 2.0).abs() < 1e-6);
@@ -1048,7 +1066,7 @@ mod tests {
 
         // Solve C1 w = λ (C1 + C2) w
         let c_sum = c1.add(&c2);
-        let eigen = generalized_eigen(&c1, &c_sum, 1e-6, 30, 1e-10).unwrap();
+        let eigen = generalized_eigen(&c1, &c_sum, 1e-6, 30, EIGEN_TOL).unwrap();
 
         // Top eigenvector should emphasize channel 0
         // Bottom eigenvector should emphasize channel 1
@@ -1078,7 +1096,7 @@ mod tests {
 
         let b: Matrix<3, 9> = Matrix::identity();
 
-        let eigen = generalized_eigen(&a, &b, 1e-8, 30, 1e-10).unwrap();
+        let eigen = generalized_eigen(&a, &b, 1e-8, 30, EIGEN_TOL).unwrap();
 
         // Eigenvectors should be orthonormal (since B = I)
         for i in 0..3 {
@@ -1187,29 +1205,29 @@ mod tests {
     #[test]
     fn test_eigen_8x8_spd() {
         let a: Matrix<8, 64> = build_spd_matrix();
-        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
-        verify_eigen(&a, &eigen, 1e-8);
+        let eigen = a.eigen_symmetric(30, EIGEN_TOL).unwrap();
+        verify_eigen(&a, &eigen, TEST_TOL);
     }
 
     #[test]
     fn test_eigen_16x16_spd() {
         let a: Matrix<16, 256> = build_spd_matrix();
-        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
-        verify_eigen(&a, &eigen, 1e-8);
+        let eigen = a.eigen_symmetric(30, EIGEN_TOL).unwrap();
+        verify_eigen(&a, &eigen, TEST_TOL);
     }
 
     #[test]
     fn test_eigen_32x32_spd() {
         let a: Matrix<32, 1024> = build_spd_matrix();
-        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
-        verify_eigen(&a, &eigen, 1e-7);
+        let eigen = a.eigen_symmetric(30, EIGEN_TOL).unwrap();
+        verify_eigen(&a, &eigen, TEST_TOL);
     }
 
     #[test]
     fn test_eigen_64x64_spd() {
         let a: Matrix<64, 4096> = build_spd_matrix();
-        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
-        verify_eigen(&a, &eigen, 1e-6);
+        let eigen = a.eigen_symmetric(30, EIGEN_TOL).unwrap();
+        verify_eigen(&a, &eigen, TEST_TOL);
     }
 
     #[test]
@@ -1231,7 +1249,7 @@ mod tests {
             }
         }
 
-        let eigen = a.eigen_symmetric(30, 1e-12).unwrap();
+        let eigen = a.eigen_symmetric(30, EIGEN_TOL).unwrap();
 
         // All eigenvalues should be positive
         for i in 0..8 {
@@ -1240,7 +1258,7 @@ mod tests {
 
         // Descending order
         for i in 1..8 {
-            assert!(eigen.eigenvalues[i - 1] >= eigen.eigenvalues[i] - 1e-10);
+            assert!(eigen.eigenvalues[i - 1] >= eigen.eigenvalues[i] - TIGHT_TOL);
         }
 
         // Condition number should be approximately 10^6
@@ -1252,7 +1270,7 @@ mod tests {
     #[test]
     fn test_eigen_convergence_diagnostics() {
         let a: Matrix<64, 4096> = build_spd_matrix();
-        let eigen = a.eigen_symmetric(30, 1e-10).unwrap();
+        let eigen = a.eigen_symmetric(30, EIGEN_TOL).unwrap();
 
         // Should converge in < 20 sweeps for a 64x64 matrix
         assert!(
@@ -1263,7 +1281,7 @@ mod tests {
 
         // Final off-diagonal norm should be very small
         assert!(
-            eigen.diagnostics.final_off_diag_norm < 1e-6,
+            eigen.diagnostics.final_off_diag_norm < TEST_TOL,
             "Off-diagonal norm too large: {}",
             eigen.diagnostics.final_off_diag_norm
         );

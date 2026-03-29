@@ -88,7 +88,7 @@ impl Default for UpdateConfig {
             update_interval: 50,  // Update every 50 new trials
             regularization: 1e-6, // Tikhonov regularization
             max_eigen_iters: 30,  // 30 Jacobi sweeps
-            eigen_tol: 1e-10,     // Convergence threshold
+            eigen_tol: if cfg!(feature = "f32") { 1e-6 } else { 1e-10 }, // Convergence threshold
         }
     }
 }

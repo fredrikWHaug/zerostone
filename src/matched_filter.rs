@@ -1166,8 +1166,9 @@ mod tests {
         bank.add_template(&t, 0).unwrap();
 
         let (_, normalized, _) = bank.correlate_window(0, &t);
+        let tol = if cfg!(feature = "f32") { 1e-4 } else { 1e-10 };
         assert!(
-            (normalized - expected_norm).abs() < 1e-10,
+            (normalized - expected_norm).abs() < tol,
             "normalized={}, expected={}",
             normalized,
             expected_norm

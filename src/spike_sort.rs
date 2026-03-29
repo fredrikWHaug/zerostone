@@ -14,6 +14,12 @@ use crate::float::{self, Float};
 use crate::linalg::Matrix;
 use crate::probe::ProbeLayout;
 
+/// Convergence tolerance for the Jacobi eigensolver used in PCA.
+#[cfg(feature = "f32")]
+const EIGEN_TOL: Float = 1e-6;
+#[cfg(not(feature = "f32"))]
+const EIGEN_TOL: Float = 1e-12;
+
 /// Errors that can occur during spike sorting operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortError {
@@ -225,7 +231,7 @@ impl<const W: usize, const K: usize, const WM: usize> WaveformPca<W, K, WM> {
 
         // Eigendecomposition (eigenvalues returned in descending order)
         let eigen = cov
-            .eigen_symmetric(200, 1e-12)
+            .eigen_symmetric(200, EIGEN_TOL)
             .map_err(|_| SortError::EigenFailed)?;
 
         // Total variance = sum of all eigenvalues
