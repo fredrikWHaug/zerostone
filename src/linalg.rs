@@ -1032,7 +1032,10 @@ mod tests {
         for i in 0..3 {
             let vi = eigen.eigenvector(i);
             let norm_sq = vi[0] * vi[0] + vi[1] * vi[1] + vi[2] * vi[2];
-            assert!((norm_sq - 1.0).abs() < TEST_TOL, "Eigenvector not normalized");
+            assert!(
+                (norm_sq - 1.0).abs() < TEST_TOL,
+                "Eigenvector not normalized"
+            );
         }
     }
 
