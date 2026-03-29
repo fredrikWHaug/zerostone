@@ -36,6 +36,9 @@ defmt = "1"
 defmt-rtt = "1"
 panic-probe = { version = "1", features = ["print-defmt"] }
 
+# SPI device wrapper (ARM-only)
+embedded-hal-bus = { version = "0.2", features = ["async"] }
+
 # Utilities (ARM-only)
 static_cell = "2"
 
