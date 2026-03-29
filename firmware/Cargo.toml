@@ -4,31 +4,43 @@ version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0"
 
+[lib]
+name = "zerostone_firmware"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zerostone-firmware"
+path = "src/main.rs"
+
 [dependencies]
 # Zerostone library (f32 mode for embedded)
 zerostone = { path = "..", default-features = false, features = ["f32"] }
 
-# Embassy runtime
+# Embedded HAL (platform-independent, needed by lib)
+embedded-hal = "1.0"
+embedded-hal-async = "1.0"
+
+# Embassy runtime (ARM-only, needed by bin)
+[target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
 embassy-executor = { version = "0.7", features = ["arch-cortex-m", "executor-thread", "defmt"] }
 embassy-time = { version = "0.4", features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-nrf = { version = "0.3", features = ["defmt", "nrf5340-app-s", "time-driver-rtc1", "gpiote"] }
 embassy-sync = { version = "0.6", features = ["defmt"] }
 
-# Embedded HAL
-embedded-hal = "1.0"
-embedded-hal-async = "1.0"
-
-# Cortex-M runtime
+# Cortex-M runtime (ARM-only)
 cortex-m = { version = "0.7", features = ["inline-asm", "critical-section-single-core"] }
 cortex-m-rt = "0.7"
 
-# Logging and panic
+# Logging and panic (ARM-only)
 defmt = "1"
 defmt-rtt = "1"
 panic-probe = { version = "1", features = ["print-defmt"] }
 
-# Utilities
+# Utilities (ARM-only)
 static_cell = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
 
 [profile.release]
 opt-level = "z"
