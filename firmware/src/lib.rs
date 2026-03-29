@@ -8,9 +8,16 @@
 
 pub mod ble;
 pub mod classifier;
+pub mod dsp;
 pub mod intan;
+pub mod online_learn;
 pub mod pipeline;
 pub mod ring_buffer;
+pub mod stats;
+pub mod watchdog;
 
 #[cfg(test)]
 mod integration;
+
+#[cfg(test)]
+mod synth;
