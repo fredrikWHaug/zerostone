@@ -817,7 +817,8 @@ mod tests {
             for j in 0..3 {
                 let expected = if i == j { 1.0 } else { 0.0 };
                 assert!(
-                    float::abs(wwt.get(i, j) - expected) < if cfg!(feature = "f32") { 1e-3 } else { 1e-6 },
+                    float::abs(wwt.get(i, j) - expected)
+                        < if cfg!(feature = "f32") { 1e-3 } else { 1e-6 },
                     "W*W^T [{},{}] = {}, expected {}",
                     i,
                     j,

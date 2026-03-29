@@ -84,7 +84,7 @@ pub struct UpdateConfig {
 impl Default for UpdateConfig {
     fn default() -> Self {
         Self {
-            min_samples: 100,     // 100 trials minimum
+            min_samples: 100,                                            // 100 trials minimum
             update_interval: 50,  // Update every 50 new trials
             regularization: 1e-6, // Tikhonov regularization
             max_eigen_iters: 30,  // 30 Jacobi sweeps
