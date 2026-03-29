@@ -512,8 +512,9 @@ mod tests {
     fn test_spectral_entropy_flat_normalized() {
         let psd = [1.0 as Float; 64];
         let h = spectral_entropy(&psd, true);
+        let tol = if cfg!(feature = "f32") { 1e-4 } else { 1e-10 };
         assert!(
-            (h - 1.0).abs() < 1e-10,
+            (h - 1.0).abs() < tol,
             "Flat PSD normalized should be 1.0, got {}",
             h
         );
@@ -525,8 +526,9 @@ mod tests {
         let psd = [1.0 as Float; 64];
         let h = spectral_entropy(&psd, false);
         let expected = float::log(n as Float);
+        let tol = if cfg!(feature = "f32") { 1e-4 } else { 1e-10 };
         assert!(
-            (h - expected).abs() < 1e-10,
+            (h - expected).abs() < tol,
             "Flat PSD unnormalized should be ln({}), got {}",
             n,
             h

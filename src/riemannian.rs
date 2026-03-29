@@ -62,6 +62,13 @@
 use crate::float::{self, Float};
 use crate::linalg::{LinalgError, Matrix};
 
+/// Eigenvalue decomposition convergence tolerance.
+/// f32 has ~7 decimal digits of precision; 1e-12 is unreachable.
+#[cfg(feature = "f32")]
+const EIGEN_TOL: Float = 1e-6;
+#[cfg(not(feature = "f32"))]
+const EIGEN_TOL: Float = 1e-12;
+
 /// Tangent space projection for SPD matrices.
 ///
 /// Maps covariance matrices from the Riemannian manifold to a tangent space
@@ -251,7 +258,7 @@ pub fn matrix_log<const C: usize, const M: usize>(
     matrix: &Matrix<C, M>,
 ) -> Result<Matrix<C, M>, LinalgError> {
     // Compute eigenvalue decomposition
-    let eigen = matrix.eigen_symmetric(50, 1e-12)?;
+    let eigen = matrix.eigen_symmetric(50, EIGEN_TOL)?;
 
     // Take log of eigenvalues
     let mut log_eigenvalues = eigen.eigenvalues;
@@ -286,7 +293,7 @@ pub fn matrix_exp<const C: usize, const M: usize>(
     matrix: &Matrix<C, M>,
 ) -> Result<Matrix<C, M>, LinalgError> {
     // Compute eigenvalue decomposition
-    let eigen = matrix.eigen_symmetric(50, 1e-12)?;
+    let eigen = matrix.eigen_symmetric(50, EIGEN_TOL)?;
 
     // Take exp of eigenvalues
     let mut exp_eigenvalues = eigen.eigenvalues;
@@ -317,7 +324,7 @@ pub fn matrix_exp<const C: usize, const M: usize>(
 pub fn matrix_sqrt<const C: usize, const M: usize>(
     matrix: &Matrix<C, M>,
 ) -> Result<Matrix<C, M>, LinalgError> {
-    let eigen = matrix.eigen_symmetric(50, 1e-12)?;
+    let eigen = matrix.eigen_symmetric(50, EIGEN_TOL)?;
 
     let mut sqrt_eigenvalues = eigen.eigenvalues;
     for val in &mut sqrt_eigenvalues {
@@ -349,7 +356,7 @@ pub fn matrix_sqrt<const C: usize, const M: usize>(
 pub fn matrix_inv_sqrt<const C: usize, const M: usize>(
     matrix: &Matrix<C, M>,
 ) -> Result<Matrix<C, M>, LinalgError> {
-    let eigen = matrix.eigen_symmetric(50, 1e-12)?;
+    let eigen = matrix.eigen_symmetric(50, EIGEN_TOL)?;
 
     let mut inv_sqrt_eigenvalues = eigen.eigenvalues;
     for val in &mut inv_sqrt_eigenvalues {
@@ -462,7 +469,7 @@ pub fn riemannian_distance<const C: usize, const M: usize>(
     let temp = a_inv_sqrt.matmul(b).matmul(&a_inv_sqrt);
 
     // Eigendecompose
-    let eigen = temp.eigen_symmetric(50, 1e-12)?;
+    let eigen = temp.eigen_symmetric(50, EIGEN_TOL)?;
 
     // d = sqrt(sum(log(lambda_i)^2))
     let mut sum_sq = 0.0;
@@ -651,11 +658,12 @@ mod tests {
         let zero: Matrix<3, 9> = Matrix::zeros();
         let exp_zero = matrix_exp(&zero).unwrap();
 
+        let tol = if cfg!(feature = "f32") { 1e-5 } else { 1e-10 };
         for i in 0..3 {
             for j in 0..3 {
                 let expected = if i == j { 1.0 } else { 0.0 };
                 assert!(
-                    (exp_zero.get(i, j) - expected).abs() < 1e-10,
+                    (exp_zero.get(i, j) - expected).abs() < tol,
                     "exp(0) should be identity"
                 );
             }
@@ -676,8 +684,9 @@ mod tests {
 
         for i in 0..2 {
             for j in 0..2 {
+                let tol = if cfg!(feature = "f32") { 1e-4 } else { 1e-9 };
                 assert!(
-                    (reconstructed.get(i, j) - p.get(i, j)).abs() < 1e-9,
+                    (reconstructed.get(i, j) - p.get(i, j)).abs() < tol,
                     "exp(log(P)) should equal P"
                 );
             }
@@ -720,8 +729,9 @@ mod tests {
         for i in 0..2 {
             for j in 0..2 {
                 let expected = if i == j { 1.0 } else { 0.0 };
+                let tol = if cfg!(feature = "f32") { 1e-4 } else { 1e-9 };
                 assert!(
-                    (result.get(i, j) - expected).abs() < 1e-9,
+                    (result.get(i, j) - expected).abs() < tol,
                     "P^(-1/2) * P^(1/2) should be identity"
                 );
             }
@@ -800,8 +810,9 @@ mod tests {
 
         for i in 0..2 {
             for j in 0..2 {
+                let tol = if cfg!(feature = "f32") { 1e-2 } else { 1e-8 };
                 assert!(
-                    (reconstructed.get(i, j) - p.get(i, j)).abs() < 1e-8,
+                    (reconstructed.get(i, j) - p.get(i, j)).abs() < tol,
                     "Round trip should preserve matrix"
                 );
             }
@@ -865,7 +876,8 @@ mod tests {
     fn test_riemannian_distance_self_is_zero() {
         let cov: Matrix<3, 9> = Matrix::new([2.0, 0.5, 0.3, 0.5, 1.8, 0.2, 0.3, 0.2, 1.5]);
         let d = riemannian_distance(&cov, &cov).unwrap();
-        assert!(d < 1e-9, "d(A,A) should be 0, got {}", d);
+        let tol = if cfg!(feature = "f32") { 1e-4 } else { 1e-9 };
+        assert!(d < tol, "d(A,A) should be 0, got {}", d);
     }
 
     #[test]
@@ -875,8 +887,9 @@ mod tests {
 
         let d_ab = riemannian_distance(&a, &b).unwrap();
         let d_ba = riemannian_distance(&b, &a).unwrap();
+        let tol = if cfg!(feature = "f32") { 1e-4 } else { 1e-9 };
         assert!(
-            (d_ab - d_ba).abs() < 1e-9,
+            (d_ab - d_ba).abs() < tol,
             "d(A,B)={} != d(B,A)={}",
             d_ab,
             d_ba
@@ -909,13 +922,15 @@ mod tests {
         let matrices = [&cov, &cov, &cov];
         let mut output = Matrix::zeros();
 
-        let iters = frechet_mean(&matrices, &mut output, 20, 1e-8).unwrap();
+        let conv_tol = if cfg!(feature = "f32") { 1e-4 } else { 1e-8 };
+        let iters = frechet_mean(&matrices, &mut output, 20, conv_tol).unwrap();
         assert!(iters < 5, "Should converge quickly for identical matrices");
 
+        let tol = if cfg!(feature = "f32") { 1e-3 } else { 1e-6 };
         for i in 0..3 {
             for j in 0..3 {
                 assert!(
-                    (output.get(i, j) - cov.get(i, j)).abs() < 1e-6,
+                    (output.get(i, j) - cov.get(i, j)).abs() < tol,
                     "Mean of identical matrices should equal the matrix"
                 );
             }
@@ -961,11 +976,13 @@ mod tests {
         let refs = [&mats[0], &mats[1], &mats[2], &mats[3]];
         let mut output = Matrix::zeros();
 
-        let iters = frechet_mean(&refs, &mut output, 50, 1e-8).unwrap();
+        let conv_tol = if cfg!(feature = "f32") { 1e-4 } else { 1e-8 };
+        let iters = frechet_mean(&refs, &mut output, 50, conv_tol).unwrap();
         assert!(iters <= 50, "Should converge within 50 iterations");
 
         // Verify output is SPD: eigenvalues all positive
-        let eigen = output.eigen_symmetric(30, 1e-10).unwrap();
+        let eigen_tol = if cfg!(feature = "f32") { 1e-5 } else { 1e-10 };
+        let eigen = output.eigen_symmetric(30, eigen_tol).unwrap();
         for i in 0..8 {
             assert!(
                 eigen.eigenvalues[i] > 0.0,
@@ -1006,7 +1023,8 @@ mod tests {
 
         let (cls, dist) = mdm_classify(&class0, &means).unwrap();
         assert_eq!(cls, 0);
-        assert!(dist < 1e-9, "Distance to exact match should be ~0");
+        let tol = if cfg!(feature = "f32") { 1e-4 } else { 1e-9 };
+        assert!(dist < tol, "Distance to exact match should be ~0");
     }
 
     // --- Recenter tests ---
@@ -1039,7 +1057,8 @@ mod tests {
 
         let refs = [&mat1, &mat2, &mat3];
         let mut mean = Matrix::zeros();
-        frechet_mean(&refs, &mut mean, 50, 1e-10).unwrap();
+        let conv_tol = if cfg!(feature = "f32") { 1e-5 } else { 1e-10 };
+        frechet_mean(&refs, &mut mean, 50, conv_tol).unwrap();
 
         let mean_inv_sqrt = matrix_inv_sqrt(&mean).unwrap();
 
@@ -1049,7 +1068,7 @@ mod tests {
 
         let r_refs = [&r1, &r2, &r3];
         let mut r_mean = Matrix::zeros();
-        frechet_mean(&r_refs, &mut r_mean, 50, 1e-10).unwrap();
+        frechet_mean(&r_refs, &mut r_mean, 50, conv_tol).unwrap();
 
         for i in 0..3 {
             for j in 0..3 {
@@ -1074,7 +1093,8 @@ mod tests {
 
         let recentered = recenter(&cov, &mean_inv_sqrt);
 
-        let eigen = recentered.eigen_symmetric(30, 1e-10).unwrap();
+        let eigen_tol = if cfg!(feature = "f32") { 1e-5 } else { 1e-10 };
+        let eigen = recentered.eigen_symmetric(30, eigen_tol).unwrap();
         for i in 0..3 {
             assert!(
                 eigen.eigenvalues[i] > 0.0,

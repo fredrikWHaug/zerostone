@@ -54,6 +54,12 @@
 use crate::float::{self, Float};
 use crate::linalg::{LinalgError, Matrix};
 
+/// Convergence tolerance for the Jacobi eigensolver used in whitening.
+#[cfg(feature = "f32")]
+const EIGEN_TOL: Float = 1e-6;
+#[cfg(not(feature = "f32"))]
+const EIGEN_TOL: Float = 1e-12;
+
 /// Whitening mode selection.
 ///
 /// # Examples
@@ -169,7 +175,7 @@ impl<const C: usize, const M: usize> WhiteningMatrix<C, M> {
         }
 
         // Eigendecomposition: Cov = E D E^T
-        let eigen = mat.eigen_symmetric(50, 1e-12)?;
+        let eigen = mat.eigen_symmetric(50, EIGEN_TOL)?;
 
         // Build regularized inverse-square-root eigenvalues
         let mut inv_sqrt_eig = [0.0 as Float; C];

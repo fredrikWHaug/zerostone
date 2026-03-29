@@ -231,7 +231,8 @@ pub fn cca<const C: usize, const MC: usize, const H: usize, const MH: usize>(
     }
 
     // 7. Eigendecompose M (H x H symmetric PSD matrix)
-    let eigen = m.eigen_symmetric(30, 1e-10)?;
+    let eigen_tol = if cfg!(feature = "f32") { 1e-5 } else { 1e-10 };
+    let eigen = m.eigen_symmetric(30, eigen_tol)?;
 
     // 8. Canonical correlations = sqrt(eigenvalues), clamped to [0, 1]
     for (corr, &ev) in correlations
@@ -416,13 +417,14 @@ mod tests {
         fill_ssvep_references::<4>(250.0, 10.0, &mut refs);
 
         // At t=0, all sin should be 0, all cos should be 1
-        assert!(refs[0][0].abs() < 1e-10); // sin(0) = 0
-        assert!((refs[0][1] - 1.0).abs() < 1e-10); // cos(0) = 1
-        assert!(refs[0][2].abs() < 1e-10); // sin(0) = 0
-        assert!((refs[0][3] - 1.0).abs() < 1e-10); // cos(0) = 1
+        let tol = if cfg!(feature = "f32") { 1e-6 } else { 1e-10 };
+        assert!(refs[0][0].abs() < tol); // sin(0) = 0
+        assert!((refs[0][1] - 1.0).abs() < tol); // cos(0) = 1
+        assert!(refs[0][2].abs() < tol); // sin(0) = 0
+        assert!((refs[0][3] - 1.0).abs() < tol); // cos(0) = 1
 
         // Check frequency: at t=25 samples (0.1 sec), sin(2*pi*10*0.1) = sin(2*pi) = 0
-        assert!(refs[25][0].abs() < 1e-10);
+        assert!(refs[25][0].abs() < tol);
     }
 
     #[test]
