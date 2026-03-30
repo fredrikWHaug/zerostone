@@ -7,8 +7,10 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod ble;
+pub mod ble_server;
 pub mod classifier;
 pub mod dsp;
+pub mod fault;
 pub mod intan;
 pub mod online_learn;
 pub mod pipeline;
