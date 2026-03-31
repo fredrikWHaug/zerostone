@@ -11,11 +11,14 @@ pub mod ble_server;
 pub mod classifier;
 pub mod dsp;
 pub mod fault;
+pub mod flash_log;
 pub mod intan;
 pub mod online_learn;
 pub mod pipeline;
+pub mod power;
 pub mod ring_buffer;
 pub mod stats;
+pub mod stim;
 pub mod watchdog;
 
 #[cfg(test)]
