@@ -2,7 +2,7 @@
 
 **Target**: nRF5340 Application Core (Cortex-M33, 128 MHz, FPv5-SP FPU)
 **Framework**: Embassy async executor (`no_std`, zero heap)
-**Date**: 2026-03-30
+**Date**: 2026-03-31
 
 ## Data Flow
 
@@ -13,19 +13,21 @@
 +------------------+    +----------+    +-----------+    +-----------+    +----------+
 | Intan RHD2132    |--->| spi_task |--->| FRAME_CH  |--->| proc_task |--->| EVENT_CH |
 | 32ch amplifier   | SPI| read     |    | 64 frames |    | detect +  |    | 32 events|
-| + ADC (16-bit)   | 8M | _frame() |    | [i16; 32] |    | classify  |    | SpikeEvt |
-+------------------+    +----------+    +-----------+    +-----------+    +----------+
-                                                                               |
-                                                                               v
-                                                                         +----------+
-                                                                         | ble_task |
-                                                                         | serialize|
-                                                                         | 8B LE    |
-                                                                         +----------+
-                                                                               |
-                                                                               v
-                                                                          BLE GATT
-                                                                         Notification
+| + ADC (16-bit)   | 8M | _frame() |    | [i16; 32] |    | classify +|    | SpikeEvt |
++------------------+    +----------+    +-----------+    | learn     |    +----------+
+                                                         +-----------+         |
+                                                              |                v
+                                                              |          +----------+
+                                                         +----+----+     | ble_task |
+                                                         |STATS_CH |     | BleServer|
+                                                         | 4 x 16B |     | GATT     |
+                                                         +----+----+     +----------+
+                                                              |                |
+                                                              v                v
+                                                         +----------+    BLE GATT
+                                                         |stats_task|   Notification
+                                                         | defmt log|
+                                                         +----------+
 ```
 
 Detailed processing pipeline inside `processing_task`:
@@ -53,6 +55,11 @@ Classifier.classify()             -- NCC against 8 templates
     v
 SpikeEvent { ..., cluster_id }    -- 0 = unclassified, 1..N = matched
     |
+    +-> OnlineLearner.learn()     -- EMA accumulate waveform into template
+    |   (every 10K frames: merge + reload classifier)
+    |
+    +-> RuntimeStats.record_spike()  -- track classified/unclassified counts
+    |
     v
 EVENT_CHANNEL.try_send()          -- non-blocking, drops if full
 ```
@@ -64,14 +71,17 @@ Four Embassy async tasks, cooperatively scheduled on a single core (no preemptio
 | Task | Priority | Trigger | Period | Function |
 |------|----------|---------|--------|----------|
 | `spi_task` | Normal | `Ticker` (33 us) | 30 kHz | Read 32ch frame from Intan over SPI |
-| `processing_task` | Normal | `frame_rx.receive()` | Event-driven | Spike detection + NCC classification |
-| `ble_task` | Normal | `event_rx.receive()` | Event-driven | Serialize spike events for BLE TX |
+| `processing_task` | Normal | `frame_rx.receive()` | Event-driven | Detect + classify + learn + stats |
+| `ble_task` | Normal | `event_rx.receive()` | Event-driven | BleServer GATT + spike serialization |
+| `stats_task` | Normal | `stats_rx.receive()` | ~1 Hz | Deserialize + defmt log stats snapshot |
 | `heartbeat_task` | Normal | `Timer::after_millis(500)` | 1 Hz | Toggle LED on P0.28 |
 
 ### Channel interconnects
 
 ```
 spi_task ---[FRAME_CHANNEL]--> processing_task ---[EVENT_CHANNEL]--> ble_task
+                                     |
+                                     +---[STATS_CHANNEL]--> stats_task
 
 FRAME_CHANNEL: Channel<NoopRawMutex, [i16; 32], 64>
   - 64 frames deep (2.1 ms buffer at 30 kHz)
@@ -82,6 +92,11 @@ EVENT_CHANNEL: Channel<NoopRawMutex, SpikeEvent, 32>
   - 32 events deep
   - try_send() in processing_task (non-blocking, drops event if full)
   - receive().await in ble_task (blocks until event available)
+
+STATS_CHANNEL: Channel<NoopRawMutex, [u8; 16], 4>
+  - 4 snapshots deep (16 bytes each, RuntimeStats::serialize format)
+  - try_send() every 30,000 frames (~1 Hz) in processing_task
+  - receive().await in stats_task (logs via defmt)
 ```
 
 ### Static allocation
@@ -113,14 +128,15 @@ See `memory_map.md` for full details.
 
 | Resource | Used | Available | Utilization |
 |----------|------|-----------|-------------|
-| Flash (.text + .rodata) | ~20.5 KB | 1 MB | 2% |
-| SRAM (static + stack) | ~24 KB | 256 KB | 9% |
+| Flash (.text + .rodata) | ~23.6 KB | 1 MB | 2.3% |
+| SRAM (static + stack) | ~26 KB | 256 KB | 10% |
 | Heap | 0 | -- | `#![no_std]`, no alloc |
 
 Key static allocations:
 - `FRAME_CHANNEL`: 4.0 KB (64 frames x 32 ch x 2 B)
 - `EVENT_CHANNEL`: 0.4 KB (32 events x ~12 B)
-- Processing task stack: ~12 KB (Pipeline state + WaveformExtractor + Classifier templates)
+- `STATS_CHANNEL`: 0.1 KB (4 snapshots x 16 B)
+- Processing task stack: ~14 KB (Pipeline + WaveformExtractor + Classifier + OnlineLearner + RuntimeStats)
 
 ## Module Dependency Graph
 
@@ -145,11 +161,23 @@ main.rs (binary entry point)
   |-- online_learn.rs   (TemplateAccumulator + OnlineLearner)
   |     \-- zerostone::float::{Float, sqrt}
   |
-  |-- ring_buffer.rs    (FrameRingBuffer, not currently used in main)
+  |-- ble_server.rs     (BleServer<N> + GattTable + state machine)
+  |     \-- pipeline::SpikeEvent, ble::serialize_spike_event
   |
-  |-- stats.rs          (RuntimeStats, not currently wired into tasks)
+  |-- stats.rs          (RuntimeStats, 16B BLE serialization)
   |
-  \-- watchdog.rs       (WatchdogConfig + WatchdogState, not yet wired)
+  |-- stim.rs           (StimConfig + StimState + StimDecision)
+  |     \-- pipeline::SpikeEvent
+  |
+  |-- power.rs          (PowerConfig + PowerProfile + battery estimates)
+  |
+  |-- flash_log.rs      (FlashRegion + FlashLog<N> + LogEntryHeader)
+  |
+  |-- fault.rs          (FaultLog<N> + DfuConfig + ResetReason)
+  |
+  |-- watchdog.rs       (WatchdogConfig + WatchdogState)
+  |
+  \-- ring_buffer.rs    (FrameRingBuffer, available but Channel used instead)
 ```
 
 External dependency: `zerostone` (parent crate) is used only for `zerostone::float::Float` (f32 type alias and `sqrt` wrapper). All signal processing is reimplemented in the firmware crate with fixed-size arrays for `no_std` compatibility.
@@ -180,19 +208,15 @@ External dependency: `zerostone` (parent crate) is used only for `zerostone::flo
 
 ## Current Limitations
 
-1. **BLE radio not connected**: `ble_task` serializes events but does not transmit. The softdevice / nRF BLE stack integration is pending hardware bring-up.
+1. **BLE radio not connected**: `ble_task` uses BleServer with mock GATT table. Real `trouble` BLE stack integration is pending hardware bring-up.
 2. **No DMA for SPI**: The SPI task uses polled `transfer_in_place`. DMA would free the CPU during the 16 us SPI transfer window.
-3. **Static templates only**: `processing_task` loads two hardcoded biphasic templates. The `OnlineLearner` module exists but is not yet wired into the main loop.
-4. **No runtime statistics reporting**: `RuntimeStats` and `WatchdogState` modules are implemented but not integrated into the task graph.
-5. **Single-channel classification**: Each channel is classified independently. No multi-channel deduplication or spatial localization.
-6. **No power management**: The app core runs at 128 MHz continuously. Clock-gating between samples (WFI) would reduce power from 3.2 mA to ~1.7 mA (see `power_budget.md`).
-7. **No persistent storage**: Templates and configuration are lost on reset. A future revision should store templates in non-volatile flash.
+3. **Single-channel classification**: Each channel is classified independently. No multi-channel deduplication or spatial localization.
+4. **Stimulation not wired into main.rs**: `stim.rs` module is complete and tested but the GPIO trigger path is not in the main loop (needs hardware pin assignment).
 
 ## Future Work
 
-- Wire `OnlineLearner` into `processing_task` for adaptive template building.
-- Integrate `RuntimeStats` into a BLE statistics characteristic.
-- Add DMA-based SPI transfers for CPU overlap.
-- Implement WFI sleep between 30 kHz samples for power savings.
-- Connect BLE softdevice on the network core for actual wireless transmission.
+- Add DMA-based SPI transfers with double-buffering for CPU overlap.
+- Connect `trouble` BLE stack on the network core for actual wireless transmission.
+- Wire `StimState` into processing_task with GPIO output pin for closed-loop stimulation.
 - Add multi-channel template matching with probe geometry awareness.
+- Flash logging integration: write stats/faults to NVMC during recording sessions.
