@@ -11,6 +11,129 @@
 use embedded_hal_async::spi::SpiDevice;
 
 // ---------------------------------------------------------------------------
+// DMA buffer types
+// ---------------------------------------------------------------------------
+
+/// A 4-byte-aligned frame buffer suitable for nRF5340 EasyDMA transfers.
+///
+/// EasyDMA requires source/destination buffers to be aligned to 4 bytes and
+/// located in RAM. The `#[repr(C, align(4))]` guarantees the alignment
+/// regardless of where the struct is placed on the stack or in a static.
+#[repr(C, align(4))]
+pub struct DmaFrameBuffer {
+    /// Raw signed ADC samples, one per channel.
+    pub data: [i16; NUM_CHANNELS],
+}
+
+impl DmaFrameBuffer {
+    /// Create a zeroed DMA frame buffer.
+    pub const fn new() -> Self {
+        Self {
+            data: [0i16; NUM_CHANNELS],
+        }
+    }
+}
+
+/// Double-buffered (ping-pong) DMA frame buffer.
+///
+/// While DMA fills one buffer, the CPU can process the other. Call [`swap`]
+/// after each DMA transfer completes to alternate roles.
+pub struct DmaDoubleBuffer {
+    bufs: [DmaFrameBuffer; 2],
+    /// Index of the buffer currently being filled by DMA (0 or 1).
+    current: u8,
+}
+
+impl DmaDoubleBuffer {
+    /// Create a new double buffer with both frames zeroed.
+    pub const fn new() -> Self {
+        Self {
+            bufs: [DmaFrameBuffer::new(), DmaFrameBuffer::new()],
+            current: 0,
+        }
+    }
+
+    /// Return a mutable reference to the buffer currently being filled by DMA.
+    pub fn active_buf(&mut self) -> &mut DmaFrameBuffer {
+        &mut self.bufs[self.current as usize]
+    }
+
+    /// Return a shared reference to the buffer that is ready for CPU processing.
+    pub fn ready_buf(&self) -> &DmaFrameBuffer {
+        &self.bufs[(1 - self.current) as usize]
+    }
+
+    /// Toggle the ping-pong index so the roles swap.
+    pub fn swap(&mut self) {
+        self.current = 1 - self.current;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Frame timing
+// ---------------------------------------------------------------------------
+
+/// Tracks min/max/average frame read time in microseconds.
+pub struct FrameTiming {
+    min: u32,
+    max: u32,
+    sum: u64,
+    count: u32,
+}
+
+impl FrameTiming {
+    /// Create a new timing tracker with no recorded samples.
+    pub const fn new() -> Self {
+        Self {
+            min: u32::MAX,
+            max: 0,
+            sum: 0,
+            count: 0,
+        }
+    }
+
+    /// Record a single frame read duration in microseconds.
+    pub fn record(&mut self, micros: u32) {
+        if micros < self.min {
+            self.min = micros;
+        }
+        if micros > self.max {
+            self.max = micros;
+        }
+        self.sum += micros as u64;
+        self.count += 1;
+    }
+
+    /// Minimum recorded time, or 0 if no samples.
+    pub fn min_us(&self) -> u32 {
+        if self.count == 0 {
+            0
+        } else {
+            self.min
+        }
+    }
+
+    /// Maximum recorded time, or 0 if no samples.
+    pub fn max_us(&self) -> u32 {
+        self.max
+    }
+
+    /// Average recorded time (integer division), or 0 if no samples.
+    pub fn avg_us(&self) -> u32 {
+        if self.count == 0 {
+            0
+        } else {
+            (self.sum / self.count as u64) as u32
+        }
+    }
+
+    /// Number of recorded samples.
+    pub fn count(&self) -> u32 {
+        self.count
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Command encoding
 // ---------------------------------------------------------------------------
 
@@ -272,6 +395,17 @@ where
         let result = self.send_cmd(cmd_convert(0)).await?;
 
         Ok(result)
+    }
+
+    /// Read one full frame into a DMA-aligned buffer.
+    ///
+    /// Currently delegates to [`read_frame`] and copies the result into the
+    /// provided [`DmaFrameBuffer`]. When running on hardware with EasyDMA,
+    /// this will be replaced by a zero-copy `transfer_from_ram()` path.
+    pub async fn read_frame_dma(&mut self, buf: &mut DmaFrameBuffer) -> Result<(), E> {
+        let frame = self.read_frame().await?;
+        buf.data = frame;
+        Ok(())
     }
 
     /// Write a value to a register on the RHD2132.
@@ -569,6 +703,95 @@ mod tests {
         let spi = AsyncMockSpi::new();
         let mut driver = IntanDriver::new(spi);
         driver.write_register(14, 0xFF).await.unwrap();
+    }
+
+    // --- Blocking mock SPI pipeline delay test ---
+
+    // --- DMA buffer tests ---
+
+    #[test]
+    fn test_dma_frame_buffer_alignment() {
+        assert!(core::mem::align_of::<DmaFrameBuffer>() >= 4);
+        let buf = DmaFrameBuffer::new();
+        let ptr = &buf as *const DmaFrameBuffer as usize;
+        assert_eq!(ptr % 4, 0, "DmaFrameBuffer instance not 4-byte aligned");
+    }
+
+    #[test]
+    fn test_dma_double_buffer_swap() {
+        let mut db = DmaDoubleBuffer::new();
+        // Initially current=0, so active=buf[0], ready=buf[1].
+        db.active_buf().data[0] = 111;
+        db.swap();
+        // After swap: active=buf[1], ready=buf[0].
+        assert_eq!(db.ready_buf().data[0], 111);
+        db.active_buf().data[0] = 222;
+        db.swap();
+        // After second swap: active=buf[0], ready=buf[1].
+        assert_eq!(db.ready_buf().data[0], 222);
+        assert_eq!(db.active_buf().data[0], 111);
+    }
+
+    #[test]
+    fn test_dma_double_buffer_independence() {
+        let mut db = DmaDoubleBuffer::new();
+        // Write to active buffer.
+        for i in 0..NUM_CHANNELS {
+            db.active_buf().data[i] = (i as i16) * 10;
+        }
+        db.swap();
+        // Ready buffer should have the data we wrote.
+        for i in 0..NUM_CHANNELS {
+            assert_eq!(db.ready_buf().data[i], (i as i16) * 10);
+        }
+        // New active buffer should still be zeroed.
+        for i in 0..NUM_CHANNELS {
+            assert_eq!(db.active_buf().data[i], 0);
+        }
+    }
+
+    // --- Frame timing tests ---
+
+    #[test]
+    fn test_frame_timing_basic() {
+        let mut t = FrameTiming::new();
+        t.record(100);
+        t.record(200);
+        t.record(300);
+        assert_eq!(t.min_us(), 100);
+        assert_eq!(t.max_us(), 300);
+        assert_eq!(t.avg_us(), 200);
+        assert_eq!(t.count(), 3);
+    }
+
+    #[test]
+    fn test_frame_timing_empty() {
+        let t = FrameTiming::new();
+        assert_eq!(t.min_us(), 0);
+        assert_eq!(t.max_us(), 0);
+        assert_eq!(t.avg_us(), 0);
+        assert_eq!(t.count(), 0);
+    }
+
+    // --- DMA read_frame_dma test ---
+
+    #[tokio::test]
+    async fn test_read_frame_dma() {
+        let spi = AsyncMockSpi::new();
+        let mut driver = IntanDriver::new(spi);
+        driver.init().await.unwrap();
+
+        let mut buf = DmaFrameBuffer::new();
+        driver.read_frame_dma(&mut buf).await.unwrap();
+
+        for ch in 0..NUM_CHANNELS {
+            assert_eq!(
+                buf.data[ch],
+                (ch as i16) * 100,
+                "channel {} mismatch",
+                ch
+            );
+        }
     }
 
     // --- Blocking mock SPI pipeline delay test ---

@@ -28,7 +28,7 @@ use zerostone_firmware::ble::serialize_spike_event;
 use zerostone_firmware::ble_server::BleServer;
 use zerostone_firmware::classifier::{Classifier, WaveformExtractor};
 use zerostone_firmware::fault::FaultLog;
-use zerostone_firmware::intan::{IntanDriver, NUM_CHANNELS};
+use zerostone_firmware::intan::{DmaDoubleBuffer, IntanDriver, NUM_CHANNELS};
 use zerostone_firmware::online_learn::OnlineLearner;
 use zerostone_firmware::pipeline::{EventQueue, Pipeline, SpikeEvent};
 use zerostone_firmware::stats::RuntimeStats;
@@ -122,6 +122,9 @@ async fn spi_task(
         }
     }
 
+    // DMA double buffer: DMA fills one while CPU processes the other.
+    let mut dma_buf = DmaDoubleBuffer::new();
+
     // 30 kHz = 33.333... us per sample.
     let mut ticker = Ticker::every(embassy_time::Duration::from_micros(33));
     let mut dropped: u32 = 0;
@@ -129,11 +132,11 @@ async fn spi_task(
     loop {
         ticker.next().await;
 
-        match intan.read_frame().await {
-            Ok(frame) => {
-                // Try to send without blocking. If the processing task is behind,
-                // drop the frame and count it.
-                if frame_tx.try_send(frame).is_err() {
+        match intan.read_frame_dma(dma_buf.active_buf()).await {
+            Ok(()) => {
+                dma_buf.swap();
+                // Send the just-completed buffer's data to the processing task.
+                if frame_tx.try_send(dma_buf.ready_buf().data).is_err() {
                     dropped += 1;
                     if dropped % 1000 == 0 {
                         defmt::warn!("spi: {} frames dropped (channel full)", dropped);
@@ -141,7 +144,7 @@ async fn spi_task(
                 }
             }
             Err(_e) => {
-                defmt::error!("spi: read_frame failed");
+                defmt::error!("spi: read_frame_dma failed");
             }
         }
     }
