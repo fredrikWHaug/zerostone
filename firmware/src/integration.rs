@@ -478,6 +478,84 @@ mod tests {
     }
 
     #[test]
+    fn stress_60s_no_drops() {
+        use crate::intan::{DmaDoubleBuffer, FrameTiming};
+        use crate::stats::RuntimeStats;
+        use crate::stim::{StimConfig, StimState};
+
+        let mut dma = DmaDoubleBuffer::new();
+        let mut timing = FrameTiming::new();
+        let mut pipeline = Pipeline::<NUM_CH>::new(5.0);
+        let mut extractor = WaveformExtractor::<NUM_CH, WAVEFORM_LEN>::new();
+        let mut classifier = Classifier::<WAVEFORM_LEN, MAX_TEMPLATES>::new(0.5);
+        let mut events = EventQueue::<64>::new();
+        let mut stats = RuntimeStats::new();
+
+        // Load a simple template.
+        let mut template = [0.0f32; WAVEFORM_LEN];
+        template[WAVEFORM_LEN - 1] = -1.0;
+        classifier.add_template(&template, 1);
+
+        let stim_cfg = StimConfig::new()
+            .with_target_cluster_id(1)
+            .with_refractory_ms(5)
+            .with_max_rate_hz(200)
+            .with_enabled(true);
+        let mut stim = StimState::new(stim_cfg);
+
+        // 60 seconds at 30 kHz = 1,800,000 frames.
+        let total_frames: u32 = 1_800_000;
+        let mut total_spikes = 0u32;
+
+        for i in 0..total_frames {
+            // Simulate writing into DMA active buffer.
+            let buf = dma.active_buf();
+            buf.data = if i % 6000 == 3000 {
+                // Inject spike every 200ms on channel 5.
+                make_spike_frame(5, -25000)
+            } else {
+                [0i16; NUM_CH]
+            };
+            dma.swap();
+
+            // Process from ready buffer (mimics CPU processing while DMA fills next).
+            let frame = &dma.ready_buf().data;
+            extractor.push_frame(frame);
+            let n = pipeline.process_frame(frame, i, &mut events);
+            stats.record_frame();
+
+            // Simulate frame timing (1 us per frame in test).
+            timing.record(1);
+
+            for _ in 0..n {
+                if let Some(mut ev) = events.pop() {
+                    let waveform = extractor.extract(ev.channel as usize);
+                    ev.cluster_id = classifier.classify(&waveform);
+                    stats.record_spike(ev.cluster_id != 0);
+                    stim.evaluate(&ev, 30_000);
+                    total_spikes += 1;
+                }
+            }
+
+            // Tick stim rate limiter every second.
+            if i > 0 && i % 30_000 == 0 {
+                stim.tick_second(i);
+                stats.tick_second();
+            }
+        }
+
+        assert_eq!(stats.total_frames, total_frames);
+        // Spikes injected every 6000 frames starting at 3000: ~300 spikes.
+        assert!(
+            total_spikes >= 250 && total_spikes <= 350,
+            "expected ~300 spikes, got {total_spikes}"
+        );
+        assert_eq!(timing.count(), total_frames);
+        assert_eq!(timing.min_us(), 1);
+        assert_eq!(timing.max_us(), 1);
+    }
+
+    #[test]
     fn ble_batch_round_trip() {
         use crate::ble::serialize_spike_batch;
         use crate::pipeline::SpikeEvent;
