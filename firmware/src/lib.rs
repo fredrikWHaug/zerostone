@@ -25,4 +25,7 @@ pub mod watchdog;
 mod integration;
 
 #[cfg(test)]
+mod sim;
+
+#[cfg(test)]
 mod synth;
