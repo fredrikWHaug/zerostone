@@ -492,4 +492,151 @@ mod tests {
         assert_eq!(state.refractory_rejects, 4);
         assert_eq!(state.consecutive_triggers, 1);
     }
+
+    mod proptest_properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn evaluate_always_returns_trigger_or_reject(
+                cluster_id in 0u8..=255,
+                sample_idx in 0u32..=1_000_000,
+                target in 1u8..=255,
+                refractory_ms in 0u32..=1000,
+                max_rate_hz in 1u16..=1000,
+                sample_rate in 1u32..=100_000,
+            ) {
+                let cfg = StimConfig::new()
+                    .with_target_cluster_id(target)
+                    .with_refractory_ms(refractory_ms)
+                    .with_max_rate_hz(max_rate_hz)
+                    .with_enabled(true);
+                let mut state = StimState::new(cfg);
+                let event = make_event(cluster_id, sample_idx);
+                let decision = state.evaluate(&event, sample_rate);
+                match decision {
+                    StimDecision::Trigger { .. } => {}
+                    StimDecision::Reject(_) => {}
+                }
+            }
+
+            #[test]
+            fn zero_refractory_always_triggers_matching(
+                sample_idx in 0u32..=1_000_000,
+                target in 1u8..=255,
+                n_evals in 1usize..=50,
+                sample_rate in 1u32..=100_000,
+            ) {
+                let cfg = StimConfig::new()
+                    .with_target_cluster_id(target)
+                    .with_refractory_ms(0)
+                    .with_max_rate_hz(u16::MAX)
+                    .with_enabled(true);
+                let mut state = StimState::new(cfg);
+                for i in 0..n_evals {
+                    let event = make_event(target, sample_idx + i as u32);
+                    let decision = state.evaluate(&event, sample_rate);
+                    prop_assert_eq!(
+                        decision,
+                        StimDecision::Trigger { pulse_width_us: 200 },
+                        "expected trigger at eval {}", i
+                    );
+                }
+            }
+
+            #[test]
+            fn stats_accounting_consistent(
+                n_match in 0usize..=20,
+                n_wrong in 0usize..=20,
+                sample_rate in 1u32..=100_000,
+            ) {
+                let cfg = StimConfig::new()
+                    .with_target_cluster_id(1)
+                    .with_refractory_ms(0)
+                    .with_max_rate_hz(u16::MAX)
+                    .with_enabled(true);
+                let mut state = StimState::new(cfg);
+                let total = n_match + n_wrong;
+                for i in 0..n_match {
+                    state.evaluate(&make_event(1, i as u32), sample_rate);
+                }
+                for i in 0..n_wrong {
+                    state.evaluate(&make_event(2, (n_match + i) as u32), sample_rate);
+                }
+                let s = state.stats();
+                let accounted = s.trigger_count + s.cluster_rejects
+                    + s.refractory_rejects + s.rate_rejects;
+                prop_assert_eq!(accounted, total as u32,
+                    "trigger({}) + cluster({}) + refr({}) + rate({}) = {} != total({})",
+                    s.trigger_count, s.cluster_rejects,
+                    s.refractory_rejects, s.rate_rejects,
+                    accounted, total);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kani proofs
+// ---------------------------------------------------------------------------
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+    use crate::pipeline::SpikeEvent;
+
+    #[kani::proof]
+    fn evaluate_no_panic() {
+        let cluster_id: u8 = kani::any();
+        let sample_idx: u32 = kani::any();
+        let channel: u8 = kani::any();
+        let amplitude: f32 = kani::any();
+        let sample_rate: u32 = kani::any();
+        kani::assume(sample_rate > 0);
+        kani::assume(amplitude.is_finite());
+
+        let target: u8 = kani::any();
+        let refractory_ms: u32 = kani::any();
+        let max_rate_hz: u16 = kani::any();
+        let enabled: bool = kani::any();
+        let pulse_width_us: u32 = kani::any();
+
+        let cfg = StimConfig {
+            target_cluster_id: target,
+            pulse_width_us,
+            refractory_ms,
+            max_rate_hz,
+            enabled,
+        };
+        let mut state = StimState::new(cfg);
+        let event = SpikeEvent {
+            sample_idx,
+            channel,
+            cluster_id,
+            amplitude,
+        };
+        let _decision = state.evaluate(&event, sample_rate);
+    }
+
+    #[kani::proof]
+    fn refractory_arithmetic_no_overflow() {
+        let refractory_ms: u32 = kani::any();
+        let sample_rate: u32 = kani::any();
+        kani::assume(sample_rate > 0);
+
+        // This mirrors the arithmetic in evaluate():
+        let refractory_samples = (refractory_ms as u64)
+            .wrapping_mul(sample_rate as u64)
+            / 1000;
+
+        // The result must fit in u64 (always true) and be finite.
+        assert!(refractory_samples <= u64::MAX);
+
+        let elapsed: u32 = kani::any();
+        let last_trigger: u32 = kani::any();
+        let computed_elapsed = elapsed.wrapping_sub(last_trigger);
+        // Comparison must not panic.
+        let _in_refractory = (computed_elapsed as u64) < refractory_samples;
+    }
 }

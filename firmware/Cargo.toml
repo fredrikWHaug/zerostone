@@ -42,8 +42,12 @@ embedded-hal-bus = { version = "0.2", features = ["async"] }
 # Utilities (ARM-only)
 static_cell = "2"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }
+proptest = "1"
 
 [profile.release]
 opt-level = "z"

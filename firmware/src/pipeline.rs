@@ -409,3 +409,24 @@ mod tests {
         assert_eq!(n2, 0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Kani proofs
+// ---------------------------------------------------------------------------
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn process_frame_no_panic() {
+        let sample0: i16 = kani::any();
+        let sample1: i16 = kani::any();
+        let sample_idx: u32 = kani::any();
+
+        let mut pipe = Pipeline::<2>::new(5.0);
+        let mut q = EventQueue::<4>::new();
+        let frame = [sample0, sample1];
+        let _n = pipe.process_frame(&frame, sample_idx, &mut q);
+    }
+}

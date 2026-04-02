@@ -223,4 +223,82 @@ mod tests {
         assert_eq!(u16::from_le_bytes([buf[10], buf[11]]), u16::MAX);
         assert_eq!(u16::from_le_bytes([buf[14], buf[15]]), u16::MAX);
     }
+
+    mod proptest_properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn serialize_deserialize_round_trip(
+                total_frames in 0u32..=u32::MAX,
+                total_spikes in 0u32..=u32::MAX,
+                dropped_frames in 0u32..=u32::MAX,
+                dropped_events in 0u32..=u32::MAX,
+                peak_spike_rate in 0u16..=u16::MAX,
+                uptime_seconds in 0u32..=u32::MAX,
+            ) {
+                let mut s = RuntimeStats::new();
+                s.total_frames = total_frames;
+                s.total_spikes = total_spikes;
+                s.dropped_frames = dropped_frames;
+                s.dropped_events = dropped_events;
+                s.peak_spike_rate = peak_spike_rate;
+                s.uptime_seconds = uptime_seconds;
+
+                let mut buf = [0u8; 16];
+                let n = s.serialize(&mut buf);
+                prop_assert_eq!(n, 16);
+
+                // Deserialize and check round-trip.
+                let rt_frames = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                let rt_spikes = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+                let rt_dropped_f = u16::from_le_bytes([buf[8], buf[9]]);
+                let rt_dropped_e = u16::from_le_bytes([buf[10], buf[11]]);
+                let rt_peak = u16::from_le_bytes([buf[12], buf[13]]);
+                let rt_uptime = u16::from_le_bytes([buf[14], buf[15]]);
+
+                prop_assert_eq!(rt_frames, total_frames);
+                prop_assert_eq!(rt_spikes, total_spikes);
+                // Saturated fields.
+                let expected_df = if dropped_frames > u16::MAX as u32 { u16::MAX } else { dropped_frames as u16 };
+                let expected_de = if dropped_events > u16::MAX as u32 { u16::MAX } else { dropped_events as u16 };
+                let expected_up = if uptime_seconds > u16::MAX as u32 { u16::MAX } else { uptime_seconds as u16 };
+                prop_assert_eq!(rt_dropped_f, expected_df);
+                prop_assert_eq!(rt_dropped_e, expected_de);
+                prop_assert_eq!(rt_peak, peak_spike_rate);
+                prop_assert_eq!(rt_uptime, expected_up);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kani proofs
+// ---------------------------------------------------------------------------
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn serialize_deserialize_round_trip() {
+        let mut s = RuntimeStats::new();
+        s.total_frames = kani::any();
+        s.total_spikes = kani::any();
+        s.dropped_frames = kani::any();
+        s.dropped_events = kani::any();
+        s.peak_spike_rate = kani::any();
+        s.uptime_seconds = kani::any();
+
+        let mut buf = [0u8; 16];
+        let n = s.serialize(&mut buf);
+        assert!(n == 16);
+
+        let rt_frames = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        let rt_spikes = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+
+        assert!(rt_frames == s.total_frames, "total_frames mismatch");
+        assert!(rt_spikes == s.total_spikes, "total_spikes mismatch");
+    }
 }

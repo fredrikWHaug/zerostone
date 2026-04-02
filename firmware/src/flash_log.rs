@@ -505,4 +505,103 @@ mod tests {
         assert_eq!(r.num_pages(), 0);
         assert_eq!(r.page_addr(0), None);
     }
+
+    mod proptest_properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn bytes_used_plus_remaining_equals_size(
+                region_size in 8u32..=100_000,
+                n_appends in 0usize..=20,
+            ) {
+                let region = FlashRegion::new(0x1000, region_size, 4096);
+                let mut log: FlashLog<64> = FlashLog::new(region);
+                for i in 0..n_appends {
+                    log.append_entry(LogEntryType::Stats, 0, i as u32);
+                }
+                prop_assert_eq!(
+                    log.bytes_used() + log.bytes_remaining(),
+                    region_size,
+                    "used({}) + remaining({}) != size({})",
+                    log.bytes_used(), log.bytes_remaining(), region_size
+                );
+            }
+
+            #[test]
+            fn sequence_numbers_strictly_monotonic(
+                region_size in 1000u32..=100_000,
+                n_appends in 2usize..=30,
+            ) {
+                let region = FlashRegion::new(0x1000, region_size, 4096);
+                let mut log: FlashLog<64> = FlashLog::new(region);
+                let mut prev_seq: Option<u16> = None;
+                for i in 0..n_appends {
+                    if !log.append_entry(LogEntryType::Stats, 0, i as u32) {
+                        break;
+                    }
+                    let idx = log.entry_count() as usize - 1;
+                    if let Some(entry) = log.get_entry(idx % 64) {
+                        if let Some(prev) = prev_seq {
+                            prop_assert!(
+                                entry.1.sequence == prev.wrapping_add(1),
+                                "seq {} not consecutive after {}",
+                                entry.1.sequence, prev
+                            );
+                        }
+                        prev_seq = Some(entry.1.sequence);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kani proofs
+// ---------------------------------------------------------------------------
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn append_entry_never_exceeds_region() {
+        let region_size: u32 = kani::any();
+        kani::assume(region_size >= 8 && region_size <= 1024);
+
+        let region = FlashRegion::new(0x1000, region_size, 4096);
+        let mut log: FlashLog<8> = FlashLog::new(region);
+
+        let payload_len: u8 = kani::any();
+        let ok = log.append_entry(LogEntryType::Stats, payload_len, 0);
+        if ok {
+            assert!(log.write_offset <= region_size,
+                "write_offset {} exceeded region.size {}",
+                log.write_offset, region_size);
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn sequence_numbers_monotonic() {
+        let region = FlashRegion::new(0x1000, 4096, 4096);
+        let mut log: FlashLog<8> = FlashLog::new(region);
+
+        let mut prev_seq: u16 = 0;
+        let mut i: u32 = 0;
+        while i < 4 {
+            if log.append_entry(LogEntryType::Stats, 0, i) {
+                let idx = (log.entry_count() as usize - 1) % 8;
+                let current_seq = log.entries[idx].1.sequence;
+                if i > 0 {
+                    assert!(current_seq == prev_seq.wrapping_add(1),
+                        "sequence not monotonic");
+                }
+                prev_seq = current_seq;
+            }
+            i += 1;
+        }
+    }
 }

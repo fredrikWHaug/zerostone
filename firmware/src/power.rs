@@ -316,4 +316,54 @@ mod tests {
             );
         }
     }
+
+    mod proptest_properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn total_system_current_gte_intan(
+                sample_rate in 1u32..=100_000,
+                processing_us in 0u32..=1_000_000,
+                ble_interval in 8u16..=4000,
+            ) {
+                let c = PowerConfig::new()
+                    .with_sample_rate_hz(sample_rate)
+                    .with_processing_us(processing_us)
+                    .with_ble_connection_interval_ms(ble_interval);
+                let total = c.total_system_current_ma();
+                let intan = c.intan_current_ma();
+                prop_assert!(
+                    total >= intan,
+                    "total {} < intan {}",
+                    total, intan
+                );
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kani proofs
+// ---------------------------------------------------------------------------
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn duty_cycle_in_range() {
+        let sample_rate: u32 = kani::any();
+        kani::assume(sample_rate > 0 && sample_rate <= 100_000);
+        let processing_us: u32 = kani::any();
+        kani::assume(processing_us <= 1_000_000);
+
+        let c = PowerConfig::new()
+            .with_sample_rate_hz(sample_rate)
+            .with_processing_us(processing_us);
+        let dc = c.duty_cycle();
+        assert!(dc >= 0.0, "duty_cycle {} < 0.0", dc);
+        assert!(dc <= 1.0, "duty_cycle {} > 1.0", dc);
+    }
 }
