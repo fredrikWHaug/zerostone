@@ -33,6 +33,7 @@
 
 use crate::float::{self, Float};
 use crate::isi;
+use crate::localize;
 use crate::matched_filter::{MatchedDetection, MatchedFilterBank};
 use crate::online_kmeans::OnlineKMeans;
 use crate::probe::ProbeLayout;
@@ -77,7 +78,7 @@ pub enum DetectionMode {
 /// let config = SortConfig::default();
 /// assert!((config.threshold_multiplier - 5.0).abs() < 1e-12);
 /// assert_eq!(config.refractory_samples, 15);
-/// assert!((config.merge_dprime_threshold - 3.1).abs() < 1e-12);
+/// assert!((config.merge_dprime_threshold - 2.0).abs() < 1e-12);
 /// assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
 /// assert_eq!(config.split_min_cluster_size, 10);
 /// assert!((config.split_bimodality_threshold - 2.0).abs() < 1e-12);
@@ -88,10 +89,11 @@ pub enum DetectionMode {
 /// assert_eq!(config.detection_mode, zerostone::sorter::DetectionMode::Amplitude);
 /// assert_eq!(config.template_subtract_passes, 2);
 /// assert!((config.isi_split_threshold - 0.1).abs() < 1e-12);
-/// assert!(!config.matched_filter_detect);
+/// assert!(config.matched_filter_detect);
 /// assert!((config.matched_filter_threshold - 4.0).abs() < 1e-12);
 /// assert!(!config.svd_init);
 /// assert_eq!(config.refinement_iterations, 0);
+/// assert!(!config.use_localization);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -196,6 +198,12 @@ pub struct SortConfig {
     /// Maximum crossing rate (Hz) before adaptive threshold is raised.
     /// Overactive channels get scaled up by sqrt(rate / max_rate). Default: 200.0.
     pub adaptive_max_rate_hz: Float,
+    /// Enable center-of-mass spike localization as clustering features.
+    /// When true, replaces the last two feature dimensions (least-important
+    /// PCA component and channel index) with the (x, y) center-of-mass
+    /// position computed from peak amplitudes across channels and probe
+    /// geometry. Requires K >= 3. Default: false.
+    pub use_localization: bool,
 }
 
 impl Default for SortConfig {
@@ -207,10 +215,10 @@ impl Default for SortConfig {
             temporal_radius: 5,
             align_half_window: 15,
             pre_samples: 20,
-            cluster_threshold: 5.0,
+            cluster_threshold: 7.0,
             cluster_max_count: 1000,
             whitening_epsilon: 1e-6,
-            merge_dprime_threshold: 3.1,
+            merge_dprime_threshold: 2.0,
             merge_isi_threshold: 0.05,
             split_min_cluster_size: 10,
             split_bimodality_threshold: 2.0,
@@ -225,7 +233,7 @@ impl Default for SortConfig {
             isi_split_threshold: 0.1,
             gmm_refine: false,
             gmm_max_iter: 10,
-            matched_filter_detect: false,
+            matched_filter_detect: true,
             matched_filter_threshold: 4.0,
             bandpass_low: 0.0,
             bandpass_high: 0.0,
@@ -236,6 +244,7 @@ impl Default for SortConfig {
             adaptive_threshold: false,
             adaptive_min_threshold: 0.5,
             adaptive_max_rate_hz: 200.0,
+            use_localization: false,
         }
     }
 }
@@ -2509,19 +2518,93 @@ pub fn sort_multichannel<
         pca.transform(&waveform_buf[i], &mut feature_buf[i])?;
     }
 
-    // 8b. Encode detection channel as a feature dimension.
+    // 8b. Encode spatial information as feature dimensions.
     //
     // After whitening, single-channel waveform shapes become similar across
     // channels, so PCA on peak-channel waveforms alone cannot distinguish
-    // units on different channels. Replacing the least-important PCA
-    // component (last dimension) with the normalized channel index provides
-    // spatial discrimination. The scale factor controls how strongly channel
-    // identity influences clustering relative to waveform shape.
+    // units on different channels.
+    //
+    // Two modes:
+    // - Default: replace the last PCA component with normalized channel index.
+    // - Localization: replace the last two PCA components with (x, y)
+    //   center-of-mass position from peak amplitudes across channels and
+    //   probe geometry. This provides continuous 2D spatial discrimination.
     if K >= 3 {
-        let channel_scale = config.cluster_threshold * C as Float;
-        for i in 0..n_extracted {
-            let ch = event_buf[i].channel;
-            feature_buf[i][K - 1] = (ch as Float / C as Float) * channel_scale;
+        if config.use_localization && K >= 4 {
+            // Compute center-of-mass (x, y) for each spike from multi-channel
+            // peak amplitudes at the spike time, scaled to match cluster_threshold.
+            let positions = probe.positions();
+
+            // Find the spatial extent for normalization
+            let mut x_min: Float = Float::MAX;
+            let mut x_max: Float = Float::MIN;
+            let mut y_min: Float = Float::MAX;
+            let mut y_max: Float = Float::MIN;
+            let mut ci = 0;
+            while ci < C {
+                if positions[ci][0] < x_min {
+                    x_min = positions[ci][0];
+                }
+                if positions[ci][0] > x_max {
+                    x_max = positions[ci][0];
+                }
+                if positions[ci][1] < y_min {
+                    y_min = positions[ci][1];
+                }
+                if positions[ci][1] > y_max {
+                    y_max = positions[ci][1];
+                }
+                ci += 1;
+            }
+            let x_range = if float::abs(x_max - x_min) > 1e-12 {
+                x_max - x_min
+            } else {
+                1.0
+            };
+            let y_range = if float::abs(y_max - y_min) > 1e-12 {
+                y_max - y_min
+            } else {
+                1.0
+            };
+
+            let spatial_scale = config.cluster_threshold * C as Float;
+
+            for i in 0..n_extracted {
+                let sample_idx = event_buf[i].sample;
+                if sample_idx < data.len() {
+                    // Extract per-channel amplitudes at spike time.
+                    // Use absolute values because whitened data can be negative,
+                    // and center-of-mass needs positive weights.
+                    let mut amps = [0.0 as Float; C];
+                    let mut ch = 0;
+                    while ch < C {
+                        amps[ch] = float::abs(data[sample_idx][ch]);
+                        ch += 1;
+                    }
+                    let com = localize::center_of_mass(&amps, positions);
+                    // Normalize to [0, 1] and scale
+                    feature_buf[i][K - 2] = ((com[0] - x_min) / x_range) * spatial_scale;
+                    feature_buf[i][K - 1] = ((com[1] - y_min) / y_range) * spatial_scale;
+                } else {
+                    // Fallback: use channel index for both dims
+                    let ch = event_buf[i].channel;
+                    let norm = ch as Float / C as Float;
+                    feature_buf[i][K - 2] = norm * spatial_scale;
+                    feature_buf[i][K - 1] = norm * spatial_scale;
+                }
+            }
+        } else {
+            // Default: encode channel index in the last dimension.
+            // Scale by cluster_threshold * C to ensure spikes on different
+            // channels are well-separated in feature space. This prevents
+            // cross-channel contamination in clustering. The cluster_threshold
+            // parameter (default 5.0, recommend 7.0+) controls how strongly
+            // channel identity influences clustering relative to waveform shape.
+            let channel_scale = config.cluster_threshold * C as Float;
+            for i in 0..n_extracted {
+                let ch = event_buf[i].channel;
+                feature_buf[i][K - 1] = (ch as Float / C as Float) * channel_scale;
+            }
         }
     }
 
@@ -3098,7 +3181,90 @@ pub fn sort_multichannel<
         }
     }
 
-    let _ = config.refinement_iterations;
+    // 9g. Refinement iterations: re-estimate centroids in feature space and
+    // reassign all spikes. Unlike waveform-space reassignment (which loses
+    // channel discrimination after whitening), feature space includes the
+    // spatial dimension that separates units on different channels.
+    if config.refinement_iterations > 0 && n_clusters > 1 && n_extracted > n_clusters {
+        for _iter in 0..config.refinement_iterations {
+            // Compute mean feature vector per cluster
+            let mut centroids = [[0.0 as Float; K]; N];
+            let mut cent_count = [0u32; N];
+            for i in 0..n_extracted {
+                let l = labels[i];
+                if l < n_clusters && l < N {
+                    cent_count[l] += 1;
+                    for k in 0..K {
+                        centroids[l][k] += feature_buf[i][k];
+                    }
+                }
+            }
+            for c in 0..n_clusters.min(N) {
+                if cent_count[c] > 0 {
+                    let inv = 1.0 / cent_count[c] as Float;
+                    for v in centroids[c].iter_mut() {
+                        *v *= inv;
+                    }
+                }
+            }
+            // Reassign each spike to nearest centroid in feature space
+            let mut changed = 0usize;
+            for i in 0..n_extracted {
+                let mut best_c = labels[i];
+                let mut best_d: Float = Float::MAX;
+                for c in 0..n_clusters.min(N) {
+                    if cent_count[c] == 0 {
+                        continue;
+                    }
+                    let mut d = 0.0;
+                    for k in 0..K {
+                        let diff = feature_buf[i][k] - centroids[c][k];
+                        d += diff * diff;
+                    }
+                    if d < best_d {
+                        best_d = d;
+                        best_c = c;
+                    }
+                }
+                if best_c != labels[i] {
+                    labels[i] = best_c;
+                    changed += 1;
+                }
+            }
+            if changed == 0 {
+                break; // converged
+            }
+        }
+
+        // Remove empty clusters after refinement
+        let mut counts = [0u32; N];
+        for label in labels.iter().take(n_extracted) {
+            if *label < N {
+                counts[*label] += 1;
+            }
+        }
+        let mut has_empty = false;
+        for count in counts.iter().take(n_clusters.min(N)) {
+            if *count == 0 {
+                has_empty = true;
+                break;
+            }
+        }
+        if has_empty {
+            let mut remap = [0usize; N];
+            let mut new_n = 0;
+            for c in 0..n_clusters.min(N) {
+                if counts[c] > 0 {
+                    remap[c] = new_n;
+                    new_n += 1;
+                }
+            }
+            for i in 0..n_extracted {
+                labels[i] = remap[labels[i]];
+            }
+            n_clusters = new_n;
+        }
+    }
 
     // 10. Quality metrics
     // Compute per-cluster: mean waveform for SNR, spike times for ISI
@@ -3852,10 +4018,10 @@ mod tests {
         assert_eq!(config.temporal_radius, 5);
         assert_eq!(config.align_half_window, 15);
         assert_eq!(config.pre_samples, 20);
-        assert!((config.cluster_threshold - 5.0).abs() < 1e-12);
+        assert!((config.cluster_threshold - 7.0).abs() < 1e-12);
         assert_eq!(config.cluster_max_count, 1000);
         assert!((config.whitening_epsilon - 1e-6).abs() < 1e-12);
-        assert!((config.merge_dprime_threshold - 3.1).abs() < 1e-12);
+        assert!((config.merge_dprime_threshold - 2.0).abs() < 1e-12);
         assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
         assert!(config.template_subtract);
         assert_eq!(config.template_min_count, 3);
@@ -5479,6 +5645,224 @@ mod tests {
             "2 vs 3 iterations spike count should be stable: {} vs {}",
             r2.n_spikes,
             r3.n_spikes
+        );
+    }
+
+    /// Test that localization mode runs without errors on multi-channel data.
+    /// Uses K=4 (2 PCA + 2 localization dims) on a 4-channel linear probe.
+    #[test]
+    fn test_sort_with_localization() {
+        let n = 3000;
+        let mut data = vec![[0.0 as Float; 4]; n];
+
+        // Inject spikes on channel 0 (y=0) and channel 3 (y=75)
+        let spike = |t: Float| -> Float { -8.0 * (-t * t / 2.0).exp() };
+        let mut pos = 100;
+        let mut unit = 0;
+        while pos + 5 < n {
+            let ch = if unit % 2 == 0 { 0 } else { 3 };
+            for dt in 0..5 {
+                let t = (dt as Float - 2.0) / 1.5;
+                data[pos + dt][ch] += spike(t);
+            }
+            pos += 100;
+            unit += 1;
+        }
+
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let mut scratch = vec![0.0; n];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0,
+            };
+            200
+        ];
+        let mut waveforms = vec![[0.0; 8]; 200];
+        let mut features = vec![[0.0; 4]; 200];
+        let mut labels = vec![0usize; 200];
+
+        let config = SortConfig {
+            threshold_multiplier: 4.0,
+            pre_samples: 2,
+            refractory_samples: 10,
+            use_localization: true,
+            ..SortConfig::default()
+        };
+
+        let result = sort_multichannel::<4, 16, 8, 4, 64, 8>(
+            &config,
+            &probe,
+            &mut data,
+            &mut scratch,
+            &mut events,
+            &mut waveforms,
+            &mut features,
+            &mut labels,
+        );
+
+        assert!(result.is_ok(), "sort with localization should succeed");
+        let r = result.unwrap();
+        assert!(r.n_spikes >= 5, "should detect spikes: got {}", r.n_spikes);
+    }
+
+    /// Test that localization produces different feature values for spikes
+    /// on spatially separated channels (verifies spatial features are
+    /// actually being computed, not just zero).
+    #[test]
+    fn test_localization_features_differ_by_channel() {
+        let n = 4000;
+        let mut data = vec![[0.0 as Float; 4]; n];
+
+        // Large spikes alternating between ch 0 (y=0) and ch 3 (y=75)
+        let spike = |t: Float| -> Float { -12.0 * (-t * t / 2.0).exp() };
+        let mut pos = 200;
+        let mut unit = 0;
+        while pos + 5 < n {
+            let ch = if unit % 2 == 0 { 0 } else { 3 };
+            for dt in 0..5 {
+                let t = (dt as Float - 2.0) / 1.5;
+                data[pos + dt][ch] += spike(t);
+            }
+            pos += 200;
+            unit += 1;
+        }
+
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let mut scratch = vec![0.0; n];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0,
+            };
+            200
+        ];
+        let mut waveforms = vec![[0.0; 8]; 200];
+        let mut features = vec![[0.0; 4]; 200];
+        let mut labels = vec![0usize; 200];
+
+        let config = SortConfig {
+            threshold_multiplier: 4.0,
+            pre_samples: 2,
+            refractory_samples: 10,
+            use_localization: true,
+            ..SortConfig::default()
+        };
+
+        let result = sort_multichannel::<4, 16, 8, 4, 64, 8>(
+            &config,
+            &probe,
+            &mut data,
+            &mut scratch,
+            &mut events,
+            &mut waveforms,
+            &mut features,
+            &mut labels,
+        );
+
+        let r = result.expect("sort should succeed");
+        if r.n_spikes >= 4 {
+            // Check that the spatial feature dims (K-2, K-1) differ across spikes
+            // on different channels. Collect unique (rounded) y-positions.
+            let mut y_vals: Vec<Float> = Vec::new();
+            for feat in features.iter().take(r.n_spikes) {
+                let y = feat[3]; // K-1 = y position
+                let mut found = false;
+                for existing in &y_vals {
+                    if float::abs(existing - y) < 1.0 {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    y_vals.push(y);
+                }
+            }
+            // We injected spikes on ch 0 (y=0) and ch 3 (y=75), so after
+            // normalization there should be at least 2 distinct y-feature values.
+            assert!(
+                y_vals.len() >= 2,
+                "localization should produce distinct y-features for different channels, got {} unique: {:?}",
+                y_vals.len(),
+                y_vals
+            );
+        }
+    }
+
+    /// Test that localization does not regress sort quality vs channel-index mode.
+    /// Both modes should detect a similar number of spikes.
+    #[test]
+    fn test_localization_no_regression() {
+        let n = 4000;
+        let build = || -> Vec<[Float; 4]> {
+            let mut data = vec![[0.0 as Float; 4]; n];
+            let spike = |t: Float| -> Float { -10.0 * (-t * t / 2.0).exp() };
+            let mut pos = 150;
+            while pos + 5 < n {
+                let ch = (pos / 150) % 4;
+                for dt in 0..5 {
+                    let t = (dt as Float - 2.0) / 1.5;
+                    data[pos + dt][ch] += spike(t);
+                }
+                pos += 150;
+            }
+            data
+        };
+
+        let probe = ProbeLayout::<4>::linear(25.0);
+
+        let run = |use_loc: bool| -> SortResult<8> {
+            let mut data = build();
+            let config = SortConfig {
+                threshold_multiplier: 4.0,
+                pre_samples: 2,
+                refractory_samples: 10,
+                use_localization: use_loc,
+                ..SortConfig::default()
+            };
+            let mut scratch = vec![0.0; n];
+            let mut events = vec![
+                MultiChannelEvent {
+                    sample: 0,
+                    channel: 0,
+                    amplitude: 0.0,
+                };
+                200
+            ];
+            let mut waveforms = vec![[0.0; 8]; 200];
+            let mut features = vec![[0.0; 4]; 200];
+            let mut labels = vec![0usize; 200];
+
+            sort_multichannel::<4, 16, 8, 4, 64, 8>(
+                &config,
+                &probe,
+                &mut data,
+                &mut scratch,
+                &mut events,
+                &mut waveforms,
+                &mut features,
+                &mut labels,
+            )
+            .expect("sort should succeed")
+        };
+
+        let r_off = run(false);
+        let r_on = run(true);
+
+        // Both should detect spikes
+        assert!(r_off.n_spikes >= 5, "baseline: {}", r_off.n_spikes);
+        assert!(r_on.n_spikes >= 5, "localization: {}", r_on.n_spikes);
+
+        // Spike counts should be in the same ballpark (within 50%)
+        let diff = r_off.n_spikes.abs_diff(r_on.n_spikes);
+        let max_s = r_off.n_spikes.max(r_on.n_spikes);
+        assert!(
+            diff * 2 <= max_s,
+            "localization should not dramatically change spike count: {} vs {}",
+            r_off.n_spikes,
+            r_on.n_spikes
         );
     }
 }
