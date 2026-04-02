@@ -373,4 +373,66 @@ mod tests {
         let result = batch_ncc(&waveform, &templates, 3, 0.5);
         assert_eq!(result, 2);
     }
+
+    mod proptest_properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn ncc_self_approx_one(
+                a0 in -10.0f32..=10.0,
+                a1 in -10.0f32..=10.0,
+                a2 in -10.0f32..=10.0,
+                a3 in -10.0f32..=10.0,
+            ) {
+                let wf = [a0, a1, a2, a3];
+                let ns = norm_sq(&wf);
+                if ns > 1e-10 {
+                    let result = ncc(&wf, &wf, ns);
+                    prop_assert!(
+                        (result - 1.0).abs() < 0.01,
+                        "ncc(x,x) = {result}, expected ~1.0"
+                    );
+                }
+            }
+
+            #[test]
+            fn ncc_negated_approx_neg_one(
+                a0 in -10.0f32..=10.0,
+                a1 in -10.0f32..=10.0,
+                a2 in -10.0f32..=10.0,
+                a3 in -10.0f32..=10.0,
+            ) {
+                let wf = [a0, a1, a2, a3];
+                let neg = [-a0, -a1, -a2, -a3];
+                let ns = norm_sq(&neg);
+                if ns > 1e-10 {
+                    let result = ncc(&wf, &neg, ns);
+                    prop_assert!(
+                        (result - (-1.0)).abs() < 0.01,
+                        "ncc(x,-x) = {result}, expected ~-1.0"
+                    );
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kani proofs
+// ---------------------------------------------------------------------------
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn fast_inv_sqrt_finite_for_positive() {
+        let x: f32 = kani::any();
+        kani::assume(x > 0.0 && x.is_finite() && x <= 1e10);
+        let result = fast_inv_sqrt(x);
+        assert!(result.is_finite(), "fast_inv_sqrt({x}) = {result} is not finite");
+        assert!(result > 0.0, "fast_inv_sqrt({x}) = {result} should be positive");
+    }
 }

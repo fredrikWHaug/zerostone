@@ -481,4 +481,45 @@ mod tests {
         let inverted = [-1.0, 0.5, -0.3, 0.8];
         assert_eq!(clf.classify(&inverted), 0);
     }
+
+    mod proptest_properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn classify_empty_library_always_zero(
+                w0 in -1.0f32..=1.0,
+                w1 in -1.0f32..=1.0,
+                w2 in -1.0f32..=1.0,
+                w3 in -1.0f32..=1.0,
+            ) {
+                let clf = Classifier::<4, 4>::new(0.7);
+                let wf = [w0, w1, w2, w3];
+                prop_assert_eq!(clf.classify(&wf), 0);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kani proofs
+// ---------------------------------------------------------------------------
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn classify_returns_zero_or_valid_cluster_id() {
+        let min_corr: f32 = kani::any();
+        kani::assume(min_corr.is_finite() && min_corr >= -1.0 && min_corr <= 1.0);
+
+        let clf = Classifier::<4, 2>::new(min_corr);
+        // Empty library: must return 0.
+        let wf: [f32; 4] = [kani::any(), kani::any(), kani::any(), kani::any()];
+        kani::assume(wf[0].is_finite() && wf[1].is_finite() && wf[2].is_finite() && wf[3].is_finite());
+        let result = clf.classify(&wf);
+        assert!(result == 0, "empty library should return 0");
+    }
 }

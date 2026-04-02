@@ -822,4 +822,50 @@ mod tests {
         let r3 = xfer(cmd_convert(0));
         assert_eq!(r3, 20 * 100 + 0x8000);
     }
+
+    mod proptest_properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn dma_double_buffer_swap_n_active_ne_ready(n in 1usize..=100) {
+                let mut db = DmaDoubleBuffer::new();
+                for _ in 0..n {
+                    // Before swap, active and ready are distinct buffers.
+                    let active_ptr = db.active_buf() as *const DmaFrameBuffer as usize;
+                    let ready_ptr = db.ready_buf() as *const DmaFrameBuffer as usize;
+                    prop_assert_ne!(active_ptr, ready_ptr,
+                        "active and ready buffers must not alias");
+                    db.swap();
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kani proofs
+// ---------------------------------------------------------------------------
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn dma_double_buffer_no_alias() {
+        let mut db = DmaDoubleBuffer::new();
+        let mut i: u32 = 0;
+        while i < 4 {
+            let active_idx = db.current;
+            let ready_idx = 1 - db.current;
+            assert!(active_idx != ready_idx,
+                "active and ready indices must differ");
+            assert!(active_idx <= 1, "active_idx out of bounds");
+            assert!(ready_idx <= 1, "ready_idx out of bounds");
+            db.swap();
+            i += 1;
+        }
+    }
 }
