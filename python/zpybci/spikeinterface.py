@@ -76,7 +76,11 @@ def _recording_to_numpy(recording):
     float
         Sampling frequency in Hz.
     """
-    traces = recording.get_traces(return_scaled=True)
+    # return_in_uV replaces deprecated return_scaled in SI >= 0.104
+    try:
+        traces = recording.get_traces(return_in_uV=True)
+    except TypeError:
+        traces = recording.get_traces(return_scaled=True)
     return np.ascontiguousarray(traces, dtype=np.float64), recording.get_sampling_frequency()
 
 
@@ -380,6 +384,23 @@ if HAS_SPIKEINTERFACE:
                     f"No sorting results found in {sorter_output_folder}"
                 )
             return NumpySorting.load(result_folder)
+
+        @classmethod
+        def register(cls):
+            """Register Zerostone in SpikeInterface's sorter registry.
+
+            After calling this, ``run_sorter('zerostone', recording, ...)``
+            works the same as any built-in sorter.
+
+            Examples
+            --------
+            >>> from zpybci.spikeinterface import ZerostoneSorter  # doctest: +SKIP
+            >>> ZerostoneSorter.register()  # doctest: +SKIP
+            >>> sorting = si.run_sorter('zerostone', rec)  # doctest: +SKIP
+            """
+            from spikeinterface.sorters import sorter_dict
+
+            sorter_dict[cls.sorter_name] = cls
 
 
 def run_zerostone(recording, **kwargs):
