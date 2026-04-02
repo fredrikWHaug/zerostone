@@ -52,6 +52,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     ccg_template_corr_threshold (float): Template NCC threshold for CCG merge. Default: 0.5.
 ///     template_subtract_passes (int): Number of template subtraction passes (0=disabled). Default: 2.
 ///     isi_split_threshold (float): ISI violation rate above which clusters are split. Default: 0.1.
+///     use_localization (bool): Replace last 2 PCA dims with center-of-mass (x, y) position. Default: False.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -81,10 +82,10 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     temporal_radius = 5,
     align_half_window = 15,
     pre_samples = 20,
-    cluster_threshold = 5.0,
+    cluster_threshold = 7.0,
     cluster_max_count = 1000,
     whitening_epsilon = 1e-6,
-    merge_dprime_threshold = 3.1,
+    merge_dprime_threshold = 2.0,
     merge_isi_threshold = 0.05,
     split_min_cluster_size = 10,
     split_bimodality_threshold = 2.0,
@@ -100,7 +101,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     isi_split_threshold = 0.1,
     gmm_refine = false,
     gmm_max_iter = 10,
-    matched_filter_detect = false,
+    matched_filter_detect = true,
     matched_filter_threshold = 4.0,
     bandpass_low = 0.0,
     bandpass_high = 0.0,
@@ -111,6 +112,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     adaptive_threshold = false,
     adaptive_min_threshold = 0.5,
     adaptive_max_rate_hz = 200.0,
+    use_localization = false,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -153,6 +155,7 @@ fn sort_multichannel<'py>(
     adaptive_threshold: bool,
     adaptive_min_threshold: f64,
     adaptive_max_rate_hz: f64,
+    use_localization: bool,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -208,6 +211,7 @@ fn sort_multichannel<'py>(
         adaptive_threshold,
         adaptive_min_threshold,
         adaptive_max_rate_hz,
+        use_localization,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
