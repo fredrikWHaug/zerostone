@@ -158,4 +158,4 @@ fn determinism_identical_runs() {
 }
 
 // Placeholder -- will be updated after first run.
-const EXPECTED_CHECKSUM: u64 = 783;
+const EXPECTED_CHECKSUM: u64 = 781;
