@@ -21,3 +21,6 @@ dist/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Benchmark result files (generated, not committed)
+benchmarks/results/*.json
