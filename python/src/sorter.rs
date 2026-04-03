@@ -53,6 +53,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     template_subtract_passes (int): Number of template subtraction passes (0=disabled). Default: 2.
 ///     isi_split_threshold (float): ISI violation rate above which clusters are split. Default: 0.1.
 ///     use_localization (bool): Replace last 2 PCA dims with center-of-mass (x, y) position. Default: False.
+///     use_amplitude_profile (bool): Encode amplitude on neighboring channels as spatial feature. Default: True.
+///     amplitude_profile_neighbors (int): Number of neighbor channels in amplitude profile. Default: 4.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -113,6 +115,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     adaptive_min_threshold = 0.5,
     adaptive_max_rate_hz = 200.0,
     use_localization = false,
+    use_amplitude_profile = false,
+    amplitude_profile_neighbors = 4,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -156,6 +160,8 @@ fn sort_multichannel<'py>(
     adaptive_min_threshold: f64,
     adaptive_max_rate_hz: f64,
     use_localization: bool,
+    use_amplitude_profile: bool,
+    amplitude_profile_neighbors: usize,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -212,6 +218,8 @@ fn sort_multichannel<'py>(
         adaptive_min_threshold,
         adaptive_max_rate_hz,
         use_localization,
+        use_amplitude_profile,
+        amplitude_profile_neighbors,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
