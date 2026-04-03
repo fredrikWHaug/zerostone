@@ -94,6 +94,8 @@ pub enum DetectionMode {
 /// assert!(!config.svd_init);
 /// assert_eq!(config.refinement_iterations, 0);
 /// assert!(!config.use_localization);
+/// assert!(!config.use_amplitude_profile);
+/// assert_eq!(config.amplitude_profile_neighbors, 4);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -204,6 +206,19 @@ pub struct SortConfig {
     /// position computed from peak amplitudes across channels and probe
     /// geometry. Requires K >= 3. Default: false.
     pub use_localization: bool,
+    /// Enable amplitude-profile spatial features (default: true).
+    /// For each spike, measures peak amplitude on neighboring channels
+    /// and encodes the normalized profile as the last feature dimension.
+    /// This replaces the channel-index encoding with a physics-based
+    /// spatial fingerprint: units with different spatial extent or
+    /// position get different amplitude profiles even on the same
+    /// peak channel. Falls back to channel-index encoding when false.
+    pub use_amplitude_profile: bool,
+    /// Number of neighbor channels to include in the amplitude profile.
+    /// Only used when `use_amplitude_profile` is true.
+    /// The profile includes the peak channel + this many nearest neighbors.
+    /// Default: 4 (5 channels total: peak + 4 neighbors).
+    pub amplitude_profile_neighbors: usize,
 }
 
 impl Default for SortConfig {
@@ -245,6 +260,8 @@ impl Default for SortConfig {
             adaptive_min_threshold: 0.5,
             adaptive_max_rate_hz: 200.0,
             use_localization: false,
+            use_amplitude_profile: false,
+            amplitude_profile_neighbors: 4,
         }
     }
 }
@@ -2593,13 +2610,75 @@ pub fn sort_multichannel<
                     feature_buf[i][K - 1] = norm * spatial_scale;
                 }
             }
+        } else if config.use_amplitude_profile && C > 1 && K >= 4 {
+            // Two-feature spatial encoding:
+            // - K-1: channel index (strong separation, same as fallback)
+            // - K-2: amplitude profile ratio (fine spatial discrimination)
+            //
+            // The amplitude profile measures peak amplitude on neighboring
+            // channels relative to the peak channel. Units with different
+            // spatial extents (e.g., near vs far from peak channel) get
+            // different ratios even when they share the same peak channel.
+            // This replaces the weakest PCA component (K-2) with spatial info.
+            let n_neighbors = config.amplitude_profile_neighbors.min(C - 1);
+
+            // Precompute nearest-neighbor lists for all channels
+            let mut neighbor_lists = [[0usize; 8]; C];
+            let mut neighbor_counts = [0usize; C];
+            let max_per_ch = n_neighbors.min(8);
+            for ch_idx in 0..C {
+                let mut nbuf = [0usize; 8];
+                let n = probe.nearest_channels(ch_idx, max_per_ch, &mut nbuf);
+                let mut ni = 0;
+                while ni < n {
+                    neighbor_lists[ch_idx][ni] = nbuf[ni];
+                    ni += 1;
+                }
+                neighbor_counts[ch_idx] = n;
+            }
+
+            let channel_scale = config.cluster_threshold * C as Float;
+            // Profile scale: moderate, comparable to PCA magnitudes
+            let profile_scale = config.cluster_threshold * 2.0;
+
+            for i in 0..n_extracted {
+                // K-1: channel index (unchanged from fallback)
+                let peak_ch = event_buf[i].channel;
+                feature_buf[i][K - 1] = (peak_ch as Float / C as Float) * channel_scale;
+
+                // K-2: amplitude profile ratio
+                let sample_idx = event_buf[i].sample;
+                if sample_idx < data.len() && peak_ch < C {
+                    let peak_amp = float::abs(data[sample_idx][peak_ch]);
+                    if peak_amp > 1e-15 {
+                        // Compute ratio of neighbor amplitude to peak
+                        let mut neighbor_sum = 0.0;
+                        let n_nbrs = neighbor_counts[peak_ch];
+                        let mut ni = 0;
+                        let mut count = 0;
+                        while ni < n_nbrs && ni < n_neighbors {
+                            let nbr_ch = neighbor_lists[peak_ch][ni];
+                            neighbor_sum += float::abs(data[sample_idx][nbr_ch]);
+                            count += 1;
+                            ni += 1;
+                        }
+                        // Ratio: how much energy is in neighbors vs peak
+                        // Range: [0, n_neighbors] typically [0.3, 2.0]
+                        let ratio = if count > 0 {
+                            neighbor_sum / (count as Float * peak_amp)
+                        } else {
+                            0.0
+                        };
+                        feature_buf[i][K - 2] = ratio * profile_scale;
+                    } else {
+                        feature_buf[i][K - 2] = 0.0;
+                    }
+                } else {
+                    feature_buf[i][K - 2] = 0.0;
+                }
+            }
         } else {
-            // Default: encode channel index in the last dimension.
-            // Scale by cluster_threshold * C to ensure spikes on different
-            // channels are well-separated in feature space. This prevents
-            // cross-channel contamination in clustering. The cluster_threshold
-            // parameter (default 5.0, recommend 7.0+) controls how strongly
-            // channel identity influences clustering relative to waveform shape.
+            // Fallback: encode channel index in the last dimension.
             let channel_scale = config.cluster_threshold * C as Float;
             for i in 0..n_extracted {
                 let ch = event_buf[i].channel;
@@ -3263,6 +3342,110 @@ pub fn sort_multichannel<
                 labels[i] = remap[labels[i]];
             }
             n_clusters = new_n;
+        }
+    }
+
+    // 9h. Template-based waveform reassignment.
+    //
+    // After all detection and clustering passes, reassign each spike to the
+    // cluster whose mean waveform it most closely matches, but ONLY among
+    // clusters on the same peak channel. This preserves channel separation
+    // while fixing misassignments from noisy PCA features.
+    //
+    // This is more principled than feature-space refinement because:
+    // 1. It uses all W waveform samples (not just K << W PCA features)
+    // 2. The channel constraint prevents cross-channel contamination
+    // 3. It naturally handles the case where PCA discards discriminative info
+    if n_clusters > 1 && n_extracted > n_clusters {
+        // Build templates: mean waveform per cluster, tracking peak channel
+        let mut tmpl_wf = [[0.0 as Float; W]; N];
+        let mut tmpl_count = [0u32; N];
+        let mut tmpl_ch = [0usize; N];
+        compute_cluster_means::<W, N>(
+            waveform_buf,
+            labels,
+            event_buf,
+            n_extracted,
+            n_clusters,
+            &mut tmpl_wf,
+            &mut tmpl_count,
+            &mut tmpl_ch,
+        );
+
+        // Reassign: for each spike, find the nearest template on the same
+        // channel. Require a 30% distance improvement to prevent marginal
+        // reassignments that break good clustering.
+        let mut changed = 0usize;
+        for i in 0..n_extracted {
+            let spike_ch = event_buf[i].channel;
+            let old_label = labels[i];
+
+            // Compute distance to current template
+            let mut old_d: Float = 0.0;
+            if old_label < n_clusters && old_label < N && tmpl_ch[old_label] == spike_ch {
+                for w in 0..W {
+                    let diff = waveform_buf[i][w] - tmpl_wf[old_label][w];
+                    old_d += diff * diff;
+                }
+            }
+
+            let mut best_c = old_label;
+            let mut best_d: Float = Float::MAX;
+            for c in 0..n_clusters.min(N) {
+                if tmpl_count[c] < config.template_min_count as u32 {
+                    continue;
+                }
+                // Only consider clusters on the same peak channel
+                if tmpl_ch[c] != spike_ch {
+                    continue;
+                }
+                let mut d = 0.0;
+                for w in 0..W {
+                    let diff = waveform_buf[i][w] - tmpl_wf[c][w];
+                    d += diff * diff;
+                }
+                if d < best_d {
+                    best_d = d;
+                    best_c = c;
+                }
+            }
+            // Only reassign if new template is significantly closer (30% margin)
+            // This prevents marginal reassignments from breaking good clustering.
+            if best_c != old_label && best_d < old_d * 0.7 {
+                labels[i] = best_c;
+                changed += 1;
+            }
+        }
+
+        // If reassignment changed labels, remove empty clusters
+        if changed > 0 {
+            let mut counts = [0u32; N];
+            for label in labels.iter().take(n_extracted) {
+                if *label < N {
+                    counts[*label] += 1;
+                }
+            }
+            let mut has_empty = false;
+            for count in counts.iter().take(n_clusters.min(N)) {
+                if *count == 0 {
+                    has_empty = true;
+                    break;
+                }
+            }
+            if has_empty {
+                let mut remap = [0usize; N];
+                let mut new_n = 0;
+                for c in 0..n_clusters.min(N) {
+                    if counts[c] > 0 {
+                        remap[c] = new_n;
+                        new_n += 1;
+                    }
+                }
+                for label in labels.iter_mut().take(n_extracted) {
+                    *label = remap[*label];
+                }
+                n_clusters = new_n;
+            }
         }
     }
 
@@ -4025,6 +4208,8 @@ mod tests {
         assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
         assert!(config.template_subtract);
         assert_eq!(config.template_min_count, 3);
+        assert!(!config.use_amplitude_profile);
+        assert_eq!(config.amplitude_profile_neighbors, 4);
     }
 
     #[test]
