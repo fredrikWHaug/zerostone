@@ -55,6 +55,11 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     use_localization (bool): Replace last 2 PCA dims with center-of-mass (x, y) position. Default: False.
 ///     use_amplitude_profile (bool): Encode amplitude on neighboring channels as spatial feature. Default: True.
 ///     amplitude_profile_neighbors (int): Number of neighbor channels in amplitude profile. Default: 4.
+///     auto_cmr (bool): Auto-apply CMR when C >= 8 channels. Default: True.
+///     coincidence_detect (bool): Recover sub-threshold spikes via spatial coincidence. Default: True.
+///     coincidence_primary_threshold (float): Primary threshold for coincidence pass (sigma). Default: 3.5.
+///     coincidence_secondary_threshold (float): Neighbor threshold for corroboration (sigma). Default: 2.0.
+///     min_coincident_channels (int): Minimum supporting neighbor channels. Default: 2.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -104,7 +109,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     gmm_refine = false,
     gmm_max_iter = 10,
     matched_filter_detect = true,
-    matched_filter_threshold = 4.0,
+    matched_filter_threshold = 3.5,
     bandpass_low = 0.0,
     bandpass_high = 0.0,
     sample_rate = 30000.0,
@@ -117,6 +122,11 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     use_localization = false,
     use_amplitude_profile = false,
     amplitude_profile_neighbors = 4,
+    auto_cmr = true,
+    coincidence_detect = true,
+    coincidence_primary_threshold = 3.5,
+    coincidence_secondary_threshold = 2.0,
+    min_coincident_channels = 2,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -162,6 +172,11 @@ fn sort_multichannel<'py>(
     use_localization: bool,
     use_amplitude_profile: bool,
     amplitude_profile_neighbors: usize,
+    auto_cmr: bool,
+    coincidence_detect: bool,
+    coincidence_primary_threshold: f64,
+    coincidence_secondary_threshold: f64,
+    min_coincident_channels: usize,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -220,6 +235,11 @@ fn sort_multichannel<'py>(
         use_localization,
         use_amplitude_profile,
         amplitude_profile_neighbors,
+        auto_cmr,
+        coincidence_detect,
+        coincidence_primary_threshold,
+        coincidence_secondary_threshold,
+        min_coincident_channels,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),

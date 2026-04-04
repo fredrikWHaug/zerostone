@@ -1468,6 +1468,192 @@ pub fn extract_spatial_features<const C: usize>(
     count
 }
 
+/// Spatial coincidence detection: recover sub-threshold spikes that appear
+/// on multiple neighboring channels simultaneously.
+///
+/// Scans `data` with `primary_threshold` (lower than the main detection
+/// threshold). For each candidate crossing, counts neighboring channels
+/// within `spatial_radius_um` that also exceed `secondary_threshold` at
+/// the same sample. Accepts only candidates with at least
+/// `min_coincident_channels` supporting neighbors.
+///
+/// Returns the number of new events written to `out`. Events that overlap
+/// with entries in `existing` within `refractory` samples are skipped.
+///
+/// # Type Parameters
+///
+/// * `C` - Channel count (must be >= 4 to be useful)
+///
+/// # Example
+///
+/// ```
+/// use zerostone::spike_sort::{MultiChannelEvent, detect_spikes_coincidence};
+/// use zerostone::probe::ProbeLayout;
+///
+/// // 4-channel probe, linear spacing
+/// let probe = ProbeLayout::<4>::linear(25.0);
+/// // Spike at sample 10 appearing on channels 1 and 2 above threshold
+/// let mut data = [[0.0f64; 4]; 30];
+/// for t in 8..12 {
+///     data[t][1] = -4.0; // primary channel
+///     data[t][2] = -2.5; // neighbor
+///     data[t][3] = -2.5; // neighbor
+/// }
+/// let noise = [1.0f64; 4];
+/// let existing: [MultiChannelEvent; 0] = [];
+/// let mut out = [MultiChannelEvent { sample: 0, channel: 0, amplitude: 0.0 }; 16];
+/// let n = detect_spikes_coincidence::<4>(
+///     &data, &noise, &existing, &probe,
+///     3.5, 2.0, 2, 75.0, 10, &mut out,
+/// );
+/// assert!(n >= 1);
+/// ```
+#[allow(clippy::too_many_arguments)]
+pub fn detect_spikes_coincidence<const C: usize>(
+    data: &[[Float; C]],
+    noise: &[Float; C],
+    existing: &[MultiChannelEvent],
+    probe: &crate::probe::ProbeLayout<C>,
+    primary_threshold: Float,
+    secondary_threshold: Float,
+    min_coincident_channels: usize,
+    spatial_radius_um: Float,
+    refractory: usize,
+    out: &mut [MultiChannelEvent],
+) -> usize {
+    let t_len = data.len();
+    if t_len == 0 || refractory == 0 || out.is_empty() || min_coincident_channels == 0 {
+        return 0;
+    }
+
+    let mut n_out = 0usize;
+
+    // Per-channel refractory tracking to avoid redundant candidates.
+    let mut last_det = [0usize; C];
+    let mut had_det = [false; C];
+
+    let mut t = 0;
+    while t < t_len {
+        let mut ch = 0;
+        while ch < C {
+            let thresh = primary_threshold * noise[ch];
+            if data[t][ch] < -thresh {
+                // Candidate crossing on channel `ch` at time `t`.
+                // Enforce per-channel refractory.
+                if had_det[ch] && t < last_det[ch] + refractory {
+                    ch += 1;
+                    continue;
+                }
+
+                // Find peak within refractory window.
+                let end = if t + refractory < t_len {
+                    t + refractory
+                } else {
+                    t_len
+                };
+                let mut best_t = t;
+                let mut best_amp = float::abs(data[t][ch]);
+                let mut tt = t + 1;
+                while tt < end {
+                    let a = float::abs(data[tt][ch]);
+                    if a > best_amp {
+                        best_amp = a;
+                        best_t = tt;
+                    }
+                    tt += 1;
+                }
+
+                // Count neighboring channels exceeding secondary threshold
+                // at the same time as the peak.
+                let sec_thresh = secondary_threshold;
+                let mut neighbors = [0usize; C];
+                let n_neighbors = probe.neighbor_channels(ch, spatial_radius_um, &mut neighbors);
+                let mut coincident = 0usize;
+                let mut ni = 0;
+                while ni < n_neighbors {
+                    let nc = neighbors[ni];
+                    if nc < C {
+                        let n_thresh = sec_thresh * noise[nc];
+                        // Check a small window around best_t for peak on neighbor.
+                        let win_start = best_t.saturating_sub(3);
+                        let win_end = if best_t + 4 <= t_len {
+                            best_t + 4
+                        } else {
+                            t_len
+                        };
+                        let mut max_neighbor = 0.0;
+                        let mut wt = win_start;
+                        while wt < win_end {
+                            let a = float::abs(data[wt][nc]);
+                            if a > max_neighbor {
+                                max_neighbor = a;
+                            }
+                            wt += 1;
+                        }
+                        if max_neighbor > n_thresh {
+                            coincident += 1;
+                        }
+                    }
+                    ni += 1;
+                }
+
+                if coincident < min_coincident_channels {
+                    ch += 1;
+                    continue;
+                }
+
+                // Check against existing events (primary detection).
+                let mut overlaps_existing = false;
+                for ev in existing.iter() {
+                    if best_t.abs_diff(ev.sample) <= refractory {
+                        overlaps_existing = true;
+                        break;
+                    }
+                }
+                if overlaps_existing {
+                    // Still update refractory so we don't scan redundantly.
+                    had_det[ch] = true;
+                    last_det[ch] = best_t;
+                    ch += 1;
+                    continue;
+                }
+
+                // Check against already-written coincidence events.
+                let mut overlaps_new = false;
+                let mut ni2 = 0;
+                while ni2 < n_out {
+                    if best_t.abs_diff(out[ni2].sample) <= refractory {
+                        overlaps_new = true;
+                        break;
+                    }
+                    ni2 += 1;
+                }
+                if overlaps_new {
+                    had_det[ch] = true;
+                    last_det[ch] = best_t;
+                    ch += 1;
+                    continue;
+                }
+
+                if n_out < out.len() {
+                    out[n_out] = MultiChannelEvent {
+                        sample: best_t,
+                        channel: ch,
+                        amplitude: best_amp,
+                    };
+                    n_out += 1;
+                    had_det[ch] = true;
+                    last_det[ch] = best_t;
+                }
+            }
+            ch += 1;
+        }
+        t += 1;
+    }
+
+    n_out
+}
+
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
@@ -3041,5 +3227,131 @@ mod tests {
                 i
             );
         }
+    }
+
+    // --- detect_spikes_coincidence tests ---
+
+    #[test]
+    fn test_coincidence_recovers_multichannel_subthreshold_spike() {
+        // Spike on 3 channels: primary at 4.0σ, 2 neighbors at 2.5σ.
+        // Primary threshold = 3.5, secondary = 2.0, min_coincident = 2.
+        // Should be detected.
+        use crate::probe::ProbeLayout;
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let mut data = [[0.0; 4]; 100];
+        for t in 30..36 {
+            data[t][1] = -4.0;
+            data[t][0] = -2.5;
+            data[t][2] = -2.5;
+        }
+        let noise = [1.0; 4];
+        let existing: [MultiChannelEvent; 0] = [];
+        let mut out = [MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0,
+        }; 16];
+        let n = detect_spikes_coincidence::<4>(
+            &data, &noise, &existing, &probe, 3.5, 2.0, 2, 75.0, 10, &mut out,
+        );
+        assert!(n >= 1, "spike on 3 channels should be detected, got {}", n);
+    }
+
+    #[test]
+    fn test_coincidence_rejects_single_channel_noise() {
+        // Large spike on only 1 channel, neighbors flat. Should not be detected.
+        use crate::probe::ProbeLayout;
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let mut data = [[0.0; 4]; 100];
+        for t in 30..36 {
+            data[t][1] = -4.5;
+            // channels 0, 2, 3 stay at 0.0 (well below 2σ)
+        }
+        let noise = [1.0; 4];
+        let existing: [MultiChannelEvent; 0] = [];
+        let mut out = [MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0,
+        }; 16];
+        let n = detect_spikes_coincidence::<4>(
+            &data, &noise, &existing, &probe, 3.5, 2.0, 2, 75.0, 10, &mut out,
+        );
+        assert_eq!(n, 0, "single-channel noise should be rejected");
+    }
+
+    #[test]
+    fn test_coincidence_output_count_bounded_by_buffer() {
+        // Ensure n_out never exceeds out.len().
+        use crate::probe::ProbeLayout;
+        let probe = ProbeLayout::<8>::linear(25.0);
+        let mut data = [[0.0; 8]; 500];
+        // Inject many spatially coherent sub-threshold spikes
+        for t in (10..490).step_by(20) {
+            for ch in 2..5 {
+                data[t][ch] = -4.0;
+            }
+        }
+        let noise = [1.0; 8];
+        let existing: [MultiChannelEvent; 0] = [];
+        let mut out = [MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0,
+        }; 4];
+        let n = detect_spikes_coincidence::<8>(
+            &data, &noise, &existing, &probe, 3.5, 2.0, 2, 75.0, 10, &mut out,
+        );
+        assert!(n <= 4, "output should not exceed buffer size");
+    }
+
+    #[test]
+    fn test_coincidence_empty_data_returns_zero() {
+        use crate::probe::ProbeLayout;
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let data: [[Float; 4]; 0] = [];
+        let noise = [1.0; 4];
+        let existing: [MultiChannelEvent; 0] = [];
+        let mut out = [MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0,
+        }; 16];
+        let n = detect_spikes_coincidence::<4>(
+            &data, &noise, &existing, &probe, 3.5, 2.0, 2, 75.0, 10, &mut out,
+        );
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn test_coincidence_respects_refractory() {
+        // Two spatially coherent spikes 5 samples apart, refractory = 15.
+        // Only one should be detected.
+        use crate::probe::ProbeLayout;
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let mut data = [[0.0; 4]; 100];
+        // First spike at t=20
+        for t in 18..24 {
+            data[t][1] = -4.0;
+            data[t][0] = -2.5;
+            data[t][2] = -2.5;
+        }
+        // Second spike at t=25 (within refractory of 15)
+        for t in 23..29 {
+            data[t][1] = -4.0;
+            data[t][0] = -2.5;
+            data[t][2] = -2.5;
+        }
+        let noise = [1.0; 4];
+        let existing: [MultiChannelEvent; 0] = [];
+        let mut out = [MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0,
+        }; 16];
+        let n = detect_spikes_coincidence::<4>(
+            &data, &noise, &existing, &probe, 3.5, 2.0, 2, 75.0, 15, &mut out,
+        );
+        assert_eq!(n, 1, "refractory should suppress second spike, got {}", n);
     }
 }

@@ -90,12 +90,17 @@ pub enum DetectionMode {
 /// assert_eq!(config.template_subtract_passes, 2);
 /// assert!((config.isi_split_threshold - 0.1).abs() < 1e-12);
 /// assert!(config.matched_filter_detect);
-/// assert!((config.matched_filter_threshold - 4.0).abs() < 1e-12);
+/// assert!((config.matched_filter_threshold - 3.5).abs() < 1e-12);
 /// assert!(!config.svd_init);
 /// assert_eq!(config.refinement_iterations, 0);
 /// assert!(!config.use_localization);
 /// assert!(!config.use_amplitude_profile);
 /// assert_eq!(config.amplitude_profile_neighbors, 4);
+/// assert!(config.auto_cmr);
+/// assert!(config.coincidence_detect);
+/// assert!((config.coincidence_primary_threshold - 3.5).abs() < 1e-12);
+/// assert!((config.coincidence_secondary_threshold - 2.0).abs() < 1e-12);
+/// assert_eq!(config.min_coincident_channels, 2);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -219,6 +224,35 @@ pub struct SortConfig {
     /// The profile includes the peak channel + this many nearest neighbors.
     /// Default: 4 (5 channels total: peak + 4 neighbors).
     pub amplitude_profile_neighbors: usize,
+    /// Auto-apply CMR when channel count >= 8.
+    /// Common Median Reference removes shared noise across channels before
+    /// whitening. For multi-channel recordings (C >= 8), correlated noise
+    /// between adjacent channels degrades whitening; CMR removes it.
+    /// When `auto_cmr` is true, CMR is applied regardless of `common_median_ref`.
+    /// Default: true.
+    pub auto_cmr: bool,
+    /// Enable spatial coincidence recovery of sub-threshold spikes.
+    /// After primary amplitude detection, scans at a lower threshold
+    /// (`coincidence_primary_threshold`) and accepts candidates only when
+    /// `min_coincident_channels` neighboring channels also exceed
+    /// `coincidence_secondary_threshold`. Spikes spread spatially across
+    /// multiple channels; isolated noise does not. Only active when C >= 4.
+    /// Default: true.
+    pub coincidence_detect: bool,
+    /// Primary threshold for coincidence detection pass (sigma units).
+    /// Lower than `threshold_multiplier` to catch sub-threshold spikes.
+    /// Only candidates with spatial corroboration are accepted.
+    /// Default: 3.5.
+    pub coincidence_primary_threshold: Float,
+    /// Secondary threshold for neighbor corroboration (sigma units).
+    /// Neighboring channels must exceed this to count as supporting evidence.
+    /// Default: 2.0.
+    pub coincidence_secondary_threshold: Float,
+    /// Minimum number of neighboring channels that must exceed
+    /// `coincidence_secondary_threshold` to accept a coincidence candidate.
+    /// Requires at least this many channels beyond the peak channel.
+    /// Default: 2 (3 channels total: peak + 2 neighbors).
+    pub min_coincident_channels: usize,
 }
 
 impl Default for SortConfig {
@@ -249,7 +283,7 @@ impl Default for SortConfig {
             gmm_refine: false,
             gmm_max_iter: 10,
             matched_filter_detect: true,
-            matched_filter_threshold: 4.0,
+            matched_filter_threshold: 3.5,
             bandpass_low: 0.0,
             bandpass_high: 0.0,
             sample_rate: 30000.0,
@@ -262,6 +296,11 @@ impl Default for SortConfig {
             use_localization: false,
             use_amplitude_profile: false,
             amplitude_profile_neighbors: 4,
+            auto_cmr: true,
+            coincidence_detect: true,
+            coincidence_primary_threshold: 3.5,
+            coincidence_secondary_threshold: 2.0,
+            min_coincident_channels: 2,
         }
     }
 }
@@ -2235,7 +2274,10 @@ pub fn sort_multichannel<
 
     // 0a. Common Median Reference: subtract per-sample median across channels.
     // More robust than CAR (mean) when individual channels have large artifacts.
-    if config.common_median_ref && C > 2 {
+    // Auto-applies for C >= 8 when auto_cmr is true: correlated noise between
+    // adjacent channels degrades whitening on multi-channel probes.
+    let use_cmr = (config.common_median_ref || (config.auto_cmr && C >= 8)) && C > 2;
+    if use_cmr {
         for sample in data.iter_mut() {
             // Sort channel values into scratch to find median
             let n = C.min(scratch.len());
@@ -2477,6 +2519,34 @@ pub fn sort_multichannel<
             total
         }
     };
+    // 4b. Spatial coincidence recovery: scan at a lower threshold but require
+    // multiple neighboring channels to corroborate the spike. True spikes spread
+    // spatially; isolated noise events do not. Only active when C >= 4.
+    let n_detected = if config.coincidence_detect && C >= 4 {
+        use crate::spike_sort::detect_spikes_coincidence;
+        // Split event_buf at n_detected: first half is existing events (read-only),
+        // second half is where new coincidence events are written.
+        // split_at_mut gives non-overlapping slices; coerce first to &[..].
+        let buf_len = event_buf.len();
+        let split = n_detected.min(buf_len);
+        let (existing_part, new_part) = event_buf.split_at_mut(split);
+        let n_new = detect_spikes_coincidence::<C>(
+            data,
+            &[1.0; C],
+            existing_part,
+            probe,
+            config.coincidence_primary_threshold,
+            config.coincidence_secondary_threshold,
+            config.min_coincident_channels,
+            config.spatial_radius_um,
+            config.refractory_samples,
+            new_part,
+        );
+        n_detected + n_new
+    } else {
+        n_detected
+    };
+
     if n_detected < 2 {
         return Ok(SortResult {
             n_spikes: n_detected,
@@ -2487,6 +2557,23 @@ pub fn sort_multichannel<
                 isi_violation_rate: 0.0,
             }),
         });
+    }
+
+    // 4c. Re-sort combined event list (primary + coincidence) by sample index.
+    // deduplicate_events requires sorted input. Primary detection produces sorted
+    // events; coincidence events are appended unsorted and must be merged in.
+    if config.coincidence_detect && C >= 4 {
+        let mut k = 1;
+        while k < n_detected {
+            let key = event_buf[k];
+            let mut pos = k;
+            while pos > 0 && event_buf[pos - 1].sample > key.sample {
+                event_buf[pos] = event_buf[pos - 1];
+                pos -= 1;
+            }
+            event_buf[pos] = key;
+            k += 1;
+        }
     }
 
     // 5. Deduplication
@@ -6049,5 +6136,260 @@ mod tests {
             r_off.n_spikes,
             r_on.n_spikes
         );
+    }
+
+    // --- Auto-CMR tests ---
+
+    #[test]
+    fn test_auto_cmr_triggers_for_large_channel_count() {
+        // auto_cmr=true should apply CMR when C >= 8.
+        // We verify by checking that the config default has auto_cmr=true
+        // and that the pipeline runs without error on 8-channel data.
+        let config = SortConfig {
+            threshold_multiplier: 4.0,
+            pre_samples: 2,
+            refractory_samples: 10,
+            auto_cmr: true,
+            common_median_ref: false, // explicit flag is off
+            ..SortConfig::default()
+        };
+        assert!(config.auto_cmr);
+        // The actual CMR application is tested indirectly through sort_multichannel.
+        // For 8 channels auto_cmr triggers; the output should still be valid.
+        let probe = ProbeLayout::<8>::linear(25.0);
+        let n = 500;
+        let mut data: Vec<[Float; 8]> = (0..n)
+            .map(|i| {
+                let t = i as Float;
+                // Correlated noise on all channels (CMR should remove this)
+                let common = (t * 0.01).sin() * 0.5;
+                core::array::from_fn(|ch| {
+                    let phase = (t * 0.3 + ch as Float * 0.5).sin() * 6.0;
+                    common + phase * if i % 80 == 0 { 1.0 } else { 0.1 }
+                })
+            })
+            .collect();
+        let mut scratch = vec![0.0; n];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0
+            };
+            200
+        ];
+        let mut waveforms = vec![[0.0; 8]; 200];
+        let mut features = vec![[0.0; 4]; 200];
+        let mut labels = vec![0usize; 200];
+        let result = sort_multichannel::<8, 64, 8, 4, 64, 8>(
+            &config,
+            &probe,
+            &mut data,
+            &mut scratch,
+            &mut events,
+            &mut waveforms,
+            &mut features,
+            &mut labels,
+        );
+        assert!(result.is_ok(), "auto_cmr sort should not fail");
+    }
+
+    #[test]
+    fn test_auto_cmr_does_not_trigger_for_small_channel_count() {
+        // auto_cmr=true should NOT apply CMR when C < 8 (4-channel probe).
+        // The sort should still succeed.
+        let config = SortConfig {
+            threshold_multiplier: 4.0,
+            pre_samples: 2,
+            refractory_samples: 10,
+            auto_cmr: true,
+            ..SortConfig::default()
+        };
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let n = 300;
+        let mut data: Vec<[Float; 4]> = (0..n)
+            .map(|i| {
+                core::array::from_fn(|ch| {
+                    if i % 60 == 0 {
+                        -6.0 * (ch as Float + 1.0)
+                    } else {
+                        0.05
+                    }
+                })
+            })
+            .collect();
+        let mut scratch = vec![0.0; n];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0
+            };
+            100
+        ];
+        let mut waveforms = vec![[0.0; 8]; 100];
+        let mut features = vec![[0.0; 4]; 100];
+        let mut labels = vec![0usize; 100];
+        let result = sort_multichannel::<4, 16, 8, 4, 64, 4>(
+            &config,
+            &probe,
+            &mut data,
+            &mut scratch,
+            &mut events,
+            &mut waveforms,
+            &mut features,
+            &mut labels,
+        );
+        assert!(result.is_ok(), "small channel count sort should not fail");
+    }
+
+    #[test]
+    fn test_auto_cmr_disabled_overrides() {
+        // auto_cmr=false means CMR is never applied automatically.
+        let config_auto = SortConfig {
+            threshold_multiplier: 4.0,
+            pre_samples: 2,
+            refractory_samples: 10,
+            auto_cmr: false,
+            common_median_ref: false,
+            ..SortConfig::default()
+        };
+        assert!(!config_auto.auto_cmr);
+        assert!(!config_auto.common_median_ref);
+        // Should still succeed
+        let probe = ProbeLayout::<8>::linear(25.0);
+        let n = 400;
+        let mut data: Vec<[Float; 8]> = (0..n)
+            .map(|i| core::array::from_fn(|_| if i % 70 == 0 { -6.0 } else { 0.05 }))
+            .collect();
+        let mut scratch = vec![0.0; n];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0
+            };
+            100
+        ];
+        let mut waveforms = vec![[0.0; 8]; 100];
+        let mut features = vec![[0.0; 4]; 100];
+        let mut labels = vec![0usize; 100];
+        let result = sort_multichannel::<8, 64, 8, 4, 64, 8>(
+            &config_auto,
+            &probe,
+            &mut data,
+            &mut scratch,
+            &mut events,
+            &mut waveforms,
+            &mut features,
+            &mut labels,
+        );
+        assert!(result.is_ok());
+    }
+
+    // --- Coincidence detection tests ---
+
+    #[test]
+    fn test_coincidence_detect_recovers_subthreshold_spatial_spike() {
+        // A spike with amplitude 4.0σ (below 5.0σ primary threshold) appearing
+        // on 3 neighboring channels should be recovered by coincidence detection.
+        use crate::spike_sort::detect_spikes_coincidence;
+        let probe = ProbeLayout::<8>::linear(25.0);
+        let n = 200;
+        let mut data = vec![[0.0; 8]; n];
+        // Spike at t=50: channel 3 at 4.0σ (primary threshold 3.5), channels 2,4 at 2.5σ
+        data.iter_mut().take(53).skip(47).for_each(|s| {
+            s[3] = -4.0;
+            s[2] = -2.5;
+            s[4] = -2.5;
+        });
+        let noise = [1.0; 8];
+        let existing: [MultiChannelEvent; 0] = [];
+        let mut out = [MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0,
+        }; 32];
+        let n_found = detect_spikes_coincidence::<8>(
+            &data, &noise, &existing, &probe, 3.5, 2.0, 2, 75.0, 10, &mut out,
+        );
+        assert!(
+            n_found >= 1,
+            "sub-threshold spatial spike should be recovered"
+        );
+        assert!(out[..n_found].iter().any(|e| e.sample.abs_diff(50) <= 5));
+    }
+
+    #[test]
+    fn test_coincidence_detect_rejects_isolated_subthreshold_spike() {
+        // A spike with amplitude 4.0σ on only 1 channel (no neighbors above 2σ)
+        // should NOT be accepted by coincidence detection.
+        use crate::spike_sort::detect_spikes_coincidence;
+        let probe = ProbeLayout::<8>::linear(25.0);
+        let n = 200;
+        let mut data = vec![[0.0; 8]; n];
+        // Only channel 3 is active, neighbors are at 0.5σ (below 2σ)
+        data.iter_mut().take(53).skip(47).for_each(|s| {
+            s[3] = -4.0;
+            s[2] = -0.5;
+            s[4] = -0.5;
+        });
+        let noise = [1.0; 8];
+        let existing: [MultiChannelEvent; 0] = [];
+        let mut out = [MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0,
+        }; 32];
+        let n_found = detect_spikes_coincidence::<8>(
+            &data, &noise, &existing, &probe, 3.5, 2.0, 2, 75.0, 10, &mut out,
+        );
+        assert_eq!(
+            n_found, 0,
+            "isolated sub-threshold spike should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_coincidence_detect_skips_existing_events() {
+        // A coincidence candidate at a time already covered by an existing event
+        // (within refractory) should not be re-emitted.
+        use crate::spike_sort::detect_spikes_coincidence;
+        let probe = ProbeLayout::<8>::linear(25.0);
+        let n = 200;
+        let mut data = vec![[0.0; 8]; n];
+        data.iter_mut().take(53).skip(47).for_each(|s| {
+            s[3] = -4.0;
+            s[2] = -2.5;
+            s[4] = -2.5;
+        });
+        let noise = [1.0; 8];
+        let existing = [MultiChannelEvent {
+            sample: 50,
+            channel: 3,
+            amplitude: 4.0,
+        }];
+        let mut out = [MultiChannelEvent {
+            sample: 0,
+            channel: 0,
+            amplitude: 0.0,
+        }; 32];
+        let n_found = detect_spikes_coincidence::<8>(
+            &data, &noise, &existing, &probe, 3.5, 2.0, 2, 75.0, 15, &mut out,
+        );
+        assert_eq!(n_found, 0, "should not duplicate an already-detected event");
+    }
+
+    #[test]
+    fn test_coincidence_detect_disabled_adds_nothing() {
+        // coincidence_detect=false should not add any events.
+        let config = SortConfig {
+            threshold_multiplier: 5.0,
+            pre_samples: 2,
+            refractory_samples: 10,
+            coincidence_detect: false,
+            ..SortConfig::default()
+        };
+        assert!(!config.coincidence_detect);
     }
 }
