@@ -101,6 +101,9 @@ pub enum DetectionMode {
 /// assert!((config.coincidence_primary_threshold - 3.5).abs() < 1e-12);
 /// assert!((config.coincidence_secondary_threshold - 2.0).abs() < 1e-12);
 /// assert_eq!(config.min_coincident_channels, 2);
+/// assert!(config.neighbor_mf_detect);
+/// assert!((config.neighbor_mf_bonus - 0.5).abs() < 1e-10);
+/// assert!(config.use_shape_features);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -253,6 +256,24 @@ pub struct SortConfig {
     /// Requires at least this many channels beyond the peak channel.
     /// Default: 2 (3 channels total: peak + 2 neighbors).
     pub min_coincident_channels: usize,
+    /// Enable neighbor-channel composite matched filter scoring.
+    /// After learning templates, augments single-channel MF detection with
+    /// a corroboration score from the nearest neighboring channel.
+    /// Composite = primary_ncc + neighbor_mf_bonus * neighbor_ncc.
+    /// Units spanning multiple channels get a higher composite score.
+    /// Only active when `matched_filter_detect` is true. Default: true.
+    pub neighbor_mf_detect: bool,
+    /// Weight for neighbor channel NCC in composite matched filter score.
+    /// Composite = primary_ncc + neighbor_mf_bonus * neighbor_ncc.
+    /// Default: 0.5.
+    pub neighbor_mf_bonus: Float,
+    /// Enable spike half-width as a shape feature in the feature vector.
+    /// Replaces the third PCA component (K-2) with normalized half-width
+    /// of the spike trough at half-maximum depth. Separates unit types:
+    /// narrow interneurons (half-width < 0.3ms) vs broad pyramidal cells
+    /// (half-width > 0.5ms). Only active in fallback feature mode when
+    /// K >= 4. Default: true.
+    pub use_shape_features: bool,
 }
 
 impl Default for SortConfig {
@@ -301,6 +322,9 @@ impl Default for SortConfig {
             coincidence_primary_threshold: 3.5,
             coincidence_secondary_threshold: 2.0,
             min_coincident_channels: 2,
+            neighbor_mf_detect: true,
+            neighbor_mf_bonus: 0.5,
+            use_shape_features: true,
         }
     }
 }
@@ -1871,6 +1895,45 @@ pub fn amplitude_bimodality_split(
     current_n
 }
 
+/// Computes normalized spike half-width at half-maximum trough depth.
+///
+/// Returns the fraction of the waveform window occupied by the spike trough
+/// at half-maximum depth. Narrow spikes (fast-spiking interneurons) return
+/// small values; broad spikes (pyramidal cells) return large values.
+///
+/// # Arguments
+/// * `waveform` - Peak-channel waveform of length W
+///
+/// Returns a value in approximately [0.0, 1.0] (clamped to 0.5 if no trough).
+fn compute_half_width<const W: usize>(waveform: &[Float; W]) -> Float {
+    // Find trough (minimum value)
+    let mut t_min = W / 2;
+    let mut trough = waveform[t_min];
+    let mut wi = 0;
+    while wi < W {
+        if waveform[wi] < trough {
+            trough = waveform[wi];
+            t_min = wi;
+        }
+        wi += 1;
+    }
+    if trough >= 0.0 {
+        return 0.5; // no trough → default
+    }
+    let half_max = trough * 0.5; // both negative; half_max is between 0 and trough
+                                 // Walk left from t_min until waveform exceeds half_max (becomes less negative)
+    let mut left = t_min;
+    while left > 0 && waveform[left] < half_max {
+        left -= 1;
+    }
+    // Walk right from t_min until waveform exceeds half_max
+    let mut right = t_min;
+    while right + 1 < W && waveform[right] < half_max {
+        right += 1;
+    }
+    (right - left) as Float / W as Float
+}
+
 /// Compute mean waveform per cluster, spike count, and most common peak channel.
 #[allow(clippy::too_many_arguments)]
 fn compute_cluster_means<const W: usize, const N: usize>(
@@ -1921,6 +1984,90 @@ fn compute_cluster_means<const W: usize, const N: usize>(
             }
         }
         peak_channels[c] = best_ch;
+    }
+}
+
+/// Computes mean waveforms on the nearest neighbor channel for each cluster.
+///
+/// For each cluster, finds the nearest neighbor of the peak channel and
+/// averages waveforms from spike events on that neighbor channel.
+/// Used for composite matched filter scoring.
+#[allow(clippy::too_many_arguments)]
+fn compute_neighbor_templates<const W: usize, const N: usize, const C: usize>(
+    data: &[[Float; C]],
+    event_buf: &[MultiChannelEvent],
+    labels: &[usize],
+    n_extracted: usize,
+    n_clusters: usize,
+    mf_peak_channels: &[usize; N],
+    probe: &ProbeLayout<C>,
+    neighbor_templates: &mut [[Float; W]; N],
+    neighbor_channels: &mut [usize; N],
+) {
+    // Initialize outputs
+    let mut i = 0;
+    while i < N {
+        neighbor_templates[i] = [0.0; W];
+        neighbor_channels[i] = mf_peak_channels[i]; // fallback: same as peak
+        i += 1;
+    }
+    let mut counts = [0u32; N];
+
+    // Determine neighbor channel for each cluster
+    let mut c = 0;
+    while c < n_clusters.min(N) {
+        let peak_ch = mf_peak_channels[c];
+        if peak_ch < C {
+            let mut nbuf = [0usize; 2];
+            let n = probe.nearest_channels(peak_ch, 1, &mut nbuf);
+            if n > 0 && nbuf[0] < C {
+                neighbor_channels[c] = nbuf[0];
+            }
+        }
+        c += 1;
+    }
+
+    // Accumulate waveforms on the neighbor channel
+    let t_len = data.len();
+    let mut i = 0;
+    while i < n_extracted {
+        let label = labels[i];
+        if label >= n_clusters || label >= N {
+            i += 1;
+            continue;
+        }
+        let neighbor_ch = neighbor_channels[label];
+        if neighbor_ch >= C {
+            i += 1;
+            continue;
+        }
+        let sample = event_buf[i].sample;
+        // Use same pre_samples=20 and window W as primary waveform extraction
+        let pre = W * 5 / 12; // matches matched_filter pre_samples convention
+        if sample >= pre && sample + W - pre <= t_len {
+            let start = sample - pre;
+            let mut w = 0;
+            while w < W {
+                neighbor_templates[label][w] += data[start + w][neighbor_ch];
+                w += 1;
+            }
+            counts[label] += 1;
+        }
+        i += 1;
+    }
+
+    // Normalize to get mean waveforms
+    let mut c = 0;
+    while c < n_clusters.min(N) {
+        if counts[c] > 0 {
+            let inv = 1.0 / counts[c] as Float;
+            let mut w = 0;
+            while w < W {
+                neighbor_templates[c][w] *= inv;
+                w += 1;
+            }
+        }
+        c += 1;
     }
 }
 
@@ -2765,11 +2912,22 @@ pub fn sort_multichannel<
                 }
             }
         } else {
-            // Fallback: encode channel index in the last dimension.
+            // Fallback: encode channel index in K-1 and optionally spike
+            // half-width in K-2. Half-width separates unit types (narrow
+            // interneurons vs broad pyramidal cells) orthogonally to amplitude.
             let channel_scale = config.cluster_threshold * C as Float;
+            // Scale half-width to approximately match the PCA component range.
+            // cluster_threshold * 4 maps [0,1] half-width to [0, 28] for the
+            // default threshold of 7.0 — comparable to the range of PCA components
+            // and small enough not to dominate cross-channel separation.
+            let shape_scale = config.cluster_threshold * 4.0;
             for i in 0..n_extracted {
                 let ch = event_buf[i].channel;
                 feature_buf[i][K - 1] = (ch as Float / C as Float) * channel_scale;
+                if config.use_shape_features && K >= 4 {
+                    let hw = compute_half_width::<W>(&waveform_buf[i]);
+                    feature_buf[i][K - 2] = hw * shape_scale;
+                }
             }
         }
     }
@@ -3257,6 +3415,23 @@ pub fn sort_multichannel<
             &mut mf_peak_ch,
         );
 
+        // Compute neighbor channel templates for composite scoring
+        let mut nbr_templates = [[0.0 as Float; W]; N];
+        let mut nbr_channels = [0usize; N];
+        if config.neighbor_mf_detect {
+            compute_neighbor_templates::<W, N, C>(
+                data,
+                event_buf,
+                labels,
+                n_extracted,
+                n_clusters,
+                &mf_peak_ch,
+                probe,
+                &mut nbr_templates,
+                &mut nbr_channels,
+            );
+        }
+
         // Build matched filter bank from cluster templates
         let bank = MatchedFilterBank::<W, N>::from_cluster_templates(
             &mf_means,
@@ -3296,6 +3471,39 @@ pub fn sort_multichannel<
                 }
                 if overlaps {
                     continue;
+                }
+                // Composite neighbor-channel score filter
+                if config.neighbor_mf_detect && mf_template < N {
+                    let nbr_ch = nbr_channels[mf_template];
+                    let pre = W * 5 / 12;
+                    let nbr_ncc = if mf_sample >= pre
+                        && mf_sample + W - pre <= t_len
+                        && nbr_ch < C
+                        && nbr_ch != mf_peak_ch[mf_template]
+                    {
+                        let start = mf_sample - pre;
+                        // Compute NCC: dot(nbr_template, data_window) / ||nbr_template||
+                        let mut dot = 0.0;
+                        let mut norm_sq = 0.0;
+                        let mut w = 0;
+                        while w < W {
+                            dot += nbr_templates[mf_template][w] * data[start + w][nbr_ch];
+                            norm_sq +=
+                                nbr_templates[mf_template][w] * nbr_templates[mf_template][w];
+                            w += 1;
+                        }
+                        if norm_sq > 1e-12 {
+                            dot / float::sqrt(norm_sq)
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        0.0
+                    };
+                    let composite = det.normalized + config.neighbor_mf_bonus * nbr_ncc;
+                    if composite < config.matched_filter_threshold {
+                        continue;
+                    }
                 }
                 // Amplitude sanity check: reject if amplitude is negative or very large
                 let amp = det.amplitude;
@@ -6391,5 +6599,162 @@ mod tests {
             ..SortConfig::default()
         };
         assert!(!config.coincidence_detect);
+    }
+
+    #[test]
+    fn test_compute_half_width_narrow() {
+        // Narrow spike: trough at center, quickly returns to baseline
+        let mut waveform = [0.0; 48];
+        // Trough at index 20, half-width of ~4 samples
+        waveform[18] = -0.5;
+        waveform[19] = -0.9;
+        waveform[20] = -1.0;
+        waveform[21] = -0.9;
+        waveform[22] = -0.5;
+        let hw = compute_half_width::<48>(&waveform);
+        // half_max = -0.5, crossing at ~18 and ~22, width = ~4/48
+        assert!(hw > 0.0 && hw < 0.2, "narrow spike half-width={hw}");
+    }
+
+    #[test]
+    fn test_compute_half_width_broad() {
+        // Broad spike: trough at center, slowly returns to baseline
+        let mut waveform = [0.0; 48];
+        // Trough at index 24, half-width of ~16 samples
+        for (i, v) in waveform.iter_mut().enumerate().take(33).skip(16) {
+            let d = (i as Float - 24.0).abs();
+            *v = -1.0 + d * d / 64.0;
+        }
+        // Make minimum at center
+        waveform[24] = -1.0;
+        let hw = compute_half_width::<48>(&waveform);
+        assert!(hw >= 0.2, "broad spike half-width={hw}");
+    }
+
+    #[test]
+    fn test_compute_half_width_no_trough() {
+        // Positive-only waveform → default 0.5
+        let waveform = [1.0; 48];
+        let hw = compute_half_width::<48>(&waveform);
+        assert!((hw - 0.5).abs() < 1e-10, "no trough should return 0.5");
+    }
+
+    #[test]
+    fn test_compute_half_width_range() {
+        // Any valid spike waveform should produce half-width in [0, 1]
+        let mut waveform = [0.0; 48];
+        waveform[24] = -1.0;
+        waveform[23] = -0.8;
+        waveform[25] = -0.8;
+        let hw = compute_half_width::<48>(&waveform);
+        assert!((0.0..=1.0).contains(&hw), "half-width out of range: {hw}");
+    }
+
+    #[test]
+    fn test_compute_half_width_separates_widths() {
+        // Narrow and broad spikes should produce different half-width values
+        let mut narrow = [0.0; 48];
+        narrow[24] = -1.0;
+        narrow[23] = -0.3;
+        narrow[25] = -0.3;
+
+        let mut broad = [0.0; 48];
+        for v in broad.iter_mut().take(33).skip(16) {
+            *v = -0.6;
+        }
+        broad[24] = -1.0;
+
+        let hw_narrow = compute_half_width::<48>(&narrow);
+        let hw_broad = compute_half_width::<48>(&broad);
+        assert!(
+            hw_broad > hw_narrow,
+            "broad={hw_broad} should exceed narrow={hw_narrow}"
+        );
+    }
+
+    #[test]
+    fn test_shape_features_changes_k2() {
+        // When use_shape_features=true, two spikes with same channel but different
+        // widths should get different K-2 feature values.
+        // We test compute_half_width directly since integration test would be complex.
+        let mut narrow_wave = [0.0; 48];
+        narrow_wave[24] = -1.0;
+        narrow_wave[23] = -0.3;
+        narrow_wave[25] = -0.3;
+
+        let mut broad_wave = [0.0; 48];
+        broad_wave[20] = -0.6;
+        broad_wave[21] = -0.8;
+        broad_wave[22] = -0.95;
+        broad_wave[23] = -1.0;
+        broad_wave[24] = -1.0;
+        broad_wave[25] = -0.95;
+        broad_wave[26] = -0.8;
+        broad_wave[27] = -0.6;
+
+        let hw_narrow = compute_half_width::<48>(&narrow_wave);
+        let hw_broad = compute_half_width::<48>(&broad_wave);
+        // Different widths → different K-2 values (when scaled by cluster_threshold * 4)
+        let cluster_threshold = 7.0;
+        let scale = cluster_threshold * 4.0;
+        let feat_narrow = hw_narrow * scale;
+        let feat_broad = hw_broad * scale;
+        assert!(
+            (feat_broad - feat_narrow).abs() > 0.1,
+            "features should differ: narrow={feat_narrow}, broad={feat_broad}"
+        );
+    }
+
+    #[test]
+    fn test_compute_neighbor_templates_basic() {
+        // Minimal test: neighbor channel selection is determined by probe geometry
+        use crate::probe::ProbeLayout;
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let peak_channels = [
+            0usize, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0,
+        ];
+        let mut neighbor_templates = [[0.0; 48]; 32];
+        let mut neighbor_channels = [0usize; 32];
+        let data: Vec<[Float; 4]> = vec![[0.0; 4]; 100];
+        let events: Vec<MultiChannelEvent> = vec![MultiChannelEvent {
+            sample: 25,
+            channel: 0,
+            amplitude: 1.0,
+        }];
+        let labels = vec![0usize; 1];
+        compute_neighbor_templates::<48, 32, 4>(
+            &data,
+            &events,
+            &labels,
+            1,
+            1,
+            &peak_channels,
+            &probe,
+            &mut neighbor_templates,
+            &mut neighbor_channels,
+        );
+        // Neighbor of channel 0 on a linear probe should be channel 1
+        assert_eq!(
+            neighbor_channels[0], 1,
+            "neighbor of ch0 on linear probe should be ch1"
+        );
+    }
+
+    #[test]
+    fn test_sort_config_new_fields_defaults() {
+        let config = SortConfig::default();
+        assert!(
+            config.neighbor_mf_detect,
+            "neighbor_mf_detect should default to true"
+        );
+        assert!(
+            (config.neighbor_mf_bonus - 0.5).abs() < 1e-10,
+            "neighbor_mf_bonus should default to 0.5"
+        );
+        assert!(
+            config.use_shape_features,
+            "use_shape_features should default to true"
+        );
     }
 }

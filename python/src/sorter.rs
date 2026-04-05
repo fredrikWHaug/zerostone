@@ -60,6 +60,9 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     coincidence_primary_threshold (float): Primary threshold for coincidence pass (sigma). Default: 3.5.
 ///     coincidence_secondary_threshold (float): Neighbor threshold for corroboration (sigma). Default: 2.0.
 ///     min_coincident_channels (int): Minimum supporting neighbor channels. Default: 2.
+///     neighbor_mf_detect (bool): Augment MF detection with neighbor-channel NCC score. Default: True.
+///     neighbor_mf_bonus (float): Weight for neighbor NCC in composite MF score. Default: 0.5.
+///     use_shape_features (bool): Replace PCA dim K-2 with spike half-width feature. Default: True.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -127,6 +130,9 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     coincidence_primary_threshold = 3.5,
     coincidence_secondary_threshold = 2.0,
     min_coincident_channels = 2,
+    neighbor_mf_detect = true,
+    neighbor_mf_bonus = 0.5,
+    use_shape_features = true,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -177,6 +183,9 @@ fn sort_multichannel<'py>(
     coincidence_primary_threshold: f64,
     coincidence_secondary_threshold: f64,
     min_coincident_channels: usize,
+    neighbor_mf_detect: bool,
+    neighbor_mf_bonus: f64,
+    use_shape_features: bool,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -240,6 +249,9 @@ fn sort_multichannel<'py>(
         coincidence_primary_threshold,
         coincidence_secondary_threshold,
         min_coincident_channels,
+        neighbor_mf_detect,
+        neighbor_mf_bonus,
+        use_shape_features,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
