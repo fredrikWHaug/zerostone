@@ -1,12 +1,11 @@
-"""Day 8 benchmark: channel-adaptive cluster threshold + CCG merge default.
+"""Benchmark: channel-adaptive cluster threshold + CCG merge default.
 
-New Day 8 features:
+Features validated:
 - auto_cluster_threshold=True: scales cluster threshold by sqrt(8/C) for C < 8
   channels, closing the easy-recording over-splitting gap
 - ccg_merge=True: CCG-based merge now enabled by default
 
-Day 7 baseline: 70.4% avg (easy=76.5%, medium=73.3%, hard=61.4%)
-Day 8 target: >= 71.5% avg
+Baseline (shape features): 70.4% avg (easy=76.5%, medium=73.3%, hard=61.4%)
 """
 
 import json
@@ -108,8 +107,8 @@ def run(difficulty, label, detail=False, **kwargs):
                  for uid in per_unit_df.index}
 
 
-# Day 7 baseline values (from benchmarks/results/day7_20260405_125845.json)
-DAY7 = {"easy": 0.7650, "medium": 0.7334, "hard": 0.6137}
+# Baseline values from shape-features benchmark (shape_features_benchmark.py)
+BASELINE = {"easy": 0.7650, "medium": 0.7334, "hard": 0.6137}
 
 
 def main():
@@ -117,32 +116,32 @@ def main():
 
     for difficulty in ["easy", "medium", "hard"]:
         print(f"\n=== {difficulty.upper()} ===")
-        # Day 8 defaults
-        acc8, per_unit = run(difficulty, "Day 8 defaults (auto_thresh + ccg_merge)", detail=True)
+        # New defaults: auto_cluster_threshold + ccg_merge
+        acc_new, per_unit = run(difficulty, "adaptive_threshold + ccg_merge (new defaults)", detail=True)
 
-        # Day 7 regression check: disable new features
-        acc7, _ = run(difficulty, "Day 7 baseline (auto_thresh=F, ccg_merge=F)",
-                      auto_cluster_threshold=False, ccg_merge=False)
+        # Regression check: disable new features, should match baseline
+        acc_base, _ = run(difficulty, "baseline (auto_thresh=F, ccg_merge=F)",
+                          auto_cluster_threshold=False, ccg_merge=False)
 
-        delta = acc8 - DAY7[difficulty]
-        print(f"  Day7→Day8: {DAY7[difficulty]:.3f} → {acc8:.3f}  ({delta:+.3f})")
+        delta = acc_new - BASELINE[difficulty]
+        print(f"  baseline→new: {BASELINE[difficulty]:.3f} → {acc_new:.3f}  ({delta:+.3f})")
         results[difficulty] = {
-            "day7_acc": DAY7[difficulty],
-            "day8_acc": acc8,
-            "regression_acc": acc7,
+            "baseline_acc": BASELINE[difficulty],
+            "new_acc": acc_new,
+            "regression_acc": acc_base,
             "delta": delta,
             "per_unit": {str(k): float(v) for k, v in per_unit.items()},
         }
 
-    easy_acc = results["easy"]["day8_acc"]
-    med_acc = results["medium"]["day8_acc"]
-    hard_acc = results["hard"]["day8_acc"]
+    easy_acc = results["easy"]["new_acc"]
+    med_acc = results["medium"]["new_acc"]
+    hard_acc = results["hard"]["new_acc"]
     avg = (easy_acc + med_acc + hard_acc) / 3.0
-    day7_avg = sum(DAY7.values()) / 3.0
+    base_avg = sum(BASELINE.values()) / 3.0
 
     print(f"\n{'='*60}")
-    print(f"Day 7 avg: {day7_avg:.3f}")
-    print(f"Day 8 avg: {avg:.3f}  ({avg - day7_avg:+.3f})")
+    print(f"Baseline avg: {base_avg:.3f}")
+    print(f"New avg:      {avg:.3f}  ({avg - base_avg:+.3f})")
     print(f"{'='*60}")
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
