@@ -1,8 +1,7 @@
-"""Day 7 benchmark: neighbor-channel MF scoring + spike half-width features.
+"""Benchmark: neighbor-channel MF scoring + spike half-width shape features.
 
-Compares Day 7 defaults against Day 6 defaults on 3 difficulty levels.
-Day 6 baseline: 68.2% avg (easy=76.1%, medium=69.2%, hard=59.2%)
-Day 7 target: >= 69% avg
+Compares shape-feature defaults against the auto-CMR baseline on 3 difficulty levels.
+Baseline (auto-CMR): 68.2% avg (easy=76.1%, medium=69.2%, hard=59.2%)
 """
 
 import json
