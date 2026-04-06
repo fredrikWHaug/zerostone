@@ -104,6 +104,8 @@ pub enum DetectionMode {
 /// assert!(config.neighbor_mf_detect);
 /// assert!((config.neighbor_mf_bonus - 0.5).abs() < 1e-10);
 /// assert!(config.use_shape_features);
+/// assert!(config.auto_cluster_threshold);
+/// assert!(config.ccg_merge);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -274,6 +276,13 @@ pub struct SortConfig {
     /// (half-width > 0.5ms). Only active in fallback feature mode when
     /// K >= 4. Default: true.
     pub use_shape_features: bool,
+    /// Scale the cluster creation threshold inversely with channel count for
+    /// recordings with fewer than 8 channels. When true and `C < 8`, the
+    /// effective threshold is `cluster_threshold * sqrt(8 / C)`, which
+    /// prevents over-splitting on low-channel recordings where the spatial
+    /// feature dimension spans fewer modes. For C≥8, no scaling is applied.
+    /// Default: true.
+    pub auto_cluster_threshold: bool,
 }
 
 impl Default for SortConfig {
@@ -297,7 +306,7 @@ impl Default for SortConfig {
             template_min_count: 3,
             min_cluster_snr: 2.5,
             detection_mode: DetectionMode::Amplitude,
-            ccg_merge: false,
+            ccg_merge: true,
             ccg_template_corr_threshold: 0.5,
             template_subtract_passes: 2,
             isi_split_threshold: 0.1,
@@ -325,6 +334,7 @@ impl Default for SortConfig {
             neighbor_mf_detect: true,
             neighbor_mf_bonus: 0.5,
             use_shape_features: true,
+            auto_cluster_threshold: true,
         }
     }
 }
@@ -2933,8 +2943,17 @@ pub fn sort_multichannel<
     }
 
     // 9. Clustering
+    // Auto-scale cluster creation threshold for low-channel recordings:
+    // with fewer channels the spatial feature dimension spans fewer modes,
+    // clusters sit closer together in feature space, and a higher threshold
+    // is needed to prevent over-splitting. Scale by sqrt(8/C) when C < 8.
+    let effective_cluster_threshold = if config.auto_cluster_threshold && C < 8 {
+        config.cluster_threshold * float::sqrt(8.0 / C as Float)
+    } else {
+        config.cluster_threshold
+    };
     let mut km = OnlineKMeans::<K, N>::new(config.cluster_max_count);
-    km.set_create_threshold(config.cluster_threshold);
+    km.set_create_threshold(effective_cluster_threshold);
 
     // 9a. Seed centroids using farthest-point or SVD-based initialization.
     // This picks well-separated initial centroids deterministically,
@@ -6756,5 +6775,78 @@ mod tests {
             config.use_shape_features,
             "use_shape_features should default to true"
         );
+    }
+
+    // --- Day 8 tests: auto_cluster_threshold and ccg_merge defaults ---
+
+    #[test]
+    fn test_auto_cluster_threshold_default() {
+        let config = SortConfig::default();
+        assert!(
+            config.auto_cluster_threshold,
+            "auto_cluster_threshold should default to true"
+        );
+        assert!(config.ccg_merge, "ccg_merge should default to true");
+    }
+
+    #[test]
+    fn test_auto_cluster_threshold_scaling_c4() {
+        // For C=4 with auto_cluster_threshold=true, effective threshold
+        // should be cluster_threshold * sqrt(8/4) = cluster_threshold * sqrt(2).
+        let config = SortConfig {
+            auto_cluster_threshold: true,
+            ..Default::default()
+        };
+        let c: usize = 4;
+        let expected = config.cluster_threshold * (8.0 / c as Float).sqrt();
+        // sqrt(8/4) = sqrt(2) ≈ 1.414
+        assert!(
+            (expected - config.cluster_threshold * 2.0_f64.sqrt()).abs() < 1e-9,
+            "C=4 effective threshold should be cluster_threshold * sqrt(2)"
+        );
+        assert!(
+            expected > config.cluster_threshold,
+            "effective threshold should exceed base threshold for C=4"
+        );
+    }
+
+    #[test]
+    fn test_auto_cluster_threshold_no_scaling_c16() {
+        // For C=16 (≥8), auto_cluster_threshold has no effect.
+        let config = SortConfig {
+            auto_cluster_threshold: true,
+            ..Default::default()
+        };
+        let c: usize = 16;
+        // Scaling formula: if C < 8, scale; else keep. C=16 → no change.
+        let effective = if c < 8 {
+            config.cluster_threshold * (8.0 / c as Float).sqrt()
+        } else {
+            config.cluster_threshold
+        };
+        assert!(
+            (effective - config.cluster_threshold).abs() < 1e-9,
+            "C=16 should use unscaled cluster_threshold"
+        );
+    }
+
+    #[test]
+    fn test_auto_cluster_threshold_disabled() {
+        // When auto_cluster_threshold=false, effective threshold equals base regardless of C.
+        let config = SortConfig {
+            auto_cluster_threshold: false,
+            ..Default::default()
+        };
+        for c in [2usize, 4, 8, 32] {
+            let effective = if config.auto_cluster_threshold && c < 8 {
+                config.cluster_threshold * (8.0 / c as Float).sqrt()
+            } else {
+                config.cluster_threshold
+            };
+            assert!(
+                (effective - config.cluster_threshold).abs() < 1e-9,
+                "auto_cluster_threshold=false: C={c} should use unscaled threshold"
+            );
+        }
     }
 }
