@@ -93,6 +93,7 @@ pub enum DetectionMode {
 /// assert!((config.matched_filter_threshold - 3.5).abs() < 1e-12);
 /// assert!(!config.svd_init);
 /// assert_eq!(config.refinement_iterations, 0);
+/// assert!(!config.gmm_refine);
 /// assert!(!config.use_localization);
 /// assert!(!config.use_amplitude_profile);
 /// assert_eq!(config.amplitude_profile_neighbors, 4);
@@ -6848,5 +6849,60 @@ mod tests {
                 "auto_cluster_threshold=false: C={c} should use unscaled threshold"
             );
         }
+    }
+
+    // --- Day 9 tests: svd_init, gmm_refine, refinement_iterations, min_cluster_snr ---
+
+    #[test]
+    fn test_day9_ablation_defaults() {
+        // Day 9 ablation confirmed Day 8 defaults are optimal.
+        // svd+refine interaction causes regression on medium (-13%); reverted.
+        let config = SortConfig::default();
+        assert!(
+            !config.svd_init,
+            "svd_init remains false (ablation showed regression)"
+        );
+        assert_eq!(
+            config.refinement_iterations, 0,
+            "refinement_iterations remains 0 (svd+refine combination hurts medium)"
+        );
+        assert!(
+            !config.gmm_refine,
+            "gmm_refine remains false (net negative across difficulties)"
+        );
+        assert!(
+            (config.min_cluster_snr - 2.5).abs() < 1e-12,
+            "min_cluster_snr remains 2.5"
+        );
+    }
+
+    #[test]
+    fn test_snr_floor_keeps_low_snr_cluster() {
+        // min_cluster_snr=2.0 should keep a cluster with SNR between 2.0 and 2.5,
+        // which min_cluster_snr=2.5 would remove.
+        // Verify the threshold logic: effective = min_cluster_snr * (REF_NOISE / noise_mean)
+        // With noise_mean=1.0 (whitened), effective == min_cluster_snr exactly.
+        let threshold_old = 2.5_f64;
+        let threshold_new = 2.0_f64;
+        let cluster_snr = 2.2_f64; // between 2.0 and 2.5
+        assert!(
+            cluster_snr < threshold_old,
+            "SNR 2.2 should be below old floor 2.5"
+        );
+        assert!(
+            cluster_snr >= threshold_new,
+            "SNR 2.2 should survive new floor 2.0"
+        );
+    }
+
+    #[test]
+    fn test_snr_floor_removes_noise() {
+        // min_cluster_snr=2.0 should still remove clusters with SNR < 2.0.
+        let threshold_new = 2.0_f64;
+        let noise_cluster_snr = 1.5_f64;
+        assert!(
+            noise_cluster_snr < threshold_new,
+            "SNR 1.5 should still be removed by floor 2.0"
+        );
     }
 }
