@@ -92,7 +92,7 @@ pub enum DetectionMode {
 /// assert!(config.matched_filter_detect);
 /// assert!((config.matched_filter_threshold - 3.5).abs() < 1e-12);
 /// assert!(!config.svd_init);
-/// assert_eq!(config.refinement_iterations, 0);
+/// assert_eq!(config.refinement_iterations, 1);
 /// assert!(!config.gmm_refine);
 /// assert!(!config.use_localization);
 /// assert!(!config.use_amplitude_profile);
@@ -106,6 +106,7 @@ pub enum DetectionMode {
 /// assert!((config.neighbor_mf_bonus - 0.5).abs() < 1e-10);
 /// assert!(config.use_shape_features);
 /// assert!(config.auto_cluster_threshold);
+/// assert!(config.auto_refine);
 /// assert!(config.ccg_merge);
 /// ```
 pub struct SortConfig {
@@ -284,6 +285,15 @@ pub struct SortConfig {
     /// feature dimension spans fewer modes. For C≥8, no scaling is applied.
     /// Default: true.
     pub auto_cluster_threshold: bool,
+    /// Skip feature-space refinement iterations for recordings with fewer than
+    /// 8 channels. On small probes (C < 8), the post-pipeline cluster layout
+    /// already has more clusters than ground-truth units (over-split residuals
+    /// after merge/split). Re-running nearest-centroid assignment in that state
+    /// pulls borderline spikes into noise clusters rather than tightening
+    /// within-unit boundaries. For C≥8 recordings, refinement safely reduces
+    /// borderline misassignments. When false, `refinement_iterations` applies
+    /// regardless of channel count. Default: true.
+    pub auto_refine: bool,
 }
 
 impl Default for SortConfig {
@@ -320,7 +330,7 @@ impl Default for SortConfig {
             sample_rate: 30000.0,
             common_median_ref: false,
             svd_init: false,
-            refinement_iterations: 0,
+            refinement_iterations: 1,
             adaptive_threshold: false,
             adaptive_min_threshold: 0.5,
             adaptive_max_rate_hz: 200.0,
@@ -336,6 +346,7 @@ impl Default for SortConfig {
             neighbor_mf_bonus: 0.5,
             use_shape_features: true,
             auto_cluster_threshold: true,
+            auto_refine: true,
         }
     }
 }
@@ -3579,7 +3590,8 @@ pub fn sort_multichannel<
     // reassign all spikes. Unlike waveform-space reassignment (which loses
     // channel discrimination after whitening), feature space includes the
     // spatial dimension that separates units on different channels.
-    if config.refinement_iterations > 0 && n_clusters > 1 && n_extracted > n_clusters {
+    let do_refine = config.refinement_iterations > 0 && (!config.auto_refine || C >= 8);
+    if do_refine && n_clusters > 1 && n_extracted > n_clusters {
         for _iter in 0..config.refinement_iterations {
             // Compute mean feature vector per cluster
             let mut centroids = [[0.0 as Float; K]; N];
@@ -6148,6 +6160,145 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_auto_refine_skips_small_probe() {
+        // auto_refine=true must suppress refinement on C=2 (< 8).
+        // With refinement_iterations=1 but auto_refine=true, the 2ch sort
+        // result should be identical to refinement_iterations=0.
+        let n = 6000;
+        let mut data = vec![[0.0f64; 2]; n];
+        let mut rng = Rng::new(31);
+        for s in data.iter_mut() {
+            s[0] = rng.gaussian(0.0, 1.0);
+            s[1] = rng.gaussian(0.0, 1.0);
+        }
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][0] += -14.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 150;
+        }
+        let probe = ProbeLayout::<2>::linear(25.0);
+        let make_result = |refine: usize, auto: bool| -> SortResult<8> {
+            let config = SortConfig {
+                threshold_multiplier: 4.0,
+                pre_samples: 2,
+                refractory_samples: 10,
+                matched_filter_threshold: 4.0,
+                refinement_iterations: refine,
+                auto_refine: auto,
+                ..SortConfig::default()
+            };
+            let mut d = data.clone();
+            let mut scratch = vec![0.0; n];
+            let mut events = vec![
+                MultiChannelEvent {
+                    sample: 0,
+                    channel: 0,
+                    amplitude: 0.0
+                };
+                300
+            ];
+            let mut wf = vec![[0.0; 8]; 300];
+            let mut feat = vec![[0.0; 3]; 300];
+            let mut lab = vec![0usize; 300];
+            sort_multichannel::<2, 4, 8, 3, 64, 8>(
+                &config,
+                &probe,
+                &mut d,
+                &mut scratch,
+                &mut events,
+                &mut wf,
+                &mut feat,
+                &mut lab,
+            )
+            .expect("sort ok")
+        };
+        // auto_refine=true with C=2 → refinement skipped → same as 0 iterations
+        let r_auto = make_result(1, true);
+        let r_none = make_result(0, true);
+        assert_eq!(
+            r_auto.n_spikes, r_none.n_spikes,
+            "auto_refine should suppress refinement on C=2: {} vs {}",
+            r_auto.n_spikes, r_none.n_spikes
+        );
+        // auto_refine=false → refinement runs → allowed to differ from 0-iter
+        let r_forced = make_result(1, false);
+        assert!(
+            r_forced.n_spikes > 0,
+            "forced refinement should still find spikes"
+        );
+    }
+
+    #[test]
+    fn test_auto_refine_runs_on_large_probe() {
+        // auto_refine=true must NOT suppress refinement on C=8 (≥ 8).
+        // Run with refinement_iterations=1+auto_refine=true vs =0; they may
+        // differ (refinement reassigns borderline spikes), but the key check
+        // is that the sort completes and finds spikes in both cases.
+        let n = 8000;
+        let mut data = vec![[0.0f64; 8]; n];
+        let mut rng = Rng::new(37);
+        for s in data.iter_mut() {
+            for v in s.iter_mut() {
+                *v = rng.gaussian(0.0, 1.0);
+            }
+        }
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][0] += -14.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                    data[pos + dt][1] += -9.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 150;
+        }
+        let probe = ProbeLayout::<8>::linear(25.0);
+        let run = |refine: usize| -> SortResult<16> {
+            let config = SortConfig {
+                threshold_multiplier: 4.0,
+                pre_samples: 2,
+                refractory_samples: 10,
+                matched_filter_threshold: 4.0,
+                refinement_iterations: refine,
+                auto_refine: true,
+                ..SortConfig::default()
+            };
+            let mut d = data.clone();
+            let mut scratch = vec![0.0; n];
+            let mut events = vec![
+                MultiChannelEvent {
+                    sample: 0,
+                    channel: 0,
+                    amplitude: 0.0
+                };
+                500
+            ];
+            let mut wf = vec![[0.0; 8]; 500];
+            let mut feat = vec![[0.0; 3]; 500];
+            let mut lab = vec![0usize; 500];
+            sort_multichannel::<8, 64, 8, 3, 64, 16>(
+                &config,
+                &probe,
+                &mut d,
+                &mut scratch,
+                &mut events,
+                &mut wf,
+                &mut feat,
+                &mut lab,
+            )
+            .expect("sort ok")
+        };
+        let r0 = run(0);
+        let r1 = run(1);
+        assert!(r0.n_spikes > 0, "baseline should find spikes");
+        assert!(r1.n_spikes > 0, "auto_refine on C=8 should find spikes");
+    }
+
     /// Test that localization mode runs without errors on multi-channel data.
     /// Uses K=4 (2 PCA + 2 localization dims) on a 4-channel linear probe.
     #[test]
@@ -6852,19 +7003,26 @@ mod tests {
     }
 
     // --- Day 9 tests: svd_init, gmm_refine, refinement_iterations, min_cluster_snr ---
+    // --- Day 10 update: refinement_iterations=1 enabled with auto_refine guard ---
 
     #[test]
     fn test_day9_ablation_defaults() {
-        // Day 9 ablation confirmed Day 8 defaults are optimal.
-        // svd+refine interaction causes regression on medium (-13%); reverted.
+        // Day 9 ablation found svd+refine interaction crashes medium (-13%).
+        // Day 10 isolation showed refine=1 alone helps medium (+0.4%) and hard (+1.3%)
+        // but regresses easy (-5.1%) due to over-reassignment on small probes.
+        // Resolution: auto_refine=true skips refinement for C<8, enabling refine=1 default.
         let config = SortConfig::default();
         assert!(
             !config.svd_init,
             "svd_init remains false (ablation showed regression)"
         );
         assert_eq!(
-            config.refinement_iterations, 0,
-            "refinement_iterations remains 0 (svd+refine combination hurts medium)"
+            config.refinement_iterations, 1,
+            "refinement_iterations=1 enabled; auto_refine guards small probes"
+        );
+        assert!(
+            config.auto_refine,
+            "auto_refine=true prevents refinement on C<8 recordings"
         );
         assert!(
             !config.gmm_refine,

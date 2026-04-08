@@ -65,6 +65,11 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     use_shape_features (bool): Replace PCA dim K-2 with spike half-width feature. Default: True.
 ///     auto_cluster_threshold (bool): Scale cluster creation threshold by sqrt(8/C) for C < 8
 ///         channels, preventing over-splitting on low-channel recordings. Default: True.
+///     auto_refine (bool): Skip feature-space refinement iterations for C < 8 channels.
+///         On small probes the post-pipeline cluster layout contains more clusters than
+///         ground-truth units; nearest-centroid reassignment in that state pulls borderline
+///         spikes into noise clusters. For C >= 8, refinement safely tightens boundaries.
+///         Default: True.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -120,7 +125,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     sample_rate = 30000.0,
     common_median_ref = false,
     svd_init = false,
-    refinement_iterations = 0,
+    refinement_iterations = 1,
     adaptive_threshold = false,
     adaptive_min_threshold = 0.5,
     adaptive_max_rate_hz = 200.0,
@@ -136,6 +141,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     neighbor_mf_bonus = 0.5,
     use_shape_features = true,
     auto_cluster_threshold = true,
+    auto_refine = true,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -190,6 +196,7 @@ fn sort_multichannel<'py>(
     neighbor_mf_bonus: f64,
     use_shape_features: bool,
     auto_cluster_threshold: bool,
+    auto_refine: bool,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -257,6 +264,7 @@ fn sort_multichannel<'py>(
         neighbor_mf_bonus,
         use_shape_features,
         auto_cluster_threshold,
+        auto_refine,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
