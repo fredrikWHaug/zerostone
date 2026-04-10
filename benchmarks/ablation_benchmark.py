@@ -73,6 +73,7 @@ def run(difficulty, label, detail=False, **kwargs):
         use_amplitude_profile=False, amplitude_profile_neighbors=4,
         ccg_merge=True, auto_cluster_threshold=True,
         svd_init=False, gmm_refine=False, refinement_iterations=0, min_cluster_snr=2.5,
+        auto_refine=False,
     )
     defaults.update(kwargs)
     t0 = time.perf_counter()
