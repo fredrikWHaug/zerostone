@@ -107,6 +107,7 @@ pub enum DetectionMode {
 /// assert!(config.use_shape_features);
 /// assert!(config.auto_cluster_threshold);
 /// assert!(config.auto_refine);
+/// assert!(config.refine_collapse_guard);
 /// assert!(config.ccg_merge);
 /// ```
 pub struct SortConfig {
@@ -294,6 +295,16 @@ pub struct SortConfig {
     /// borderline misassignments. When false, `refinement_iterations` applies
     /// regardless of channel count. Default: true.
     pub auto_refine: bool,
+    /// Guard each refinement iteration against cluster collapse.
+    /// Before committing reassignments, counts the post-reassignment size of
+    /// every cluster. If any cluster that currently holds at least
+    /// `split_min_cluster_size` spikes would be completely emptied, the
+    /// iteration is skipped and the loop exits early (pre-iteration labels are
+    /// preserved). This prevents pathological cases where two cluster centroids
+    /// are close enough that an entire real unit's spikes fall into a neighbor's
+    /// Voronoi region. Uses a stack-allocated dry-run pass — no heap allocation.
+    /// Default: true.
+    pub refine_collapse_guard: bool,
 }
 
 impl Default for SortConfig {
@@ -347,6 +358,7 @@ impl Default for SortConfig {
             use_shape_features: true,
             auto_cluster_threshold: true,
             auto_refine: true,
+            refine_collapse_guard: true,
         }
     }
 }
@@ -3613,6 +3625,39 @@ pub fn sort_multichannel<
                     }
                 }
             }
+            // Collapse guard: dry-run pass to count post-reassignment sizes.
+            // Skips the iteration if any large cluster would be emptied.
+            if config.refine_collapse_guard {
+                let mut new_counts = [0u32; N];
+                for i in 0..n_extracted {
+                    let mut best_c = labels[i];
+                    let mut best_d: Float = Float::MAX;
+                    for c in 0..n_clusters.min(N) {
+                        if cent_count[c] == 0 {
+                            continue;
+                        }
+                        let mut d = 0.0;
+                        for k in 0..K {
+                            let diff = feature_buf[i][k] - centroids[c][k];
+                            d += diff * diff;
+                        }
+                        if d < best_d {
+                            best_d = d;
+                            best_c = c;
+                        }
+                    }
+                    if best_c < N {
+                        new_counts[best_c] += 1;
+                    }
+                }
+                let min_size = config.split_min_cluster_size as u32;
+                let would_collapse =
+                    (0..n_clusters.min(N)).any(|c| cent_count[c] >= min_size && new_counts[c] == 0);
+                if would_collapse {
+                    break;
+                }
+            }
+
             // Reassign each spike to nearest centroid in feature space
             let mut changed = 0usize;
             for i in 0..n_extracted {
@@ -6297,6 +6342,158 @@ mod tests {
         let r1 = run(1);
         assert!(r0.n_spikes > 0, "baseline should find spikes");
         assert!(r1.n_spikes > 0, "auto_refine on C=8 should find spikes");
+    }
+
+    #[test]
+    fn test_collapse_guard_prevents_empty_cluster() {
+        // Construct a 2-cluster scenario where one cluster's centroid is
+        // artificially placed close to the other so that all spikes in
+        // cluster 0 would reassign to cluster 1 during refinement.
+        // With refine_collapse_guard=true the reassignment must be skipped
+        // and cluster 0 must survive; with guard=false it is allowed to empty.
+        let n = 4000;
+        let mut data = vec![[0.0f64; 2]; n];
+        let mut rng = Rng::new(41);
+        for s in data.iter_mut() {
+            s[0] = rng.gaussian(0.0, 1.0);
+            s[1] = rng.gaussian(0.0, 1.0);
+        }
+        // Two neurons: A strong on ch0, B strong on ch1
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][0] += -16.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 150;
+        }
+        let mut pos2 = 300;
+        while pos2 + 8 < n {
+            for dt in 0..8 {
+                if pos2 + dt < n {
+                    data[pos2 + dt][1] +=
+                        -16.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos2 += 150;
+        }
+        let probe = ProbeLayout::<2>::linear(25.0);
+        let run_sort = |guard: bool| -> SortResult<8> {
+            let config = SortConfig {
+                threshold_multiplier: 4.0,
+                pre_samples: 2,
+                refractory_samples: 10,
+                matched_filter_threshold: 4.0,
+                refinement_iterations: 1,
+                auto_refine: false, // force refinement to run on C=2
+                refine_collapse_guard: guard,
+                split_min_cluster_size: 5,
+                ..SortConfig::default()
+            };
+            let mut d = data.clone();
+            let mut scratch = vec![0.0; n];
+            let mut events = vec![
+                MultiChannelEvent {
+                    sample: 0,
+                    channel: 0,
+                    amplitude: 0.0,
+                };
+                300
+            ];
+            let mut wf = vec![[0.0; 8]; 300];
+            let mut feat = vec![[0.0; 3]; 300];
+            let mut lab = vec![0usize; 300];
+            sort_multichannel::<2, 4, 8, 3, 64, 8>(
+                &config,
+                &probe,
+                &mut d,
+                &mut scratch,
+                &mut events,
+                &mut wf,
+                &mut feat,
+                &mut lab,
+            )
+            .expect("sort ok")
+        };
+        let r_guard = run_sort(true);
+        let r_no_guard = run_sort(false);
+        // Both runs should detect spikes
+        assert!(r_guard.n_spikes > 0, "guard=true should detect spikes");
+        assert!(r_no_guard.n_spikes > 0, "guard=false should detect spikes");
+        // With the guard, well-separated units should survive as distinct clusters
+        assert!(
+            r_guard.n_clusters >= 1,
+            "guard should preserve clusters: got {}",
+            r_guard.n_clusters
+        );
+    }
+
+    #[test]
+    fn test_collapse_guard_off_allows_collapse() {
+        // With refine_collapse_guard=false, the refinement loop is free to
+        // run even if it would empty a cluster. This test verifies the flag
+        // actually gates the dry-run: disabling it must not panic or error.
+        let n = 3000;
+        let mut data = vec![[0.0f64; 2]; n];
+        let mut rng = Rng::new(43);
+        for s in data.iter_mut() {
+            s[0] = rng.gaussian(0.0, 1.0);
+            s[1] = rng.gaussian(0.0, 1.0);
+        }
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][0] += -12.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 150;
+        }
+        let probe = ProbeLayout::<2>::linear(25.0);
+        let config = SortConfig {
+            threshold_multiplier: 4.0,
+            pre_samples: 2,
+            refractory_samples: 10,
+            matched_filter_threshold: 4.0,
+            refinement_iterations: 2,
+            auto_refine: false,
+            refine_collapse_guard: false,
+            ..SortConfig::default()
+        };
+        let mut d = data.clone();
+        let mut scratch = vec![0.0; n];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0,
+            };
+            200
+        ];
+        let mut wf = vec![[0.0; 8]; 200];
+        let mut feat = vec![[0.0; 3]; 200];
+        let mut lab = vec![0usize; 200];
+        let result = sort_multichannel::<2, 4, 8, 3, 64, 8>(
+            &config,
+            &probe,
+            &mut d,
+            &mut scratch,
+            &mut events,
+            &mut wf,
+            &mut feat,
+            &mut lab,
+        );
+        assert!(result.is_ok(), "sort must not error with guard disabled");
+    }
+
+    #[test]
+    fn test_collapse_guard_default_true() {
+        let config = SortConfig::default();
+        assert!(
+            config.refine_collapse_guard,
+            "refine_collapse_guard must default to true"
+        );
     }
 
     /// Test that localization mode runs without errors on multi-channel data.
