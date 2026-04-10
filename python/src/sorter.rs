@@ -70,6 +70,11 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///         ground-truth units; nearest-centroid reassignment in that state pulls borderline
 ///         spikes into noise clusters. For C >= 8, refinement safely tightens boundaries.
 ///         Default: True.
+///     refine_collapse_guard (bool): Before committing each refinement pass, check whether
+///         any cluster with at least split_min_cluster_size spikes would be completely
+///         emptied. If so, skip the pass and exit early. Prevents pathological cases where
+///         nearby cluster centroids cause an entire unit's spikes to fall into a neighbor's
+///         Voronoi region. Default: True.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -142,6 +147,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     use_shape_features = true,
     auto_cluster_threshold = true,
     auto_refine = true,
+    refine_collapse_guard = true,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -197,6 +203,7 @@ fn sort_multichannel<'py>(
     use_shape_features: bool,
     auto_cluster_threshold: bool,
     auto_refine: bool,
+    refine_collapse_guard: bool,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -265,6 +272,7 @@ fn sort_multichannel<'py>(
         use_shape_features,
         auto_cluster_threshold,
         auto_refine,
+        refine_collapse_guard,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
