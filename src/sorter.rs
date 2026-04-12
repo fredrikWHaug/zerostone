@@ -108,6 +108,8 @@ pub enum DetectionMode {
 /// assert!(config.auto_cluster_threshold);
 /// assert!(config.auto_refine);
 /// assert!(config.refine_collapse_guard);
+/// assert!(!config.refine_isi_guard);
+/// assert!((config.refine_isi_tolerance - 0.1).abs() < 1e-12);
 /// assert!(config.ccg_merge);
 /// ```
 pub struct SortConfig {
@@ -305,6 +307,23 @@ pub struct SortConfig {
     /// Voronoi region. Uses a stack-allocated dry-run pass — no heap allocation.
     /// Default: true.
     pub refine_collapse_guard: bool,
+    /// Guard each refinement iteration against ISI violation increase.
+    /// Before committing reassignments, counts inter-spike-interval violations
+    /// in the proposed new labeling (consecutive same-cluster spike pairs within
+    /// `refractory_samples`) and compares to the current labeling. If violations
+    /// would increase by more than `refine_isi_tolerance` (fractional), the
+    /// iteration is skipped. Targets distributed correlated misassignment: cases
+    /// where refinement pulls spikes from multiple units into wrong neighbors
+    /// simultaneously without emptying any single cluster (not caught by
+    /// `refine_collapse_guard`). Uses detection-order ISI approximation — valid
+    /// because spikes are stored approximately in time order. Default: false.
+    pub refine_isi_guard: bool,
+    /// Fractional ISI-violation increase that triggers the ISI guard revert.
+    /// The proposed assignment is rejected when post-pass violations exceed
+    /// pre-pass violations by more than this fraction. Example: 0.1 means
+    /// skip the iteration if violations increase by more than 10%.
+    /// Only active when `refine_isi_guard` is true. Default: 0.1.
+    pub refine_isi_tolerance: Float,
 }
 
 impl Default for SortConfig {
@@ -359,6 +378,8 @@ impl Default for SortConfig {
             auto_cluster_threshold: true,
             auto_refine: true,
             refine_collapse_guard: true,
+            refine_isi_guard: false,
+            refine_isi_tolerance: 0.1,
         }
     }
 }
@@ -3625,10 +3646,33 @@ pub fn sort_multichannel<
                     }
                 }
             }
-            // Collapse guard: dry-run pass to count post-reassignment sizes.
-            // Skips the iteration if any large cluster would be emptied.
-            if config.refine_collapse_guard {
+            // Dry-run guard: skip iteration if it would cause cluster collapse
+            // or a significant increase in ISI violations.
+            let do_dry_run = config.refine_collapse_guard || config.refine_isi_guard;
+            if do_dry_run {
+                // Pre-pass: count current ISI violations in detection order.
+                let mut pre_isi = 0u32;
+                if config.refine_isi_guard && n_extracted > 1 {
+                    let mut prev_lbl = n_clusters;
+                    let mut prev_sample = 0usize;
+                    for i in 0..n_extracted {
+                        let lbl = labels[i];
+                        if lbl == prev_lbl && lbl < n_clusters {
+                            let dt = event_buf[i].sample.saturating_sub(prev_sample);
+                            if dt > 0 && dt < config.refractory_samples {
+                                pre_isi += 1;
+                            }
+                        }
+                        prev_lbl = lbl;
+                        prev_sample = event_buf[i].sample;
+                    }
+                }
+                // Dry-run: compute proposed assignments and track both collapse
+                // counts and post-assignment ISI violations simultaneously.
                 let mut new_counts = [0u32; N];
+                let mut post_isi = 0u32;
+                let mut prev_new_lbl = n_clusters;
+                let mut prev_new_sample = 0usize;
                 for i in 0..n_extracted {
                     let mut best_c = labels[i];
                     let mut best_d: Float = Float::MAX;
@@ -3649,11 +3693,23 @@ pub fn sort_multichannel<
                     if best_c < N {
                         new_counts[best_c] += 1;
                     }
+                    if config.refine_isi_guard && best_c == prev_new_lbl && best_c < n_clusters {
+                        let dt = event_buf[i].sample.saturating_sub(prev_new_sample);
+                        if dt > 0 && dt < config.refractory_samples {
+                            post_isi += 1;
+                        }
+                    }
+                    prev_new_lbl = best_c;
+                    prev_new_sample = event_buf[i].sample;
                 }
                 let min_size = config.split_min_cluster_size as u32;
-                let would_collapse =
-                    (0..n_clusters.min(N)).any(|c| cent_count[c] >= min_size && new_counts[c] == 0);
-                if would_collapse {
+                let would_collapse = config.refine_collapse_guard
+                    && (0..n_clusters.min(N))
+                        .any(|c| cent_count[c] >= min_size && new_counts[c] == 0);
+                let isi_degrades = config.refine_isi_guard
+                    && post_isi > pre_isi
+                    && post_isi as Float > pre_isi as Float * (1.0 + config.refine_isi_tolerance);
+                if would_collapse || isi_degrades {
                     break;
                 }
             }
@@ -7258,6 +7314,169 @@ mod tests {
         assert!(
             noise_cluster_snr < threshold_new,
             "SNR 1.5 should still be removed by floor 2.0"
+        );
+    }
+
+    #[test]
+    fn test_refine_isi_guard_default_false() {
+        let config = SortConfig::default();
+        assert!(
+            !config.refine_isi_guard,
+            "refine_isi_guard must default to false"
+        );
+    }
+
+    #[test]
+    fn test_refine_isi_tolerance_default() {
+        let config = SortConfig::default();
+        assert!(
+            (config.refine_isi_tolerance - 0.1).abs() < 1e-12,
+            "refine_isi_tolerance must default to 0.1"
+        );
+    }
+
+    #[test]
+    fn test_refine_isi_guard_no_degradation_on_clean_data() {
+        // ISI guard should not fire on well-separated units — result must
+        // match the non-guard run (guard only skips when violations increase).
+        let n = 4000;
+        let mut data = vec![[0.0f64; 2]; n];
+        let mut rng = Rng::new(77);
+        for s in data.iter_mut() {
+            s[0] = rng.gaussian(0.0, 1.0);
+            s[1] = rng.gaussian(0.0, 1.0);
+        }
+        // Unit A on ch0
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][0] += -14.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 150;
+        }
+        // Unit B on ch1
+        let mut pos2 = 275;
+        while pos2 + 8 < n {
+            for dt in 0..8 {
+                if pos2 + dt < n {
+                    data[pos2 + dt][1] +=
+                        -14.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos2 += 150;
+        }
+        let probe = ProbeLayout::<2>::linear(25.0);
+        let run = |isi_guard: bool| -> SortResult<8> {
+            let config = SortConfig {
+                threshold_multiplier: 4.0,
+                pre_samples: 2,
+                refractory_samples: 10,
+                matched_filter_threshold: 4.0,
+                refinement_iterations: 1,
+                auto_refine: false,
+                refine_isi_guard: isi_guard,
+                ..SortConfig::default()
+            };
+            let mut d = data.clone();
+            let mut scratch = vec![0.0; n];
+            let mut events = vec![
+                MultiChannelEvent {
+                    sample: 0,
+                    channel: 0,
+                    amplitude: 0.0,
+                };
+                300
+            ];
+            let mut wf = vec![[0.0; 8]; 300];
+            let mut feat = vec![[0.0; 3]; 300];
+            let mut lab = vec![0usize; 300];
+            sort_multichannel::<2, 4, 8, 3, 64, 8>(
+                &config,
+                &probe,
+                &mut d,
+                &mut scratch,
+                &mut events,
+                &mut wf,
+                &mut feat,
+                &mut lab,
+            )
+            .expect("sort ok")
+        };
+        let r_no_guard = run(false);
+        let r_guard = run(true);
+        assert!(
+            r_guard.n_spikes > 0,
+            "ISI guard must not suppress all spikes"
+        );
+        // Guard should not lose clusters relative to non-guard run
+        assert!(
+            r_guard.n_clusters >= r_no_guard.n_clusters.saturating_sub(1),
+            "ISI guard must not eliminate clusters on clean data: guard={} no_guard={}",
+            r_guard.n_clusters,
+            r_no_guard.n_clusters
+        );
+    }
+
+    #[test]
+    fn test_refine_isi_guard_and_collapse_guard_coexist() {
+        // Both guards enabled simultaneously must not panic or error.
+        let n = 3000;
+        let mut data = vec![[0.0f64; 2]; n];
+        let mut rng = Rng::new(88);
+        for s in data.iter_mut() {
+            s[0] = rng.gaussian(0.0, 1.0);
+            s[1] = rng.gaussian(0.0, 1.0);
+        }
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][0] += -12.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 150;
+        }
+        let probe = ProbeLayout::<2>::linear(25.0);
+        let config = SortConfig {
+            threshold_multiplier: 4.0,
+            pre_samples: 2,
+            refractory_samples: 10,
+            matched_filter_threshold: 4.0,
+            refinement_iterations: 2,
+            auto_refine: false,
+            refine_collapse_guard: true,
+            refine_isi_guard: true,
+            ..SortConfig::default()
+        };
+        let mut d = data.clone();
+        let mut scratch = vec![0.0; n];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0,
+            };
+            200
+        ];
+        let mut wf = vec![[0.0; 8]; 200];
+        let mut feat = vec![[0.0; 3]; 200];
+        let mut lab = vec![0usize; 200];
+        let result = sort_multichannel::<2, 4, 8, 3, 64, 8>(
+            &config,
+            &probe,
+            &mut d,
+            &mut scratch,
+            &mut events,
+            &mut wf,
+            &mut feat,
+            &mut lab,
+        );
+        assert!(
+            result.is_ok(),
+            "both guards enabled must not error: {:?}",
+            result.err()
         );
     }
 }
