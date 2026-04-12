@@ -75,6 +75,14 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///         emptied. If so, skip the pass and exit early. Prevents pathological cases where
 ///         nearby cluster centroids cause an entire unit's spikes to fall into a neighbor's
 ///         Voronoi region. Default: True.
+///     refine_isi_guard (bool): Before committing each refinement pass, compare the
+///         inter-spike-interval violation count of the proposed assignment to the current
+///         one. If violations would increase by more than refine_isi_tolerance (fractional),
+///         the pass is skipped. Targets distributed correlated misassignment not caught by
+///         the collapse guard. Default: False.
+///     refine_isi_tolerance (float): Fractional ISI-violation increase that triggers the
+///         ISI guard revert. Skip the pass if post-pass violations exceed pre-pass
+///         violations by more than this fraction. Default: 0.1.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -148,6 +156,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     auto_cluster_threshold = true,
     auto_refine = true,
     refine_collapse_guard = true,
+    refine_isi_guard = false,
+    refine_isi_tolerance = 0.1,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -204,6 +214,8 @@ fn sort_multichannel<'py>(
     auto_cluster_threshold: bool,
     auto_refine: bool,
     refine_collapse_guard: bool,
+    refine_isi_guard: bool,
+    refine_isi_tolerance: f64,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -273,6 +285,8 @@ fn sort_multichannel<'py>(
         auto_cluster_threshold,
         auto_refine,
         refine_collapse_guard,
+        refine_isi_guard,
+        refine_isi_tolerance,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
