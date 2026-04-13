@@ -163,7 +163,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     refine_collapse_guard = true,
     refine_isi_guard = false,
     refine_isi_tolerance = 0.1,
-    auto_svd_init = false,
+    auto_svd_init = true,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
