@@ -83,6 +83,11 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     refine_isi_tolerance (float): Fractional ISI-violation increase that triggers the
 ///         ISI guard revert. Skip the pass if post-pass violations exceed pre-pass
 ///         violations by more than this fraction. Default: 0.1.
+///     auto_svd_init (bool): Enable SVD centroid initialization automatically for
+///         recordings with 8 or more channels. SVD init improves unit separation on
+///         large probes but regresses on small probes (< 8 channels) where the dominant
+///         eigenvector aligns with channel noise rather than unit structure. Pair with
+///         refine_isi_guard=True to guard against distributed misassignment. Default: False.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -158,6 +163,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     refine_collapse_guard = true,
     refine_isi_guard = false,
     refine_isi_tolerance = 0.1,
+    auto_svd_init = false,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -216,6 +222,7 @@ fn sort_multichannel<'py>(
     refine_collapse_guard: bool,
     refine_isi_guard: bool,
     refine_isi_tolerance: f64,
+    auto_svd_init: bool,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -287,6 +294,7 @@ fn sort_multichannel<'py>(
         refine_collapse_guard,
         refine_isi_guard,
         refine_isi_tolerance,
+        auto_svd_init,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
