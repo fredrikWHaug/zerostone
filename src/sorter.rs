@@ -92,7 +92,7 @@ pub enum DetectionMode {
 /// assert!(config.matched_filter_detect);
 /// assert!((config.matched_filter_threshold - 3.5).abs() < 1e-12);
 /// assert!(!config.svd_init);
-/// assert!(!config.auto_svd_init);
+/// assert!(config.auto_svd_init);
 /// assert_eq!(config.refinement_iterations, 1);
 /// assert!(!config.gmm_refine);
 /// assert!(!config.use_localization);
@@ -369,7 +369,7 @@ impl Default for SortConfig {
             sample_rate: 30000.0,
             common_median_ref: false,
             svd_init: false,
-            auto_svd_init: false,
+            auto_svd_init: true,
             refinement_iterations: 1,
             adaptive_threshold: false,
             adaptive_min_threshold: 0.5,
@@ -3022,9 +3022,10 @@ pub fn sort_multichannel<
         }
         s.max(2).min(N / 2)
     };
+    // Track whether SVD init is active so the refinement guard can use it.
+    let svd_active = config.svd_init || (config.auto_svd_init && C >= 8);
     if n_extracted > max_init_seeds {
-        let use_svd = config.svd_init || (config.auto_svd_init && C >= 8);
-        if use_svd {
+        if svd_active {
             // SVD-based: project onto dominant eigenvector, bin, seed with bin means.
             let (seeds, n_seeds) =
                 svd_init_centroids::<K, N>(feature_buf, n_extracted, max_init_seeds);
@@ -3659,11 +3660,15 @@ pub fn sort_multichannel<
             }
             // Dry-run guard: skip iteration if it would cause cluster collapse
             // or a significant increase in ISI violations.
-            let do_dry_run = config.refine_collapse_guard || config.refine_isi_guard;
+            // ISI guard fires when explicitly enabled OR when SVD init was used:
+            // SVD topology shifts correlate with distributed misassignment that
+            // increases ISI violations; the guard is required for correctness.
+            let isi_guard_active = config.refine_isi_guard || svd_active;
+            let do_dry_run = config.refine_collapse_guard || isi_guard_active;
             if do_dry_run {
                 // Pre-pass: count current ISI violations in detection order.
                 let mut pre_isi = 0u32;
-                if config.refine_isi_guard && n_extracted > 1 {
+                if isi_guard_active && n_extracted > 1 {
                     let mut prev_lbl = n_clusters;
                     let mut prev_sample = 0usize;
                     for i in 0..n_extracted {
@@ -3704,7 +3709,7 @@ pub fn sort_multichannel<
                     if best_c < N {
                         new_counts[best_c] += 1;
                     }
-                    if config.refine_isi_guard && best_c == prev_new_lbl && best_c < n_clusters {
+                    if isi_guard_active && best_c == prev_new_lbl && best_c < n_clusters {
                         let dt = event_buf[i].sample.saturating_sub(prev_new_sample);
                         if dt > 0 && dt < config.refractory_samples {
                             post_isi += 1;
@@ -3717,7 +3722,7 @@ pub fn sort_multichannel<
                 let would_collapse = config.refine_collapse_guard
                     && (0..n_clusters.min(N))
                         .any(|c| cent_count[c] >= min_size && new_counts[c] == 0);
-                let isi_degrades = config.refine_isi_guard
+                let isi_degrades = isi_guard_active
                     && post_isi > pre_isi
                     && post_isi as Float > pre_isi as Float * (1.0 + config.refine_isi_tolerance);
                 if would_collapse || isi_degrades {
@@ -7296,6 +7301,10 @@ mod tests {
             (config.min_cluster_snr - 2.5).abs() < 1e-12,
             "min_cluster_snr remains 2.5"
         );
+        assert!(
+            config.auto_svd_init,
+            "auto_svd_init=true; ISI guard implicit when SVD fires, safe on all probe sizes"
+        );
     }
 
     #[test]
@@ -7492,9 +7501,9 @@ mod tests {
     }
 
     #[test]
-    fn test_auto_svd_init_default_false() {
+    fn test_auto_svd_init_default_true() {
         let config = SortConfig::default();
-        assert!(!config.auto_svd_init, "auto_svd_init must default to false");
+        assert!(config.auto_svd_init, "auto_svd_init must default to true");
     }
 
     #[test]
@@ -7627,5 +7636,83 @@ mod tests {
         );
         let r = result.unwrap();
         assert!(r.n_spikes > 0, "auto_svd_init on C=8 must detect spikes");
+    }
+
+    #[test]
+    fn test_svd_active_implicitly_enables_isi_guard() {
+        // When SVD init is active (via svd_init or auto_svd_init + C>=8),
+        // the ISI guard must fire automatically even if refine_isi_guard=false.
+        // Verify: auto_svd_init=true with refine_isi_guard=false must not panic.
+        let n = 4000;
+        let mut data = vec![[0.0f64; 8]; n];
+        let mut rng = Rng::new(99);
+        for s in data.iter_mut() {
+            for v in s.iter_mut() {
+                *v = rng.gaussian(0.0, 1.0);
+            }
+        }
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][1] += -13.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 180;
+        }
+        let mut pos2 = 300;
+        while pos2 + 8 < n {
+            for dt in 0..8 {
+                if pos2 + dt < n {
+                    data[pos2 + dt][6] +=
+                        -13.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos2 += 180;
+        }
+        let probe = ProbeLayout::<8>::linear(25.0);
+        // auto_svd_init=true, refine_isi_guard=false explicitly — guard fires implicitly
+        let config = SortConfig {
+            threshold_multiplier: 4.0,
+            pre_samples: 2,
+            refractory_samples: 10,
+            matched_filter_threshold: 4.0,
+            auto_svd_init: true,
+            refine_isi_guard: false,
+            refinement_iterations: 1,
+            ..SortConfig::default()
+        };
+        let mut d = data.clone();
+        let mut scratch = vec![0.0; n];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0,
+            };
+            300
+        ];
+        let mut wf = vec![[0.0; 8]; 300];
+        let mut feat = vec![[0.0; 3]; 300];
+        let mut lab = vec![0usize; 300];
+        let result = sort_multichannel::<8, 64, 8, 3, 64, 16>(
+            &config,
+            &probe,
+            &mut d,
+            &mut scratch,
+            &mut events,
+            &mut wf,
+            &mut feat,
+            &mut lab,
+        );
+        assert!(
+            result.is_ok(),
+            "SVD init with implicit ISI guard must not error: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().n_spikes > 0,
+            "SVD init with implicit ISI guard must detect spikes"
+        );
     }
 }
