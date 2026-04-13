@@ -92,6 +92,7 @@ pub enum DetectionMode {
 /// assert!(config.matched_filter_detect);
 /// assert!((config.matched_filter_threshold - 3.5).abs() < 1e-12);
 /// assert!(!config.svd_init);
+/// assert!(!config.auto_svd_init);
 /// assert_eq!(config.refinement_iterations, 1);
 /// assert!(!config.gmm_refine);
 /// assert!(!config.use_localization);
@@ -198,6 +199,14 @@ pub struct SortConfig {
     /// Places centroids where the data density is highest along the principal
     /// axis, rather than at the extremes (farthest-point). Default: false.
     pub svd_init: bool,
+    /// Enable SVD centroid initialization automatically for C≥8 channel recordings.
+    /// SVD init improves unit separation on large probes where the dominant feature
+    /// eigenvector aligns with inter-unit structure, but regresses on small probes
+    /// (C<8) where it often aligns with a single channel's noise axis instead.
+    /// When true and C≥8, SVD init is used regardless of `svd_init`.
+    /// Pair with `refine_isi_guard=true` to guard against the SVD+refine
+    /// distributed misassignment on medium probes. Default: false.
+    pub auto_svd_init: bool,
     /// Number of template refinement iterations (0 = disabled).
     /// After the first sort pass, uses learned templates as matched filter seeds
     /// for re-detection and template-seeded k-means for re-clustering.
@@ -360,6 +369,7 @@ impl Default for SortConfig {
             sample_rate: 30000.0,
             common_median_ref: false,
             svd_init: false,
+            auto_svd_init: false,
             refinement_iterations: 1,
             adaptive_threshold: false,
             adaptive_min_threshold: 0.5,
@@ -3013,7 +3023,8 @@ pub fn sort_multichannel<
         s.max(2).min(N / 2)
     };
     if n_extracted > max_init_seeds {
-        if config.svd_init {
+        let use_svd = config.svd_init || (config.auto_svd_init && C >= 8);
+        if use_svd {
             // SVD-based: project onto dominant eigenvector, bin, seed with bin means.
             let (seeds, n_seeds) =
                 svd_init_centroids::<K, N>(feature_buf, n_extracted, max_init_seeds);
@@ -7478,5 +7489,143 @@ mod tests {
             "both guards enabled must not error: {:?}",
             result.err()
         );
+    }
+
+    #[test]
+    fn test_auto_svd_init_default_false() {
+        let config = SortConfig::default();
+        assert!(!config.auto_svd_init, "auto_svd_init must default to false");
+    }
+
+    #[test]
+    fn test_auto_svd_init_skips_small_probe() {
+        // auto_svd_init=true must not enable SVD on C<8; sort must complete cleanly.
+        let n = 3000;
+        let mut data = vec![[0.0f64; 2]; n];
+        let mut rng = Rng::new(91);
+        for s in data.iter_mut() {
+            s[0] = rng.gaussian(0.0, 1.0);
+            s[1] = rng.gaussian(0.0, 1.0);
+        }
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][0] += -12.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 150;
+        }
+        let probe = ProbeLayout::<2>::linear(25.0);
+        let config = SortConfig {
+            threshold_multiplier: 4.0,
+            pre_samples: 2,
+            refractory_samples: 10,
+            matched_filter_threshold: 4.0,
+            auto_svd_init: true,
+            refine_isi_guard: true,
+            ..SortConfig::default()
+        };
+        let mut d = data.clone();
+        let mut scratch = vec![0.0; n];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0,
+            };
+            200
+        ];
+        let mut wf = vec![[0.0; 8]; 200];
+        let mut feat = vec![[0.0; 3]; 200];
+        let mut lab = vec![0usize; 200];
+        let result = sort_multichannel::<2, 4, 8, 3, 64, 8>(
+            &config,
+            &probe,
+            &mut d,
+            &mut scratch,
+            &mut events,
+            &mut wf,
+            &mut feat,
+            &mut lab,
+        );
+        assert!(
+            result.is_ok(),
+            "auto_svd_init on C=2 must not error: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_auto_svd_init_runs_on_large_probe() {
+        // auto_svd_init=true must engage SVD for C>=8 and complete without error.
+        let n = 4000;
+        let mut data = vec![[0.0f64; 8]; n];
+        let mut rng = Rng::new(92);
+        for s in data.iter_mut() {
+            for v in s.iter_mut() {
+                *v = rng.gaussian(0.0, 1.0);
+            }
+        }
+        // Two units on channels 2 and 5
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][2] += -14.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 200;
+        }
+        let mut pos2 = 300;
+        while pos2 + 8 < n {
+            for dt in 0..8 {
+                if pos2 + dt < n {
+                    data[pos2 + dt][5] +=
+                        -14.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos2 += 200;
+        }
+        let probe = ProbeLayout::<8>::linear(25.0);
+        let config = SortConfig {
+            threshold_multiplier: 4.0,
+            pre_samples: 2,
+            refractory_samples: 10,
+            matched_filter_threshold: 4.0,
+            auto_svd_init: true,
+            refine_isi_guard: true,
+            ..SortConfig::default()
+        };
+        let mut d = data.clone();
+        let mut scratch = vec![0.0; n];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0,
+            };
+            300
+        ];
+        let mut wf = vec![[0.0; 8]; 300];
+        let mut feat = vec![[0.0; 3]; 300];
+        let mut lab = vec![0usize; 300];
+        let result = sort_multichannel::<8, 64, 8, 3, 64, 16>(
+            &config,
+            &probe,
+            &mut d,
+            &mut scratch,
+            &mut events,
+            &mut wf,
+            &mut feat,
+            &mut lab,
+        );
+        assert!(
+            result.is_ok(),
+            "auto_svd_init on C=8 must not error: {:?}",
+            result.err()
+        );
+        let r = result.unwrap();
+        assert!(r.n_spikes > 0, "auto_svd_init on C=8 must detect spikes");
     }
 }
