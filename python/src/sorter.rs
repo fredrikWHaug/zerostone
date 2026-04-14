@@ -87,7 +87,11 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///         recordings with 8 or more channels. SVD init improves unit separation on
 ///         large probes but regresses on small probes (< 8 channels) where the dominant
 ///         eigenvector aligns with channel noise rather than unit structure. Pair with
-///         refine_isi_guard=True to guard against distributed misassignment. Default: False.
+///         refine_isi_guard=True to guard against distributed misassignment. Default: True.
+///     auto_threshold (bool): Scale the detection threshold down by 10% for recordings
+///         with 8 or more channels. On large probes, spatial coincidence detection and
+///         deduplication are more effective at rejecting noise, allowing a lower threshold
+///         to recover sub-threshold spikes. No effect for C < 8. Default: True.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -164,6 +168,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     refine_isi_guard = false,
     refine_isi_tolerance = 0.1,
     auto_svd_init = true,
+    auto_threshold = true,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -223,6 +228,7 @@ fn sort_multichannel<'py>(
     refine_isi_guard: bool,
     refine_isi_tolerance: f64,
     auto_svd_init: bool,
+    auto_threshold: bool,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -295,6 +301,7 @@ fn sort_multichannel<'py>(
         refine_isi_guard,
         refine_isi_tolerance,
         auto_svd_init,
+        auto_threshold,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
