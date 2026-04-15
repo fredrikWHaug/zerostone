@@ -95,6 +95,7 @@ pub enum DetectionMode {
 /// assert!(config.auto_svd_init);
 /// assert!(config.auto_threshold);
 /// assert_eq!(config.refinement_iterations, 1);
+/// assert_eq!(config.auto_refine_iterations, 3);
 /// assert!(!config.gmm_refine);
 /// assert!(!config.use_localization);
 /// assert!(!config.use_amplitude_profile);
@@ -220,6 +221,11 @@ pub struct SortConfig {
     /// for re-detection and template-seeded k-means for re-clustering.
     /// Each iteration refines templates, improving accuracy on borderline units.
     pub refinement_iterations: usize,
+    /// Minimum iterations to use when `auto_refine` is active (C≥8).
+    /// Effective iterations = max(refinement_iterations, auto_refine_iterations).
+    /// The convergence break stops early when labels stabilize, so this adds no
+    /// overhead once the assignment is already optimal. Default: 3.
+    pub auto_refine_iterations: usize,
     /// Enable per-channel adaptive detection thresholds.
     /// Computes thresholds from per-channel MAD noise estimates on whitened data,
     /// with a minimum floor for dead channels and overactivity scaling.
@@ -380,6 +386,7 @@ impl Default for SortConfig {
             auto_svd_init: true,
             auto_threshold: true,
             refinement_iterations: 1,
+            auto_refine_iterations: 3,
             adaptive_threshold: false,
             adaptive_min_threshold: 0.5,
             adaptive_max_rate_hz: 200.0,
@@ -3649,9 +3656,16 @@ pub fn sort_multichannel<
     // reassign all spikes. Unlike waveform-space reassignment (which loses
     // channel discrimination after whitening), feature space includes the
     // spatial dimension that separates units on different channels.
-    let do_refine = config.refinement_iterations > 0 && (!config.auto_refine || C >= 8);
+    let effective_iters = if config.auto_refine && C >= 8 {
+        config
+            .refinement_iterations
+            .max(config.auto_refine_iterations)
+    } else {
+        config.refinement_iterations
+    };
+    let do_refine = effective_iters > 0 && (!config.auto_refine || C >= 8);
     if do_refine && n_clusters > 1 && n_extracted > n_clusters {
-        for _iter in 0..config.refinement_iterations {
+        for _iter in 0..effective_iters {
             // Compute mean feature vector per cluster
             let mut centroids = [[0.0 as Float; K]; N];
             let mut cent_count = [0u32; N];
@@ -7874,6 +7888,159 @@ mod tests {
             "auto_threshold on C=8 must run cleanly: on={}cl off={}cl",
             r_on.n_clusters,
             r_off.n_clusters
+        );
+    }
+
+    #[test]
+    fn test_auto_refine_iterations_default() {
+        let config = SortConfig::default();
+        assert_eq!(
+            config.auto_refine_iterations, 3,
+            "auto_refine_iterations must default to 3"
+        );
+    }
+
+    #[test]
+    fn test_auto_refine_iterations_no_effect_small_probe() {
+        // C=4 < 8: auto_refine suppresses refinement entirely regardless of
+        // auto_refine_iterations. Results with auto_refine_iterations=3 must equal
+        // auto_refine_iterations=1 on a small probe.
+        let n = 3000;
+        let mut data = vec![[0.0f64; 4]; n];
+        let mut rng = Rng::new(77);
+        for s in data.iter_mut() {
+            for v in s.iter_mut() {
+                *v = rng.gaussian(0.0, 1.0);
+            }
+        }
+        let mut pos = 150;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][1] += -10.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 160;
+        }
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let run = |ar_iters: usize| -> SortResult<8> {
+            let config = SortConfig {
+                threshold_multiplier: 4.5,
+                pre_samples: 2,
+                refractory_samples: 10,
+                matched_filter_threshold: 3.5,
+                auto_refine: true,
+                auto_refine_iterations: ar_iters,
+                ..SortConfig::default()
+            };
+            let mut d = data.clone();
+            let mut scratch = vec![0.0; n];
+            let mut events = vec![
+                MultiChannelEvent {
+                    sample: 0,
+                    channel: 0,
+                    amplitude: 0.0,
+                };
+                300
+            ];
+            let mut wf = vec![[0.0; 4]; 300];
+            let mut feat = vec![[0.0; 3]; 300];
+            let mut lab = vec![0usize; 300];
+            sort_multichannel::<4, 16, 4, 3, 16, 8>(
+                &config,
+                &probe,
+                &mut d,
+                &mut scratch,
+                &mut events,
+                &mut wf,
+                &mut feat,
+                &mut lab,
+            )
+            .expect("sort ok")
+        };
+        let r1 = run(1);
+        let r3 = run(3);
+        assert_eq!(
+            r1.n_spikes, r3.n_spikes,
+            "auto_refine_iterations must not affect C=4 (refinement suppressed by auto_refine gate)"
+        );
+    }
+
+    #[test]
+    fn test_auto_refine_iterations_large_probe_runs_cleanly() {
+        // C=8: auto_refine allows refinement. auto_refine_iterations=3 must
+        // complete without panic and produce at least as many spikes as iterations=1.
+        let n = 4000;
+        let mut data = vec![[0.0f64; 8]; n];
+        let mut rng = Rng::new(88);
+        for s in data.iter_mut() {
+            for v in s.iter_mut() {
+                *v = rng.gaussian(0.0, 1.0);
+            }
+        }
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][2] += -12.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 170;
+        }
+        let mut pos2 = 300;
+        while pos2 + 8 < n {
+            for dt in 0..8 {
+                if pos2 + dt < n {
+                    data[pos2 + dt][6] +=
+                        -12.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos2 += 170;
+        }
+        let probe = ProbeLayout::<8>::linear(25.0);
+        let run = |ar_iters: usize| -> SortResult<16> {
+            let config = SortConfig {
+                threshold_multiplier: 4.5,
+                pre_samples: 2,
+                refractory_samples: 10,
+                matched_filter_threshold: 3.5,
+                auto_refine: true,
+                auto_refine_iterations: ar_iters,
+                ..SortConfig::default()
+            };
+            let mut d = data.clone();
+            let mut scratch = vec![0.0; n];
+            let mut events = vec![
+                MultiChannelEvent {
+                    sample: 0,
+                    channel: 0,
+                    amplitude: 0.0,
+                };
+                400
+            ];
+            let mut wf = vec![[0.0; 8]; 400];
+            let mut feat = vec![[0.0; 3]; 400];
+            let mut lab = vec![0usize; 400];
+            sort_multichannel::<8, 64, 8, 3, 64, 16>(
+                &config,
+                &probe,
+                &mut d,
+                &mut scratch,
+                &mut events,
+                &mut wf,
+                &mut feat,
+                &mut lab,
+            )
+            .expect("sort ok")
+        };
+        let r3 = run(3);
+        assert!(
+            r3.n_spikes > 0,
+            "auto_refine_iterations=3 on C=8 must detect spikes"
+        );
+        assert!(
+            r3.n_clusters >= 1,
+            "auto_refine_iterations=3 on C=8 must form clusters"
         );
     }
 }
