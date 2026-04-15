@@ -92,6 +92,10 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///         with 8 or more channels. On large probes, spatial coincidence detection and
 ///         deduplication are more effective at rejecting noise, allowing a lower threshold
 ///         to recover sub-threshold spikes. No effect for C < 8. Default: True.
+///     auto_refine_iterations (int): Minimum refinement iterations when auto_refine is
+///         active (C >= 8). Effective iterations = max(refinement_iterations,
+///         auto_refine_iterations). Early convergence exit prevents wasted work when
+///         the assignment stabilizes in fewer passes. Default: 3.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -169,6 +173,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     refine_isi_tolerance = 0.1,
     auto_svd_init = true,
     auto_threshold = true,
+    auto_refine_iterations = 3usize,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -229,6 +234,7 @@ fn sort_multichannel<'py>(
     refine_isi_tolerance: f64,
     auto_svd_init: bool,
     auto_threshold: bool,
+    auto_refine_iterations: usize,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -302,6 +308,7 @@ fn sort_multichannel<'py>(
         refine_isi_tolerance,
         auto_svd_init,
         auto_threshold,
+        auto_refine_iterations,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
