@@ -383,16 +383,15 @@ fn generate_signal_multi(config: &SignalConfig, samples: usize) -> Vec<Vec<Float
 
 fn validate_filter(filter: &FilterConfig, channels: usize) -> Result<(), Box<dyn Error>> {
     match filter {
-        FilterConfig::Car | FilterConfig::Laplacian => {
-            if channels < 2 {
-                return Err(format!(
-                    "{} filter requires at least 2 channels, got {}",
-                    filter_name(filter),
-                    channels
-                )
-                .into());
-            }
+        FilterConfig::Car | FilterConfig::Laplacian if channels < 2 => {
+            return Err(format!(
+                "{} filter requires at least 2 channels, got {}",
+                filter_name(filter),
+                channels
+            )
+            .into());
         }
+        FilterConfig::Car | FilterConfig::Laplacian => {}
         _ => {}
     }
     Ok(())
