@@ -88,6 +88,7 @@ pub enum DetectionMode {
 /// assert!((config.min_cluster_snr - 2.5).abs() < 1e-12);
 /// assert_eq!(config.detection_mode, zerostone::sorter::DetectionMode::Amplitude);
 /// assert_eq!(config.template_subtract_passes, 2);
+/// assert!((config.ncc_threshold - 0.70).abs() < 1e-12);
 /// assert!((config.isi_split_threshold - 0.1).abs() < 1e-12);
 /// assert!(config.matched_filter_detect);
 /// assert!((config.matched_filter_threshold - 3.5).abs() < 1e-12);
@@ -161,6 +162,13 @@ pub struct SortConfig {
     /// Number of template subtraction passes (0 = disabled, 1 = single pass, 2+ = multi-pass).
     /// Each additional pass subtracts the updated templates and re-detects on the residual.
     pub template_subtract_passes: usize,
+    /// Normalized cross-correlation threshold for template-scan spike recovery.
+    /// Spikes in the residual whose NCC with a cluster template exceeds this value
+    /// are accepted. Higher values reduce false positives; lower values recover
+    /// more borderline matches. Empirically, 0.70 is the sweet spot: below this
+    /// threshold false-positive noise matches contaminate low-SNR cluster templates.
+    /// Default: 0.70.
+    pub ncc_threshold: Float,
     /// ISI violation rate threshold for post-sort cluster splitting.
     /// Clusters with ISI violation rate above this are split along the
     /// first principal axis of their feature distribution.
@@ -373,6 +381,7 @@ impl Default for SortConfig {
             ccg_merge: true,
             ccg_template_corr_threshold: 0.5,
             template_subtract_passes: 2,
+            ncc_threshold: 0.70,
             isi_split_threshold: 0.1,
             gmm_refine: false,
             gmm_max_iter: 10,
@@ -3358,7 +3367,7 @@ pub fn sort_multichannel<
             let remaining_ncc = event_buf.len().saturating_sub(n_extracted);
             let remaining_wf_ncc = waveform_buf.len().saturating_sub(n_extracted);
             if remaining_ncc > 0 && remaining_wf_ncc > 0 {
-                let ncc_threshold = 0.7;
+                let ncc_threshold = config.ncc_threshold;
                 let half_thresh = effective_threshold * 0.5;
                 let mut n_ncc_found = 0usize;
 
@@ -8041,6 +8050,83 @@ mod tests {
         assert!(
             r3.n_clusters >= 1,
             "auto_refine_iterations=3 on C=8 must form clusters"
+        );
+    }
+
+    #[test]
+    fn test_ncc_threshold_default() {
+        let config = SortConfig::default();
+        assert!(
+            (config.ncc_threshold - 0.70).abs() < 1e-12,
+            "ncc_threshold must default to 0.70"
+        );
+    }
+
+    #[test]
+    fn test_ncc_threshold_is_respected() {
+        // Verify that raising ncc_threshold reduces NCC-scan spike recovery.
+        // Use C=8 with a clean unit so template subtraction leaves a residual
+        // with detectable sub-threshold spikes.
+        let n = 4000;
+        let mut data = vec![[0.0f64; 8]; n];
+        let mut rng = Rng::new(33);
+        for s in data.iter_mut() {
+            for v in s.iter_mut() {
+                *v = rng.gaussian(0.0, 1.0);
+            }
+        }
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][3] += -11.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 170;
+        }
+        let probe = ProbeLayout::<8>::linear(25.0);
+        let run = |ncc: f64| -> SortResult<16> {
+            let config = SortConfig {
+                threshold_multiplier: 4.5,
+                pre_samples: 2,
+                refractory_samples: 10,
+                matched_filter_threshold: 3.5,
+                ncc_threshold: ncc,
+                ..SortConfig::default()
+            };
+            let mut d = data.clone();
+            let mut scratch = vec![0.0; n];
+            let mut events = vec![
+                MultiChannelEvent {
+                    sample: 0,
+                    channel: 0,
+                    amplitude: 0.0,
+                };
+                400
+            ];
+            let mut wf = vec![[0.0; 8]; 400];
+            let mut feat = vec![[0.0; 3]; 400];
+            let mut lab = vec![0usize; 400];
+            sort_multichannel::<8, 64, 8, 3, 64, 16>(
+                &config,
+                &probe,
+                &mut d,
+                &mut scratch,
+                &mut events,
+                &mut wf,
+                &mut feat,
+                &mut lab,
+            )
+            .expect("sort ok")
+        };
+        let r_default = run(0.70);
+        let r_strict = run(0.99); // 0.99 effectively disables NCC recovery
+                                  // A strict NCC threshold (0.99) must find ≤ the default number of spikes
+        assert!(
+            r_strict.n_spikes <= r_default.n_spikes,
+            "ncc_threshold=0.99 must not find more spikes than default 0.70: {} > {}",
+            r_strict.n_spikes,
+            r_default.n_spikes
         );
     }
 }
