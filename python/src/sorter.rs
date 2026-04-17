@@ -51,6 +51,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     ccg_merge (bool): Enable CCG-based cluster merging to fix over-splitting. Default: True.
 ///     ccg_template_corr_threshold (float): Template NCC threshold for CCG merge. Default: 0.5.
 ///     template_subtract_passes (int): Number of template subtraction passes (0=disabled). Default: 2.
+///     ncc_threshold (float): Normalized cross-correlation threshold for template-scan spike recovery. Default: 0.70.
 ///     isi_split_threshold (float): ISI violation rate above which clusters are split. Default: 0.1.
 ///     use_localization (bool): Replace last 2 PCA dims with center-of-mass (x, y) position. Default: False.
 ///     use_amplitude_profile (bool): Encode amplitude on neighboring channels as spatial feature. Default: True.
@@ -141,6 +142,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     ccg_merge = true,
     ccg_template_corr_threshold = 0.5,
     template_subtract_passes = 2,
+    ncc_threshold = 0.70,
     isi_split_threshold = 0.1,
     gmm_refine = false,
     gmm_max_iter = 10,
@@ -202,6 +204,7 @@ fn sort_multichannel<'py>(
     ccg_merge: bool,
     ccg_template_corr_threshold: f64,
     template_subtract_passes: usize,
+    ncc_threshold: f64,
     isi_split_threshold: f64,
     gmm_refine: bool,
     gmm_max_iter: usize,
@@ -276,6 +279,7 @@ fn sort_multichannel<'py>(
         ccg_merge,
         ccg_template_corr_threshold,
         template_subtract_passes,
+        ncc_threshold,
         isi_split_threshold,
         gmm_refine,
         gmm_max_iter,
