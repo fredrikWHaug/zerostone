@@ -2949,7 +2949,10 @@ pub fn sort_multichannel<
                     feature_buf[i][K - 1] = norm * spatial_scale;
                 }
             }
-        } else if (config.use_amplitude_profile || (config.auto_amplitude_profile && C >= 8)) && C > 1 && K >= 4 {
+        } else if (config.use_amplitude_profile || (config.auto_amplitude_profile && C >= 8))
+            && C > 1
+            && K >= 4
+        {
             // Two-feature spatial encoding:
             // - K-1: channel index (strong separation, same as fallback)
             // - K-2: amplitude profile ratio (fine spatial discrimination)
@@ -4731,10 +4734,8 @@ mod tests {
         while pos + 8 < n {
             for dt in 0..8 {
                 if pos + dt < n {
-                    data[pos + dt][3] +=
-                        -12.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
-                    data[pos + dt][4] +=
-                        -6.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                    data[pos + dt][3] += -12.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                    data[pos + dt][4] += -6.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
                 }
             }
             pos += 160;
@@ -4770,10 +4771,7 @@ mod tests {
             &mut feat,
             &mut lab,
         );
-        assert!(
-            result.is_ok(),
-            "auto_amplitude_profile sort must not error"
-        );
+        assert!(result.is_ok(), "auto_amplitude_profile sort must not error");
         let sr = result.unwrap();
         assert!(
             sr.n_spikes > 0,
@@ -4798,8 +4796,7 @@ mod tests {
         while pos + 8 < n {
             for dt in 0..8 {
                 if pos + dt < n {
-                    data[pos + dt][1] +=
-                        -12.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                    data[pos + dt][1] += -12.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
                 }
             }
             pos += 160;
@@ -4839,10 +4836,7 @@ mod tests {
             "small probe sort with auto_amplitude_profile must not error"
         );
         let sr = result.unwrap();
-        assert!(
-            sr.n_spikes > 0,
-            "small probe sort must still detect spikes"
-        );
+        assert!(sr.n_spikes > 0, "small probe sort must still detect spikes");
     }
 
     #[test]
