@@ -101,6 +101,7 @@ pub enum DetectionMode {
 /// assert!(!config.use_localization);
 /// assert!(!config.use_amplitude_profile);
 /// assert_eq!(config.amplitude_profile_neighbors, 4);
+/// assert!(config.auto_amplitude_profile);
 /// assert!(config.auto_cmr);
 /// assert!(config.coincidence_detect);
 /// assert!((config.coincidence_primary_threshold - 3.5).abs() < 1e-12);
@@ -265,6 +266,14 @@ pub struct SortConfig {
     /// The profile includes the peak channel + this many nearest neighbors.
     /// Default: 4 (5 channels total: peak + 4 neighbors).
     pub amplitude_profile_neighbors: usize,
+    /// Auto-activate the amplitude profile feature for recordings with C≥8 channels.
+    /// On large probes, multiple units share the same peak channel and half-width
+    /// cannot separate them. The amplitude profile encodes how much energy bleeds
+    /// into neighboring channels — a physics-based spatial fingerprint that varies
+    /// with unit position and depth even when peak channel is identical.
+    /// When true and C≥8 and K≥4, activates amplitude profile encoding regardless
+    /// of `use_amplitude_profile`. Has no effect for C<8. Default: true.
+    pub auto_amplitude_profile: bool,
     /// Auto-apply CMR when channel count >= 8.
     /// Common Median Reference removes shared noise across channels before
     /// whitening. For multi-channel recordings (C >= 8), correlated noise
@@ -402,6 +411,7 @@ impl Default for SortConfig {
             use_localization: false,
             use_amplitude_profile: false,
             amplitude_profile_neighbors: 4,
+            auto_amplitude_profile: true,
             auto_cmr: true,
             coincidence_detect: true,
             coincidence_primary_threshold: 3.5,
@@ -2939,7 +2949,7 @@ pub fn sort_multichannel<
                     feature_buf[i][K - 1] = norm * spatial_scale;
                 }
             }
-        } else if config.use_amplitude_profile && C > 1 && K >= 4 {
+        } else if (config.use_amplitude_profile || (config.auto_amplitude_profile && C >= 8)) && C > 1 && K >= 4 {
             // Two-feature spatial encoding:
             // - K-1: channel index (strong separation, same as fallback)
             // - K-2: amplitude profile ratio (fine spatial discrimination)
@@ -4691,6 +4701,148 @@ mod tests {
         assert_eq!(config.template_min_count, 3);
         assert!(!config.use_amplitude_profile);
         assert_eq!(config.amplitude_profile_neighbors, 4);
+        assert!(config.auto_amplitude_profile);
+    }
+
+    #[test]
+    fn test_auto_amplitude_profile_default() {
+        let config = SortConfig::default();
+        assert!(
+            config.auto_amplitude_profile,
+            "auto_amplitude_profile must default to true"
+        );
+    }
+
+    #[test]
+    fn test_auto_amplitude_profile_activates_for_large_probe() {
+        // With auto_amplitude_profile=true and C=8, the amplitude profile branch
+        // must execute (use_amplitude_profile false, but auto gate fires).
+        // We verify by confirming the sort completes without panic and finds spikes.
+        let n = 4000;
+        let mut data = vec![[0.0f64; 8]; n];
+        let mut rng = Rng::new(77);
+        for s in data.iter_mut() {
+            for v in s.iter_mut() {
+                *v = rng.gaussian(0.0, 1.0);
+            }
+        }
+        // Inject a strong spike on channel 3 with some energy on neighbors
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][3] +=
+                        -12.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                    data[pos + dt][4] +=
+                        -6.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 160;
+        }
+        let probe = ProbeLayout::<8>::linear(25.0);
+        let config = SortConfig {
+            use_amplitude_profile: false,
+            auto_amplitude_profile: true,
+            threshold_multiplier: 4.5,
+            pre_samples: 2,
+            refractory_samples: 10,
+            ..SortConfig::default()
+        };
+        let mut scratch = vec![0.0; n];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0,
+            };
+            400
+        ];
+        let mut wf = vec![[0.0; 8]; 400];
+        let mut feat = vec![[0.0; 4]; 400];
+        let mut lab = vec![0usize; 400];
+        let result = sort_multichannel::<8, 64, 8, 4, 64, 16>(
+            &config,
+            &probe,
+            &mut data,
+            &mut scratch,
+            &mut events,
+            &mut wf,
+            &mut feat,
+            &mut lab,
+        );
+        assert!(
+            result.is_ok(),
+            "auto_amplitude_profile sort must not error"
+        );
+        let sr = result.unwrap();
+        assert!(
+            sr.n_spikes > 0,
+            "auto_amplitude_profile must detect injected spikes"
+        );
+    }
+
+    #[test]
+    fn test_auto_amplitude_profile_no_effect_small_probe() {
+        // With C=4 (< 8), auto_amplitude_profile gate must not fire.
+        // Sort must complete and the feature encoding falls through to the
+        // half-width / channel-index fallback branch (no panic, spikes detected).
+        let n = 4000;
+        let mut data = vec![[0.0f64; 4]; n];
+        let mut rng = Rng::new(55);
+        for s in data.iter_mut() {
+            for v in s.iter_mut() {
+                *v = rng.gaussian(0.0, 1.0);
+            }
+        }
+        let mut pos = 200;
+        while pos + 8 < n {
+            for dt in 0..8 {
+                if pos + dt < n {
+                    data[pos + dt][1] +=
+                        -12.0 * f64::exp(-0.5 * ((dt as f64 - 2.0) / 1.5).powi(2));
+                }
+            }
+            pos += 160;
+        }
+        let probe = ProbeLayout::<4>::linear(25.0);
+        let config = SortConfig {
+            auto_amplitude_profile: true,
+            threshold_multiplier: 4.5,
+            pre_samples: 2,
+            refractory_samples: 10,
+            ..SortConfig::default()
+        };
+        let mut scratch = vec![0.0; n];
+        let mut events = vec![
+            MultiChannelEvent {
+                sample: 0,
+                channel: 0,
+                amplitude: 0.0,
+            };
+            400
+        ];
+        let mut wf = vec![[0.0; 8]; 400];
+        let mut feat = vec![[0.0; 4]; 400];
+        let mut lab = vec![0usize; 400];
+        let result = sort_multichannel::<4, 16, 8, 4, 64, 16>(
+            &config,
+            &probe,
+            &mut data,
+            &mut scratch,
+            &mut events,
+            &mut wf,
+            &mut feat,
+            &mut lab,
+        );
+        assert!(
+            result.is_ok(),
+            "small probe sort with auto_amplitude_profile must not error"
+        );
+        let sr = result.unwrap();
+        assert!(
+            sr.n_spikes > 0,
+            "small probe sort must still detect spikes"
+        );
     }
 
     #[test]
