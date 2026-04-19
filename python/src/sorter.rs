@@ -97,6 +97,11 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///         active (C >= 8). Effective iterations = max(refinement_iterations,
 ///         auto_refine_iterations). Early convergence exit prevents wasted work when
 ///         the assignment stabilizes in fewer passes. Default: 3.
+///     auto_amplitude_profile (bool): Auto-activate amplitude profile spatial features for
+///         recordings with 8 or more channels. On large probes multiple units share the
+///         same peak channel; the amplitude profile encodes energy bleed into neighboring
+///         channels as a physics-based spatial fingerprint, replacing the weaker half-width
+///         feature. Has no effect for C < 8. Default: True.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -176,6 +181,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     auto_svd_init = true,
     auto_threshold = true,
     auto_refine_iterations = 3usize,
+    auto_amplitude_profile = true,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -238,6 +244,7 @@ fn sort_multichannel<'py>(
     auto_svd_init: bool,
     auto_threshold: bool,
     auto_refine_iterations: usize,
+    auto_amplitude_profile: bool,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -313,6 +320,7 @@ fn sort_multichannel<'py>(
         auto_svd_init,
         auto_threshold,
         auto_refine_iterations,
+        auto_amplitude_profile,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
