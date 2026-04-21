@@ -42,7 +42,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///     merge_isi_threshold (float): ISI violation threshold for cluster merging. Default: 0.05.
 ///     split_min_cluster_size (int): Minimum spikes per cluster to attempt splitting. Default: 10.
 ///     split_bimodality_threshold (float): Gap/std threshold for cluster splitting. Default: 2.0.
-///     spatial_merge_dprime (float): D-prime threshold for cross-channel spatial merge. Default: 1.5.
+///     spatial_merge_dprime (float): D-prime threshold for cross-channel spatial merge. Default: 2.0.
 ///     template_subtract (bool): Enable template subtraction to recover masked spikes. Default: True.
 ///     template_min_count (int): Minimum spikes per cluster to build a subtraction template. Default: 3.
 ///     min_cluster_snr (float): Minimum SNR for cluster auto-curation. Default: 2.5.
@@ -138,7 +138,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     merge_isi_threshold = 0.05,
     split_min_cluster_size = 10,
     split_bimodality_threshold = 2.0,
-    spatial_merge_dprime = 1.5,
+    spatial_merge_dprime = 2.0,
     template_subtract = true,
     template_min_count = 3,
     min_cluster_snr = 2.5,
@@ -181,7 +181,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     auto_svd_init = true,
     auto_threshold = true,
     auto_refine_iterations = 3usize,
-    auto_amplitude_profile = true,
+    auto_amplitude_profile = false,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(

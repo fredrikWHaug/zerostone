@@ -82,7 +82,7 @@ pub enum DetectionMode {
 /// assert!((config.merge_isi_threshold - 0.05).abs() < 1e-12);
 /// assert_eq!(config.split_min_cluster_size, 10);
 /// assert!((config.split_bimodality_threshold - 2.0).abs() < 1e-12);
-/// assert!((config.spatial_merge_dprime - 1.5).abs() < 1e-12);
+/// assert!((config.spatial_merge_dprime - 2.0).abs() < 1e-12);
 /// assert!(config.template_subtract);
 /// assert_eq!(config.template_min_count, 3);
 /// assert!((config.min_cluster_snr - 2.5).abs() < 1e-12);
@@ -101,7 +101,7 @@ pub enum DetectionMode {
 /// assert!(!config.use_localization);
 /// assert!(!config.use_amplitude_profile);
 /// assert_eq!(config.amplitude_profile_neighbors, 4);
-/// assert!(config.auto_amplitude_profile);
+/// assert!(!config.auto_amplitude_profile);
 /// assert!(config.auto_cmr);
 /// assert!(config.coincidence_detect);
 /// assert!((config.coincidence_primary_threshold - 3.5).abs() < 1e-12);
@@ -382,7 +382,7 @@ impl Default for SortConfig {
             merge_isi_threshold: 0.05,
             split_min_cluster_size: 10,
             split_bimodality_threshold: 2.0,
-            spatial_merge_dprime: 1.5,
+            spatial_merge_dprime: 2.0,
             template_subtract: true,
             template_min_count: 3,
             min_cluster_snr: 2.5,
@@ -411,7 +411,7 @@ impl Default for SortConfig {
             use_localization: false,
             use_amplitude_profile: false,
             amplitude_profile_neighbors: 4,
-            auto_amplitude_profile: true,
+            auto_amplitude_profile: false,
             auto_cmr: true,
             coincidence_detect: true,
             coincidence_primary_threshold: 3.5,
@@ -2949,10 +2949,7 @@ pub fn sort_multichannel<
                     feature_buf[i][K - 1] = norm * spatial_scale;
                 }
             }
-        } else if (config.use_amplitude_profile || (config.auto_amplitude_profile && C >= 8))
-            && C > 1
-            && K >= 4
-        {
+        } else if config.use_amplitude_profile && C > 1 && K >= 4 {
             // Two-feature spatial encoding:
             // - K-1: channel index (strong separation, same as fallback)
             // - K-2: amplitude profile ratio (fine spatial discrimination)
@@ -4704,15 +4701,15 @@ mod tests {
         assert_eq!(config.template_min_count, 3);
         assert!(!config.use_amplitude_profile);
         assert_eq!(config.amplitude_profile_neighbors, 4);
-        assert!(config.auto_amplitude_profile);
+        assert!(!config.auto_amplitude_profile);
     }
 
     #[test]
     fn test_auto_amplitude_profile_default() {
         let config = SortConfig::default();
         assert!(
-            config.auto_amplitude_profile,
-            "auto_amplitude_profile must default to true"
+            !config.auto_amplitude_profile,
+            "auto_amplitude_profile must default to false"
         );
     }
 
