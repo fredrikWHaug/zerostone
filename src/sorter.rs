@@ -116,6 +116,7 @@ pub enum DetectionMode {
 /// assert!(!config.refine_isi_guard);
 /// assert!((config.refine_isi_tolerance - 0.1).abs() < 1e-12);
 /// assert!(config.ccg_merge);
+/// assert!((config.waveform_reassign_margin - 0.05).abs() < 1e-12);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -364,6 +365,13 @@ pub struct SortConfig {
     /// skip the iteration if violations increase by more than 10%.
     /// Only active when `refine_isi_guard` is true. Default: 0.1.
     pub refine_isi_tolerance: Float,
+    /// Margin for template-based waveform reassignment (step 9h).
+    /// A spike is only reassigned to a closer same-channel template if the
+    /// new L2 distance is less than `(1.0 - margin)` times the old distance.
+    /// Higher values require bigger improvements to reassign (more conservative).
+    /// 0.0 = always take the nearest template (most aggressive).
+    /// 0.3 = require 30% distance improvement. Default: 0.05.
+    pub waveform_reassign_margin: Float,
 }
 
 impl Default for SortConfig {
@@ -425,6 +433,7 @@ impl Default for SortConfig {
             refine_collapse_guard: true,
             refine_isi_guard: false,
             refine_isi_tolerance: 0.1,
+            waveform_reassign_margin: 0.05,
         }
     }
 }
@@ -3900,9 +3909,10 @@ pub fn sort_multichannel<
                     best_c = c;
                 }
             }
-            // Only reassign if new template is significantly closer (30% margin)
-            // This prevents marginal reassignments from breaking good clustering.
-            if best_c != old_label && best_d < old_d * 0.7 {
+            // Only reassign if new template is sufficiently closer.
+            // The margin prevents marginal reassignments from breaking good clustering.
+            let margin_factor = 1.0 - config.waveform_reassign_margin;
+            if best_c != old_label && best_d < old_d * margin_factor {
                 labels[i] = best_c;
                 changed += 1;
             }
