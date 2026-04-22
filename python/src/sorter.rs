@@ -102,6 +102,10 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///         same peak channel; the amplitude profile encodes energy bleed into neighboring
 ///         channels as a physics-based spatial fingerprint, replacing the weaker half-width
 ///         feature. Has no effect for C < 8. Default: True.
+///     waveform_reassign_margin (float): Margin for template-based waveform reassignment.
+///         A spike is only reassigned to a closer same-channel template if the new L2
+///         distance is less than (1.0 - margin) times the old distance. Higher = more
+///         conservative. 0.0 = always take nearest. Default: 0.05.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -182,6 +186,7 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     auto_threshold = true,
     auto_refine_iterations = 3usize,
     auto_amplitude_profile = false,
+    waveform_reassign_margin = 0.05,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -245,6 +250,7 @@ fn sort_multichannel<'py>(
     auto_threshold: bool,
     auto_refine_iterations: usize,
     auto_amplitude_profile: bool,
+    waveform_reassign_margin: f64,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -321,6 +327,7 @@ fn sort_multichannel<'py>(
         auto_threshold,
         auto_refine_iterations,
         auto_amplitude_profile,
+        waveform_reassign_margin,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),
