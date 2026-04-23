@@ -3845,7 +3845,7 @@ pub fn sort_multichannel<
         }
     }
 
-    // 9h. Template-based waveform reassignment.
+    // 9h. Iterative template-based waveform reassignment.
     //
     // After all detection and clustering passes, reassign each spike to the
     // cluster whose mean waveform it most closely matches, but ONLY among
@@ -3856,70 +3856,76 @@ pub fn sort_multichannel<
     // 1. It uses all W waveform samples (not just K << W PCA features)
     // 2. The channel constraint prevents cross-channel contamination
     // 3. It naturally handles the case where PCA discards discriminative info
+    //
+    // Runs iteratively: each pass recomputes templates from updated labels,
+    // then reassigns. Converges when no spikes move.
     if n_clusters > 1 && n_extracted > n_clusters {
-        // Build templates: mean waveform per cluster, tracking peak channel
-        let mut tmpl_wf = [[0.0 as Float; W]; N];
-        let mut tmpl_count = [0u32; N];
-        let mut tmpl_ch = [0usize; N];
-        compute_cluster_means::<W, N>(
-            waveform_buf,
-            labels,
-            event_buf,
-            n_extracted,
-            n_clusters,
-            &mut tmpl_wf,
-            &mut tmpl_count,
-            &mut tmpl_ch,
-        );
+        let margin_factor = 1.0 - config.waveform_reassign_margin;
+        let max_passes = 5;
 
-        // Reassign: for each spike, find the nearest template on the same
-        // channel. Require a 30% distance improvement to prevent marginal
-        // reassignments that break good clustering.
-        let mut changed = 0usize;
-        for i in 0..n_extracted {
-            let spike_ch = event_buf[i].channel;
-            let old_label = labels[i];
+        for _pass in 0..max_passes {
+            // Build templates: mean waveform per cluster, tracking peak channel
+            let mut tmpl_wf = [[0.0 as Float; W]; N];
+            let mut tmpl_count = [0u32; N];
+            let mut tmpl_ch = [0usize; N];
+            compute_cluster_means::<W, N>(
+                waveform_buf,
+                labels,
+                event_buf,
+                n_extracted,
+                n_clusters,
+                &mut tmpl_wf,
+                &mut tmpl_count,
+                &mut tmpl_ch,
+            );
 
-            // Compute distance to current template
-            let mut old_d: Float = 0.0;
-            if old_label < n_clusters && old_label < N && tmpl_ch[old_label] == spike_ch {
-                for w in 0..W {
-                    let diff = waveform_buf[i][w] - tmpl_wf[old_label][w];
-                    old_d += diff * diff;
+            // Reassign: for each spike, find the nearest template on the same channel.
+            let mut changed = 0usize;
+            for i in 0..n_extracted {
+                let spike_ch = event_buf[i].channel;
+                let old_label = labels[i];
+
+                // Compute distance to current template
+                let mut old_d: Float = 0.0;
+                if old_label < n_clusters && old_label < N && tmpl_ch[old_label] == spike_ch {
+                    for w in 0..W {
+                        let diff = waveform_buf[i][w] - tmpl_wf[old_label][w];
+                        old_d += diff * diff;
+                    }
+                }
+
+                let mut best_c = old_label;
+                let mut best_d: Float = Float::MAX;
+                for c in 0..n_clusters.min(N) {
+                    if tmpl_count[c] < config.template_min_count as u32 {
+                        continue;
+                    }
+                    // Only consider clusters on the same peak channel
+                    if tmpl_ch[c] != spike_ch {
+                        continue;
+                    }
+                    let mut d = 0.0;
+                    for w in 0..W {
+                        let diff = waveform_buf[i][w] - tmpl_wf[c][w];
+                        d += diff * diff;
+                    }
+                    if d < best_d {
+                        best_d = d;
+                        best_c = c;
+                    }
+                }
+                if best_c != old_label && best_d < old_d * margin_factor {
+                    labels[i] = best_c;
+                    changed += 1;
                 }
             }
 
-            let mut best_c = old_label;
-            let mut best_d: Float = Float::MAX;
-            for c in 0..n_clusters.min(N) {
-                if tmpl_count[c] < config.template_min_count as u32 {
-                    continue;
-                }
-                // Only consider clusters on the same peak channel
-                if tmpl_ch[c] != spike_ch {
-                    continue;
-                }
-                let mut d = 0.0;
-                for w in 0..W {
-                    let diff = waveform_buf[i][w] - tmpl_wf[c][w];
-                    d += diff * diff;
-                }
-                if d < best_d {
-                    best_d = d;
-                    best_c = c;
-                }
+            // If no spikes moved, we've converged
+            if changed == 0 {
+                break;
             }
-            // Only reassign if new template is sufficiently closer.
-            // The margin prevents marginal reassignments from breaking good clustering.
-            let margin_factor = 1.0 - config.waveform_reassign_margin;
-            if best_c != old_label && best_d < old_d * margin_factor {
-                labels[i] = best_c;
-                changed += 1;
-            }
-        }
 
-        // If reassignment changed labels, remove empty clusters
-        if changed > 0 {
+            // Remove empty clusters
             let mut counts = [0u32; N];
             for label in labels.iter().take(n_extracted) {
                 if *label < N {
