@@ -3857,11 +3857,27 @@ pub fn sort_multichannel<
     // 2. The channel constraint prevents cross-channel contamination
     // 3. It naturally handles the case where PCA discards discriminative info
     //
+    // For multi-channel recordings (C > 1), also computes a neighbor-channel
+    // template: the mean waveform on the nearest neighbor of each cluster's
+    // peak channel. This adds spatial discrimination: units on the same peak
+    // channel but at different positions have different neighbor-channel
+    // waveforms. The neighbor distance is weighted at 0.5x the peak distance.
+    //
     // Runs iteratively: each pass recomputes templates from updated labels,
     // then reassigns. Converges when no spikes move.
     if n_clusters > 1 && n_extracted > n_clusters {
         let margin_factor = 1.0 - config.waveform_reassign_margin;
         let max_passes = 5;
+
+        // Precompute nearest neighbor for each channel
+        let mut nearest_nbr = [0usize; C];
+        if C > 1 {
+            for ch in 0..C {
+                let mut nbuf = [0usize; 1];
+                let n = probe.nearest_channels(ch, 1, &mut nbuf);
+                nearest_nbr[ch] = if n > 0 { nbuf[0] } else { ch };
+            }
+        }
 
         for _pass in 0..max_passes {
             // Build templates: mean waveform per cluster, tracking peak channel
@@ -3879,18 +3895,65 @@ pub fn sort_multichannel<
                 &mut tmpl_ch,
             );
 
+            // Build neighbor-channel templates for spatial discrimination
+            let mut tmpl_nbr = [[0.0 as Float; W]; N];
+            if C > 1 {
+                let mut nbr_count = [0u32; N];
+                for i in 0..n_extracted {
+                    let label = labels[i];
+                    if label >= n_clusters || label >= N {
+                        continue;
+                    }
+                    let peak_ch = event_buf[i].channel;
+                    let nbr_ch = nearest_nbr[peak_ch];
+                    let t = event_buf[i].sample;
+                    if t < config.pre_samples {
+                        continue;
+                    }
+                    let start = t - config.pre_samples;
+                    if start + W > data.len() {
+                        continue;
+                    }
+                    for w in 0..W {
+                        tmpl_nbr[label][w] += data[start + w][nbr_ch];
+                    }
+                    nbr_count[label] += 1;
+                }
+                for c in 0..n_clusters.min(N) {
+                    if nbr_count[c] > 0 {
+                        let inv = 1.0 / nbr_count[c] as Float;
+                        for w in 0..W {
+                            tmpl_nbr[c][w] *= inv;
+                        }
+                    }
+                }
+            }
+
             // Reassign: for each spike, find the nearest template on the same channel.
             let mut changed = 0usize;
             for i in 0..n_extracted {
                 let spike_ch = event_buf[i].channel;
                 let old_label = labels[i];
 
-                // Compute distance to current template
+                // Extract neighbor waveform for this spike (on the fly)
+                let nbr_ch = nearest_nbr[spike_ch];
+                let t = event_buf[i].sample;
+                let has_nbr =
+                    C > 1 && t >= config.pre_samples && t - config.pre_samples + W <= data.len();
+
+                // Compute distance to current template (peak + neighbor)
                 let mut old_d: Float = 0.0;
                 if old_label < n_clusters && old_label < N && tmpl_ch[old_label] == spike_ch {
                     for w in 0..W {
                         let diff = waveform_buf[i][w] - tmpl_wf[old_label][w];
                         old_d += diff * diff;
+                    }
+                    if has_nbr {
+                        let start = t - config.pre_samples;
+                        for w in 0..W {
+                            let diff = data[start + w][nbr_ch] - tmpl_nbr[old_label][w];
+                            old_d += 0.5 * diff * diff;
+                        }
                     }
                 }
 
@@ -3900,7 +3963,6 @@ pub fn sort_multichannel<
                     if tmpl_count[c] < config.template_min_count as u32 {
                         continue;
                     }
-                    // Only consider clusters on the same peak channel
                     if tmpl_ch[c] != spike_ch {
                         continue;
                     }
@@ -3908,6 +3970,13 @@ pub fn sort_multichannel<
                     for w in 0..W {
                         let diff = waveform_buf[i][w] - tmpl_wf[c][w];
                         d += diff * diff;
+                    }
+                    if has_nbr {
+                        let start = t - config.pre_samples;
+                        for w in 0..W {
+                            let diff = data[start + w][nbr_ch] - tmpl_nbr[c][w];
+                            d += 0.5 * diff * diff;
+                        }
                     }
                     if d < best_d {
                         best_d = d;
