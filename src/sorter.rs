@@ -3872,10 +3872,10 @@ pub fn sort_multichannel<
         // Precompute nearest neighbor for each channel
         let mut nearest_nbr = [0usize; C];
         if C > 1 {
-            for ch in 0..C {
+            for (ch, nbr) in nearest_nbr.iter_mut().enumerate().take(C) {
                 let mut nbuf = [0usize; 1];
                 let n = probe.nearest_channels(ch, 1, &mut nbuf);
-                nearest_nbr[ch] = if n > 0 { nbuf[0] } else { ch };
+                *nbr = if n > 0 { nbuf[0] } else { ch };
             }
         }
 
@@ -3922,8 +3922,8 @@ pub fn sort_multichannel<
                 for c in 0..n_clusters.min(N) {
                     if nbr_count[c] > 0 {
                         let inv = 1.0 / nbr_count[c] as Float;
-                        for w in 0..W {
-                            tmpl_nbr[c][w] *= inv;
+                        for val in tmpl_nbr[c].iter_mut().take(W) {
+                            *val *= inv;
                         }
                     }
                 }
