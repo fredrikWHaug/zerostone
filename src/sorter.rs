@@ -117,6 +117,8 @@ pub enum DetectionMode {
 /// assert!((config.refine_isi_tolerance - 0.1).abs() < 1e-12);
 /// assert!(config.ccg_merge);
 /// assert!((config.waveform_reassign_margin - 0.05).abs() < 1e-12);
+/// assert!((config.reassign_neighbor_weight - 0.5).abs() < 1e-12);
+/// assert_eq!(config.reassign_n_neighbors, 2);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -372,6 +374,15 @@ pub struct SortConfig {
     /// 0.0 = always take the nearest template (most aggressive).
     /// 0.3 = require 30% distance improvement. Default: 0.05.
     pub waveform_reassign_margin: Float,
+    /// Weight for neighbor-channel waveforms in template reassignment.
+    /// The reassignment distance is: L2(peak) + weight * L2(neighbor).
+    /// Higher values give more weight to spatial discrimination.
+    /// Default: 0.5.
+    pub reassign_neighbor_weight: Float,
+    /// Number of neighbor channels to use in reassignment (1 or 2).
+    /// Using 2 neighbors adds more spatial discrimination on dense probes.
+    /// Default: 2.
+    pub reassign_n_neighbors: usize,
 }
 
 impl Default for SortConfig {
@@ -434,6 +445,8 @@ impl Default for SortConfig {
             refine_isi_guard: false,
             refine_isi_tolerance: 0.1,
             waveform_reassign_margin: 0.05,
+            reassign_neighbor_weight: 0.5,
+            reassign_n_neighbors: 2,
         }
     }
 }
