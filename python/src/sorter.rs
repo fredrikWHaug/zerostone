@@ -106,6 +106,11 @@ fn sort_error_to_py(e: SortError) -> PyErr {
 ///         A spike is only reassigned to a closer same-channel template if the new L2
 ///         distance is less than (1.0 - margin) times the old distance. Higher = more
 ///         conservative. 0.0 = always take nearest. Default: 0.05.
+///     reassign_neighbor_weight (float): Weight for neighbor-channel waveforms in
+///         template reassignment. Distance = L2(peak) + weight * L2(neighbor).
+///         Default: 0.5.
+///     reassign_n_neighbors (int): Number of neighbor channels (1 or 2) averaged for
+///         spatial discrimination in reassignment. Default: 2.
 ///
 /// Returns:
 ///     dict: Sorting results with keys:
@@ -187,6 +192,8 @@ fn sort_error_to_py(e: SortError) -> PyErr {
     auto_refine_iterations = 3usize,
     auto_amplitude_profile = false,
     waveform_reassign_margin = 0.05,
+    reassign_neighbor_weight = 0.5,
+    reassign_n_neighbors = 2usize,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn sort_multichannel<'py>(
@@ -251,6 +258,8 @@ fn sort_multichannel<'py>(
     auto_refine_iterations: usize,
     auto_amplitude_profile: bool,
     waveform_reassign_margin: f64,
+    reassign_neighbor_weight: f64,
+    reassign_n_neighbors: usize,
 ) -> PyResult<PyObject> {
     let shape = data.shape();
     let n_samples = shape[0];
@@ -328,6 +337,8 @@ fn sort_multichannel<'py>(
         auto_refine_iterations,
         auto_amplitude_profile,
         waveform_reassign_margin,
+        reassign_neighbor_weight,
+        reassign_n_neighbors,
     };
 
     // W=48 (captures full biphasic waveform), K=4 (3 PCA + 1 channel),

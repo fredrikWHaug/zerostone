@@ -117,6 +117,9 @@ pub enum DetectionMode {
 /// assert!((config.refine_isi_tolerance - 0.1).abs() < 1e-12);
 /// assert!(config.ccg_merge);
 /// assert!((config.waveform_reassign_margin - 0.05).abs() < 1e-12);
+/// assert!((config.reassign_neighbor_weight - 0.5).abs() < 1e-12);
+/// assert_eq!(config.reassign_n_neighbors, 2);
+/// assert!((config.reassign_prune_factor - 3.0).abs() < 1e-12);
 /// ```
 pub struct SortConfig {
     /// Threshold multiplier for spike detection (sigma units on whitened data).
@@ -372,6 +375,19 @@ pub struct SortConfig {
     /// 0.0 = always take the nearest template (most aggressive).
     /// 0.3 = require 30% distance improvement. Default: 0.05.
     pub waveform_reassign_margin: Float,
+    /// Weight for neighbor-channel waveforms in template reassignment.
+    /// The reassignment distance is: L2(peak) + weight * L2(neighbor).
+    /// Higher values give more weight to spatial discrimination.
+    /// Default: 0.5.
+    pub reassign_neighbor_weight: Float,
+    /// Number of neighbor channels to use in reassignment (1 or 2).
+    /// Using 2 neighbors adds more spatial discrimination on dense probes.
+    /// Default: 2.
+    pub reassign_n_neighbors: usize,
+    /// After iterative reassignment, prune spikes whose L2 distance to their
+    /// cluster template exceeds `factor * median` distance. Higher values
+    /// are less aggressive; 0.0 disables pruning. Default: 3.0.
+    pub reassign_prune_factor: Float,
 }
 
 impl Default for SortConfig {
@@ -434,6 +450,9 @@ impl Default for SortConfig {
             refine_isi_guard: false,
             refine_isi_tolerance: 0.1,
             waveform_reassign_margin: 0.05,
+            reassign_neighbor_weight: 0.5,
+            reassign_n_neighbors: 2,
+            reassign_prune_factor: 3.0,
         }
     }
 }
@@ -3858,24 +3877,31 @@ pub fn sort_multichannel<
     // 3. It naturally handles the case where PCA discards discriminative info
     //
     // For multi-channel recordings (C > 1), also computes a neighbor-channel
-    // template: the mean waveform on the nearest neighbor of each cluster's
-    // peak channel. This adds spatial discrimination: units on the same peak
-    // channel but at different positions have different neighbor-channel
-    // waveforms. The neighbor distance is weighted at 0.5x the peak distance.
+    // template: the mean waveform averaged over the nearest 1 or 2 neighbor
+    // channels of each cluster's peak channel. This adds spatial discrimination:
+    // units on the same peak channel but at different positions have different
+    // neighbor-channel waveforms. The neighbor distance is weighted by
+    // `reassign_neighbor_weight`. Using 2 neighbors (default) provides better
+    // spatial context on dense probes than a single neighbor.
     //
     // Runs iteratively: each pass recomputes templates from updated labels,
     // then reassigns. Converges when no spikes move.
     if n_clusters > 1 && n_extracted > n_clusters {
         let margin_factor = 1.0 - config.waveform_reassign_margin;
         let max_passes = 5;
+        let nbr_weight = config.reassign_neighbor_weight;
+        let n_nbrs = config.reassign_n_neighbors.min(2).min(C.saturating_sub(1));
 
-        // Precompute nearest neighbor for each channel
-        let mut nearest_nbr = [0usize; C];
-        if C > 1 {
-            for (ch, nbr) in nearest_nbr.iter_mut().enumerate().take(C) {
-                let mut nbuf = [0usize; 1];
-                let n = probe.nearest_channels(ch, 1, &mut nbuf);
-                *nbr = if n > 0 { nbuf[0] } else { ch };
+        // Precompute up to 2 nearest neighbors per channel
+        let mut nearest_nbr = [[0usize; 2]; C];
+        if C > 1 && n_nbrs > 0 {
+            for (ch, nbrs) in nearest_nbr.iter_mut().enumerate().take(C) {
+                let mut nbuf = [0usize; 2];
+                let found = probe.nearest_channels(ch, n_nbrs, &mut nbuf);
+                nbrs[..found].copy_from_slice(&nbuf[..found]);
+                for slot in nbrs.iter_mut().skip(found) {
+                    *slot = ch;
+                }
             }
         }
 
@@ -3895,9 +3921,9 @@ pub fn sort_multichannel<
                 &mut tmpl_ch,
             );
 
-            // Build neighbor-channel templates for spatial discrimination
+            // Build neighbor-channel templates: average over n_nbrs neighbor channels
             let mut tmpl_nbr = [[0.0 as Float; W]; N];
-            if C > 1 {
+            if C > 1 && n_nbrs > 0 {
                 let mut nbr_count = [0u32; N];
                 for i in 0..n_extracted {
                     let label = labels[i];
@@ -3905,7 +3931,6 @@ pub fn sort_multichannel<
                         continue;
                     }
                     let peak_ch = event_buf[i].channel;
-                    let nbr_ch = nearest_nbr[peak_ch];
                     let t = event_buf[i].sample;
                     if t < config.pre_samples {
                         continue;
@@ -3914,8 +3939,11 @@ pub fn sort_multichannel<
                     if start + W > data.len() {
                         continue;
                     }
-                    for w in 0..W {
-                        tmpl_nbr[label][w] += data[start + w][nbr_ch];
+                    let inv_n = 1.0 / n_nbrs as Float;
+                    for &nbr_ch in nearest_nbr[peak_ch].iter().take(n_nbrs) {
+                        for w in 0..W {
+                            tmpl_nbr[label][w] += data[start + w][nbr_ch] * inv_n;
+                        }
                     }
                     nbr_count[label] += 1;
                 }
@@ -3935,13 +3963,13 @@ pub fn sort_multichannel<
                 let spike_ch = event_buf[i].channel;
                 let old_label = labels[i];
 
-                // Extract neighbor waveform for this spike (on the fly)
-                let nbr_ch = nearest_nbr[spike_ch];
                 let t = event_buf[i].sample;
-                let has_nbr =
-                    C > 1 && t >= config.pre_samples && t - config.pre_samples + W <= data.len();
+                let has_nbr = C > 1
+                    && n_nbrs > 0
+                    && t >= config.pre_samples
+                    && t - config.pre_samples + W <= data.len();
 
-                // Compute distance to current template (peak + neighbor)
+                // Compute distance to current template (peak + averaged neighbors)
                 let mut old_d: Float = 0.0;
                 if old_label < n_clusters && old_label < N && tmpl_ch[old_label] == spike_ch {
                     for w in 0..W {
@@ -3950,10 +3978,17 @@ pub fn sort_multichannel<
                     }
                     if has_nbr {
                         let start = t - config.pre_samples;
+                        let inv_n = 1.0 / n_nbrs as Float;
+                        let mut nbr_d: Float = 0.0;
                         for w in 0..W {
-                            let diff = data[start + w][nbr_ch] - tmpl_nbr[old_label][w];
-                            old_d += 0.5 * diff * diff;
+                            let mut avg = 0.0 as Float;
+                            for &nbr_ch in nearest_nbr[spike_ch].iter().take(n_nbrs) {
+                                avg += data[start + w][nbr_ch];
+                            }
+                            let diff = avg * inv_n - tmpl_nbr[old_label][w];
+                            nbr_d += diff * diff;
                         }
+                        old_d += nbr_weight * nbr_d;
                     }
                 }
 
@@ -3973,10 +4008,17 @@ pub fn sort_multichannel<
                     }
                     if has_nbr {
                         let start = t - config.pre_samples;
+                        let inv_n = 1.0 / n_nbrs as Float;
+                        let mut nbr_d: Float = 0.0;
                         for w in 0..W {
-                            let diff = data[start + w][nbr_ch] - tmpl_nbr[c][w];
-                            d += 0.5 * diff * diff;
+                            let mut avg = 0.0 as Float;
+                            for &nbr_ch in nearest_nbr[spike_ch].iter().take(n_nbrs) {
+                                avg += data[start + w][nbr_ch];
+                            }
+                            let diff = avg * inv_n - tmpl_nbr[c][w];
+                            nbr_d += diff * diff;
                         }
+                        d += nbr_weight * nbr_d;
                     }
                     if d < best_d {
                         best_d = d;
@@ -4023,6 +4065,100 @@ pub fn sort_multichannel<
                 n_clusters = new_n;
             }
         }
+    }
+
+    // 9i. Template-distance outlier pruning.
+    //
+    // After reassignment, each cluster should contain only spikes that closely
+    // match its template. Spikes that remain far from their template (likely
+    // noise or misassigned spikes from overlapping units) are pruned to
+    // improve precision. For each cluster, compute the median L2 distance
+    // to the template; spikes with distance > prune_factor * median are
+    // dropped. Only active when reassign_prune_factor > 0.
+    if n_clusters > 1
+        && n_extracted > n_clusters
+        && config.reassign_prune_factor > 0.0
+    {
+        // Build final templates
+        let mut tmpl_wf = [[0.0 as Float; W]; N];
+        let mut tmpl_count = [0u32; N];
+        let mut tmpl_ch = [0usize; N];
+        compute_cluster_means::<W, N>(
+            waveform_buf,
+            labels,
+            event_buf,
+            n_extracted,
+            n_clusters,
+            &mut tmpl_wf,
+            &mut tmpl_count,
+            &mut tmpl_ch,
+        );
+
+        // Compute L2 distances and find per-cluster medians using scratch
+        // We reuse scratch as a staging buffer for the distances
+        let mut cluster_median_d = [0.0 as Float; N];
+        // Compute distances into scratch, then find median per cluster
+        for c in 0..n_clusters.min(N) {
+            if tmpl_count[c] < config.template_min_count as u32 {
+                cluster_median_d[c] = Float::MAX;
+                continue;
+            }
+            let mut n_c = 0usize;
+            for i in 0..n_extracted {
+                if labels[i] == c && tmpl_ch[c] == event_buf[i].channel && n_c < scratch.len() {
+                    let mut d = 0.0 as Float;
+                    for w in 0..W {
+                        let diff = waveform_buf[i][w] - tmpl_wf[c][w];
+                        d += diff * diff;
+                    }
+                    scratch[n_c] = d;
+                    n_c += 1;
+                }
+            }
+            if n_c == 0 {
+                cluster_median_d[c] = Float::MAX;
+            } else {
+                // Partial sort to find median
+                let mid = n_c / 2;
+                scratch[..n_c]
+                    .select_nth_unstable_by(mid, |a, b| {
+                        a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
+                    });
+                cluster_median_d[c] = scratch[mid];
+            }
+        }
+
+        // Prune spikes exceeding threshold, compact remaining
+        let factor = config.reassign_prune_factor;
+        let mut write = 0;
+        for read in 0..n_extracted {
+            let c = labels[read];
+            let keep = if c < n_clusters && c < N && tmpl_ch[c] == event_buf[read].channel {
+                let threshold = cluster_median_d[c] * factor;
+                if threshold >= Float::MAX - 1.0 {
+                    true // cluster below min_count — keep
+                } else {
+                    let mut d = 0.0 as Float;
+                    for w in 0..W {
+                        let diff = waveform_buf[read][w] - tmpl_wf[c][w];
+                        d += diff * diff;
+                    }
+                    d <= threshold
+                }
+            } else {
+                true // cross-channel spike or invalid — keep
+            };
+            if keep {
+                if write != read {
+                    event_buf[write] = event_buf[read];
+                    waveform_buf[write] = waveform_buf[read];
+                    feature_buf[write] = feature_buf[read];
+                    labels[write] = labels[read];
+                }
+                write += 1;
+            }
+        }
+        n_extracted = write;
     }
 
     // 10. Quality metrics
